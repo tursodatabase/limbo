@@ -1010,7 +1010,6 @@ fn open_loop(
                 //
                 // For primary key searches we emit RowId and then compare it to the seek value.
 
-                let abort_jump_target = loop_labels.next;
                 match cmp_op {
                     ast::Operator::Equals | ast::Operator::LessEquals => {
                         if let Some(index_cursor_id) = index_cursor_id {
@@ -1019,9 +1018,9 @@ fn open_loop(
                                     cursor_id: index_cursor_id,
                                     start_reg: cmp_reg,
                                     num_regs: 1,
-                                    target_pc: abort_jump_target,
+                                    target_pc: loop_labels.loop_end,
                                 },
-                                abort_jump_target,
+                                loop_labels.loop_end,
                             );
                         } else {
                             let rowid_reg = program.alloc_register();
@@ -1033,9 +1032,9 @@ fn open_loop(
                                 Insn::Gt {
                                     lhs: rowid_reg,
                                     rhs: cmp_reg,
-                                    target_pc: abort_jump_target,
+                                    target_pc: loop_labels.loop_end,
                                 },
-                                abort_jump_target,
+                                loop_labels.loop_end,
                             );
                         }
                     }
@@ -1046,9 +1045,9 @@ fn open_loop(
                                     cursor_id: index_cursor_id,
                                     start_reg: cmp_reg,
                                     num_regs: 1,
-                                    target_pc: abort_jump_target,
+                                    target_pc: loop_labels.loop_end,
                                 },
-                                abort_jump_target,
+                                loop_labels.loop_end,
                             );
                         } else {
                             let rowid_reg = program.alloc_register();
@@ -1060,9 +1059,9 @@ fn open_loop(
                                 Insn::Ge {
                                     lhs: rowid_reg,
                                     rhs: cmp_reg,
-                                    target_pc: abort_jump_target,
+                                    target_pc: loop_labels.loop_end,
                                 },
-                                abort_jump_target,
+                                loop_labels.loop_end,
                             );
                         }
                     }
@@ -1417,8 +1416,8 @@ fn close_loop(
             iter_dir,
             ..
         } => {
-            let cursor_id = program.resolve_cursor_id(&table_reference.table_identifier);
             program.resolve_label(loop_labels.next, program.offset());
+            let cursor_id = program.resolve_cursor_id(&table_reference.table_identifier);
             if iter_dir
                 .as_ref()
                 .is_some_and(|dir| *dir == IterationDirection::Backwards)
