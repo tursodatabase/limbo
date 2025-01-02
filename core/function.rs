@@ -104,6 +104,7 @@ pub enum ScalarFunc {
     Soundex,
     Date,
     Time,
+    DateTime,
     Typeof,
     Unicode,
     Quote,
@@ -159,6 +160,7 @@ impl Display for ScalarFunc {
             Self::ZeroBlob => "zeroblob".to_string(),
             Self::LastInsertRowid => "last_insert_rowid".to_string(),
             Self::Replace => "replace".to_string(),
+            Self::DateTime => "datetime".to_string(),
         };
         write!(f, "{}", str)
     }
@@ -346,6 +348,7 @@ impl Func {
             "substring" => Ok(Self::Scalar(ScalarFunc::Substring)),
             "date" => Ok(Self::Scalar(ScalarFunc::Date)),
             "time" => Ok(Self::Scalar(ScalarFunc::Time)),
+            "datetime" => Ok(Self::Scalar(ScalarFunc::DateTime)),
             "typeof" => Ok(Self::Scalar(ScalarFunc::Typeof)),
             "last_insert_rowid" => Ok(Self::Scalar(ScalarFunc::LastInsertRowid)),
             "unicode" => Ok(Self::Scalar(ScalarFunc::Unicode)),
