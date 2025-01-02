@@ -1967,7 +1967,16 @@ pub fn translate_expr(
                 // the table and read the column from the cursor.
                 TableReferenceType::BTreeTable => {
                     let cursor_id = program.resolve_cursor_id(&tbl_ref.table_identifier);
-                    if *is_rowid_alias {
+                    if let Some((index_cursor_id, columns_mapping)) =
+                        program.index_cover_cursors.get(&cursor_id)
+                    {
+                        // FIXME: row_id is displayed as `column` in explain
+                        program.emit_insn(Insn::Column {
+                            cursor_id: *index_cursor_id,
+                            column: columns_mapping[column],
+                            dest: target_register,
+                        });
+                    } else if *is_rowid_alias {
                         program.emit_insn(Insn::RowId {
                             cursor_id,
                             dest: target_register,
@@ -1979,6 +1988,7 @@ pub fn translate_expr(
                             dest: target_register,
                         });
                     }
+
                     let column = tbl_ref.table.get_column_at(*column);
                     maybe_apply_affinity(column.ty, target_register, program);
                     Ok(target_register)
