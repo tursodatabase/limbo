@@ -26,6 +26,7 @@ pub enum JsonFunc {
     Json,
     JsonArray,
     JsonArrayLength,
+    JsonErrorPosition,
 }
 
 #[cfg(feature = "json")]
@@ -38,6 +39,7 @@ impl Display for JsonFunc {
                 Self::Json => "json".to_string(),
                 Self::JsonArray => "json_array".to_string(),
                 Self::JsonArrayLength => "json_array_length".to_string(),
+                Self::JsonErrorPosition => "json_error_position".to_string(),
             }
         )
     }
@@ -356,6 +358,8 @@ impl Func {
             "json_array_length" => Ok(Self::Json(JsonFunc::JsonArrayLength)),
             #[cfg(feature = "json")]
             "json_array" => Ok(Self::Json(JsonFunc::JsonArray)),
+            #[cfg(feature = "json")]
+            "json_error_position" => Ok(Self::Json(JsonFunc::JsonErrorPosition)),
             "unixepoch" => Ok(Self::Scalar(ScalarFunc::UnixEpoch)),
             "hex" => Ok(Self::Scalar(ScalarFunc::Hex)),
             "unhex" => Ok(Self::Scalar(ScalarFunc::Unhex)),

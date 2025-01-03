@@ -39,7 +39,10 @@ use crate::types::{
 use crate::util::parse_schema_rows;
 use crate::vdbe::insn::Insn;
 #[cfg(feature = "json")]
-use crate::{function::JsonFunc, json::get_json, json::json_array, json::json_array_length};
+use crate::{
+    function::JsonFunc, json::get_json, json::json_array, json::json_array_length,
+    json::json_error_position,
+};
 use crate::{Connection, Result, Rows, TransactionState, DATABASE_VERSION};
 use datetime::{exec_date, exec_time, exec_unixepoch};
 use insn::{
@@ -1305,6 +1308,14 @@ impl Program {
 
                             match json_array_length {
                                 Ok(length) => state.registers[*dest] = length,
+                                Err(e) => return Err(e),
+                            }
+                        }
+                        #[cfg(feature = "json")]
+                        crate::function::Func::Json(JsonFunc::JsonErrorPosition) => {
+                            let json_value = &state.registers[*start_reg];
+                            match json_error_position(json_value) {
+                                Ok(pos) => state.registers[*dest] = pos,
                                 Err(e) => return Err(e),
                             }
                         }
