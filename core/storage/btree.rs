@@ -1936,7 +1936,7 @@ impl Cursor for BTreeCursor {
         }
 
         // TODO: Clear overflow pages
-        
+
         page.set_dirty();
         self.pager.add_dirty(page.get().id);
 
