@@ -572,4 +572,72 @@ mod tests {
         do_flush(&conn, &tmp_db)?;
         Ok(())
     }
+
+    #[test]
+    fn test_simple_delete() -> anyhow::Result<()> {
+        let _ = env_logger::try_init();
+        let tmp_db = TempDatabase::new("CREATE TABLE test (x INTEGER PRIMARY KEY);");
+        let conn = tmp_db.connect_limbo();
+
+        let insert_query = "INSERT INTO test VALUES (1)";
+        match conn.query(insert_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.next_row()? {
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    _ => unreachable!(),
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        };
+
+        let delete_query = "DELETE FROM test WHERE x = 1;";
+        match conn.query(delete_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.next_row()? {
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    _ => unreachable!(),
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        };
+
+        let count_query = "SELECT COUNT(*) FROM test;";
+        match conn.query(count_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.next_row()? {
+                    StepResult::Row(row) => {
+                        let count = match row.values[0] {
+                            Value::Integer(i) => i,
+                            _ => unreachable!(),
+                        };
+                        assert_eq!(count, 0, "Table should be empty after delete");
+                    }
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    _ => unreachable!(),
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        };
+
+        do_flush(&conn, &tmp_db)?;
+        Ok(())
+    }
 }
