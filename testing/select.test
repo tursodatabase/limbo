@@ -11,6 +11,14 @@ do_execsql_test select-const-2 {
   SELECT 2
 } {2}
 
+do_execsql_test select-true {
+  SELECT true
+} {1}
+
+do_execsql_test select-false {
+  SELECT false
+} {0}
+
 do_execsql_test select-text-escape-1 {
   SELECT '''a'
 } {'a}
@@ -29,6 +37,15 @@ do_execsql_test select-blob-emoji {
 
 do_execsql_test select-limit-0 {
   SELECT id FROM users LIMIT 0;
+} {}
+
+# ORDER BY id here because sqlite uses age_idx here and we (yet) don't so force it to evaluate in ID order
+do_execsql_test select-limit-true {
+  SELECT id FROM users ORDER BY id LIMIT true;
+} {1}
+
+do_execsql_test select-limit-false {
+  SELECT id FROM users ORDER BY id LIMIT false;
 } {}
 
 do_execsql_test realify {
@@ -62,6 +79,14 @@ do_execsql_test select_with_quoting {
 do_execsql_test select_with_quoting_2 {
   select "users".`id` from users where `users`.[id] = 5;
 } {5}
+
+do_execsql_test select-rowid {
+    select rowid, first_name from users u where rowid = 5;
+} {5|Edward}
+
+do_execsql_test select-rowid-2 {
+    select u.rowid, first_name from users u where rowid = 5;
+} {5|Edward}
 
 do_execsql_test seekrowid {
     select * from users u where u.id = 5;

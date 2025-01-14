@@ -20,7 +20,7 @@ mod model;
 mod runner;
 
 fn main() {
-    let _ = env_logger::try_init();
+    init_logger();
 
     let cli_opts = SimulatorCLI::parse();
 
@@ -36,6 +36,8 @@ fn main() {
 
     let db_path = output_dir.join("simulator.db");
     let plan_path = output_dir.join("simulator.plan");
+
+    banner();
 
     // Print the seed, the locations of the database and the plan file
     log::info!("database path: {:?}", db_path);
@@ -269,7 +271,7 @@ fn execute_plan(
     let interaction = &plan.plan[plan.interaction_pointer];
 
     if let SimConnection::Disconnected = connection {
-        log::info!("connecting {}", connection_index);
+        log::trace!("connecting {}", connection_index);
         env.connections[connection_index] = SimConnection::Connected(env.db.connect());
     } else {
         match execute_interaction(env, connection_index, interaction, &mut plan.stack) {
@@ -293,7 +295,7 @@ fn execute_interaction(
     interaction: &Interaction,
     stack: &mut Vec<ResultSet>,
 ) -> Result<()> {
-    log::info!("executing: {}", interaction);
+    log::trace!("executing: {}", interaction);
     match interaction {
         generation::plan::Interaction::Query(_) => {
             let conn = match &mut env.connections[connection_index] {
@@ -326,3 +328,38 @@ fn compare_equal_rows(a: &[Vec<Value>], b: &[Vec<Value>]) {
         }
     }
 }
+
+fn init_logger() {
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+        .format_timestamp(None)
+        .format_module_path(false)
+        .format_target(false)
+        .init();
+}
+
+fn banner() {
+    println!("{}", BANNER);
+}
+
+const BANNER: &str = r#"
+  ,_______________________________.
+  | ,___________________________. |
+  | |                           | |
+  | | >HELLO                    | |
+  | |                           | |
+  | | >A STRANGE GAME.          | |
+  | | >THE ONLY WINNING MOVE IS | |
+  | | >NOT TO PLAY.             | |
+  | |___________________________| |
+  |                               |
+  |                               |
+  `-------------------------------`
+          |              |
+          |______________|
+      ,______________________.
+     / /====================\ \
+    / /======================\ \
+   /____________________________\
+   \____________________________/
+
+"#;
