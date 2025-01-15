@@ -1584,6 +1584,8 @@ pub enum PragmaName {
     CacheSize,
     /// `journal_mode` pragma
     JournalMode,
+    /// `freelist_count` pragma - number of free pages in the database file
+    FreelistCount,
 }
 
 impl FromStr for PragmaName {
@@ -1593,6 +1595,7 @@ impl FromStr for PragmaName {
         match input {
             "cache_size" => Ok(PragmaName::CacheSize),
             "journal_mode" => Ok(PragmaName::JournalMode),
+            "freelist_count" => Ok(PragmaName::FreelistCount),
             _ => Err(()),
         }
     }

@@ -607,6 +607,10 @@ fn update_pragma(
             query_pragma("journal_mode", header, program)?;
             Ok(())
         }
+        PragmaName::FreelistCount => {
+            query_pragma("freelist_count", header, program)?;
+            Ok(())
+        }
     }
 }
 
@@ -630,6 +634,13 @@ fn query_pragma(
         PragmaName::JournalMode => {
             program.emit_insn(Insn::String8 {
                 value: "wal".into(),
+                dest: register,
+            });
+        }
+        PragmaName::FreelistCount => {
+            let free_page_count = database_header.borrow().freelist_pages;
+            program.emit_insn(Insn::Integer {
+                value: free_page_count as i64,
                 dest: register,
             });
         }
