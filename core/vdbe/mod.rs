@@ -31,7 +31,7 @@ use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
-use crate::types::{AggContext, CursorResult, OwnedRecord, OwnedValue, Record, SeekKey, SeekOp};
+use crate::types::{AggContext, BTreeKey, CursorResult, OwnedRecord, OwnedValue, Record, SeekOp};
 use crate::util::parse_schema_rows;
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
@@ -627,8 +627,13 @@ impl Program {
                     root_page,
                 } => {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
-                    let cursor =
-                        BTreeCursor::new(pager.clone(), *root_page, self.database_header.clone());
+                    let is_index = cursor_type.is_index();
+                    let cursor = BTreeCursor::new(
+                        pager.clone(),
+                        *root_page,
+                        self.database_header.clone(),
+                        is_index,
+                    );
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
                             btree_table_cursors.insert(*cursor_id, cursor);
@@ -726,7 +731,9 @@ impl Program {
                         let index_cursor = btree_index_cursors.get_mut(&index_cursor_id).unwrap();
                         let rowid = index_cursor.rowid()?;
                         let table_cursor = btree_table_cursors.get_mut(&table_cursor_id).unwrap();
-                        match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+                        match table_cursor
+                            .seek(&BTreeKey::TableRowId(rowid.unwrap()), SeekOp::EQ)?
+                        {
                             CursorResult::Ok(_) => {}
                             CursorResult::IO => {
                                 state.deferred_seek = Some((index_cursor_id, table_cursor_id));
@@ -744,16 +751,26 @@ impl Program {
                                 btree_index_cursors,
                                 "Column"
                             );
-                            let record = cursor.record()?;
-                            if let Some(record) = record.as_ref() {
-                                state.registers[*dest] = if cursor.get_null_flag() {
-                                    OwnedValue::Null
+                            let record = {
+                                if cursor.is_index {
+                                    let key = cursor.key()?;
+                                    match key.as_ref() {
+                                        Some(BTreeKey::IndexKey(key)) => {
+                                            key.values[*column].clone()
+                                        }
+                                        None => OwnedValue::Null,
+                                        _ => panic!("Column: cursor is not an index cursor"),
+                                    }
                                 } else {
-                                    record.values[*column].clone()
-                                };
-                            } else {
-                                state.registers[*dest] = OwnedValue::Null;
-                            }
+                                    let record = cursor.record()?;
+                                    if let Some(record) = record.as_ref() {
+                                        record.values[*column].clone()
+                                    } else {
+                                        OwnedValue::Null
+                                    }
+                                }
+                            };
+                            state.registers[*dest] = record;
                         }
                         CursorType::Sorter => {
                             let cursor = sorter_cursors.get_mut(cursor_id).unwrap();
@@ -964,7 +981,9 @@ impl Program {
                         let index_cursor = btree_index_cursors.get_mut(&index_cursor_id).unwrap();
                         let rowid = index_cursor.rowid()?;
                         let table_cursor = btree_table_cursors.get_mut(&table_cursor_id).unwrap();
-                        match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+                        match table_cursor
+                            .seek(&BTreeKey::TableRowId(rowid.unwrap()), SeekOp::EQ)?
+                        {
                             CursorResult::Ok(_) => {}
                             CursorResult::IO => {
                                 state.deferred_seek = Some((index_cursor_id, table_cursor_id));
@@ -1000,7 +1019,8 @@ impl Program {
                             ));
                         }
                     };
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ));
+                    let found =
+                        return_if_io!(cursor.seek(&BTreeKey::TableRowId(rowid), SeekOp::EQ));
                     if !found {
                         state.pc = target_pc.to_offset_int();
                     } else {
@@ -1027,7 +1047,7 @@ impl Program {
                         let record_from_regs: OwnedRecord =
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let found = return_if_io!(
-                            cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GE)
+                            cursor.seek(&BTreeKey::IndexKey(record_from_regs), SeekOp::GE)
                         );
                         if !found {
                             state.pc = target_pc.to_offset_int();
@@ -1051,7 +1071,7 @@ impl Program {
                             }
                         };
                         let found =
-                            return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE));
+                            return_if_io!(cursor.seek(&BTreeKey::TableRowId(rowid), SeekOp::GE));
                         if !found {
                             state.pc = target_pc.to_offset_int();
                         } else {
@@ -1072,7 +1092,7 @@ impl Program {
                         let record_from_regs: OwnedRecord =
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let found = return_if_io!(
-                            cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GT)
+                            cursor.seek(&BTreeKey::IndexKey(record_from_regs), SeekOp::GT)
                         );
                         if !found {
                             state.pc = target_pc.to_offset_int();
@@ -1096,7 +1116,7 @@ impl Program {
                             }
                         };
                         let found =
-                            return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GT));
+                            return_if_io!(cursor.seek(&BTreeKey::TableRowId(rowid), SeekOp::GT));
                         if !found {
                             state.pc = target_pc.to_offset_int();
                         } else {
@@ -1114,7 +1134,10 @@ impl Program {
                     let cursor = btree_index_cursors.get_mut(cursor_id).unwrap();
                     let record_from_regs: OwnedRecord =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.key()? {
+                        let BTreeKey::IndexKey(idx_record) = idx_record else {
+                            panic!("IdxGE: cursor is not an index cursor");
+                        };
                         // omit the rowid from the idx_record, which is the last value
                         if idx_record.values[..idx_record.values.len() - 1]
                             >= *record_from_regs.values
@@ -1137,7 +1160,10 @@ impl Program {
                     let cursor = btree_index_cursors.get_mut(cursor_id).unwrap();
                     let record_from_regs: OwnedRecord =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.key()? {
+                        let BTreeKey::IndexKey(idx_record) = idx_record else {
+                            panic!("IdxGT: cursor is not an index cursor");
+                        };
                         // omit the rowid from the idx_record, which is the last value
                         if idx_record.values[..idx_record.values.len() - 1]
                             > *record_from_regs.values
@@ -1999,11 +2025,18 @@ impl Program {
                         _ => unreachable!("Not a record! Cannot insert a non record value."),
                     };
                     let key = &state.registers[*key_reg];
+                    let key = match key {
+                        OwnedValue::Integer(i) => BTreeKey::TableRowId(*i as u64),
+                        _ => unreachable!("Not an integer! Cannot insert a non integer value."),
+                    };
                     return_if_io!(cursor.insert(key, record, true));
                     state.pc += 1;
                 }
                 Insn::InsertAwait { cursor_id } => {
                     let cursor = btree_table_cursors.get_mut(cursor_id).unwrap();
+                    if cursor.is_index {
+                        panic!("InsertAwait is an invalid operation on index cursors");
+                    }
                     cursor.wait_for_completion()?;
                     // Only update last_insert_rowid for regular table inserts, not schema modifications
                     if cursor.root_page() != 1 {
@@ -2016,6 +2049,26 @@ impl Program {
                             }
                         }
                     }
+                    state.pc += 1;
+                }
+                Insn::IdxInsertAsync {
+                    cursor_id,
+                    key_reg,
+                    flag: _,
+                } => {
+                    let cursor = btree_index_cursors.get_mut(cursor_id).unwrap();
+                    let key = &state.registers[*key_reg];
+                    let key = match key {
+                        OwnedValue::Record(r) => r,
+                        _ => unreachable!("Not a record! Cannot insert a non record value."),
+                    };
+                    let key = BTreeKey::IndexKey(key.clone());
+                    return_if_io!(cursor.idx_insert(key, false));
+                    state.pc += 1;
+                }
+                Insn::IdxInsertAwait { cursor_id } => {
+                    let cursor = btree_index_cursors.get_mut(cursor_id).unwrap();
+                    cursor.wait_for_completion()?;
                     state.pc += 1;
                 }
                 Insn::DeleteAsync { cursor_id } => {
@@ -2064,7 +2117,15 @@ impl Program {
                         btree_index_cursors,
                         "NotExists"
                     );
-                    let exists = return_if_io!(cursor.exists(&state.registers[*rowid_reg]));
+                    if cursor.is_index {
+                        todo!("NotExists only works for btree tables right now");
+                    }
+                    let key = &state.registers[*rowid_reg];
+                    let key = match key {
+                        OwnedValue::Integer(i) => BTreeKey::TableRowId(*i as u64),
+                        _ => unreachable!("NotExists: the value in the register is not an integer"),
+                    };
+                    let exists = return_if_io!(cursor.exists(&key));
                     if exists {
                         state.pc += 1;
                     } else {
@@ -2080,8 +2141,12 @@ impl Program {
                 } => {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
                     let is_index = cursor_type.is_index();
-                    let cursor =
-                        BTreeCursor::new(pager.clone(), *root_page, self.database_header.clone());
+                    let cursor = BTreeCursor::new(
+                        pager.clone(),
+                        *root_page,
+                        self.database_header.clone(),
+                        is_index,
+                    );
                     if is_index {
                         btree_index_cursors.insert(*cursor_id, cursor);
                     } else {
@@ -2103,6 +2168,7 @@ impl Program {
                     state.pc += 1;
                 }
                 Insn::CreateBtree { db, root, flags } => {
+                    const FLAG_INDEX: usize = 2;
                     if *db > 0 {
                         // TODO: implement temp datbases
                         todo!("temp databases not implemented yet");
@@ -2111,6 +2177,7 @@ impl Program {
                         pager.clone(),
                         0,
                         self.database_header.clone(),
+                        *flags == FLAG_INDEX,
                     ));
 
                     let root_page = cursor.btree_create(*flags);
@@ -2164,17 +2231,23 @@ impl Program {
 }
 
 fn get_new_rowid<R: Rng>(cursor: &mut BTreeCursor, mut rng: R) -> Result<CursorResult<i64>> {
+    if cursor.is_index {
+        panic!("Index cursor should not be used to generate rowids");
+    }
     match cursor.seek_to_last()? {
         CursorResult::Ok(()) => {}
         CursorResult::IO => return Ok(CursorResult::IO),
     }
-    let mut rowid = cursor.rowid()?.unwrap_or(0) + 1;
+    let mut rowid = match cursor.rowid()? {
+        Some(rowid) => rowid + 1,
+        None => 1,
+    };
     if rowid > i64::MAX.try_into().unwrap() {
         let distribution = Uniform::from(1..=i64::MAX);
         let max_attempts = 100;
         for count in 0..max_attempts {
             rowid = distribution.sample(&mut rng).try_into().unwrap();
-            match cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ)? {
+            match cursor.seek(&BTreeKey::TableRowId(rowid), SeekOp::EQ)? {
                 CursorResult::Ok(false) => break, // Found a non-existing rowid
                 CursorResult::Ok(true) => {
                     if count == max_attempts - 1 {

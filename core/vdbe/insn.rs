@@ -419,6 +419,16 @@ pub enum Insn {
         cursor_id: usize,
     },
 
+    IdxInsertAsync {
+        cursor_id: usize,
+        key_reg: usize, // In indexes, keys are records and there is no other payload.
+        flag: usize,    // Flags used by insert, for now not used.
+    },
+
+    IdxInsertAwait {
+        cursor_id: usize,
+    },
+
     DeleteAsync {
         cursor_id: CursorID,
     },
