@@ -45,6 +45,7 @@ This document describes the SQLite compatibility status of Limbo:
 | ON CONFLICT clause        | No      |         |
 | PRAGMA                    | Partial |         |
 | PRAGMA cache_size         | Yes     |         |
+| PRAGMA freelist_count     | Yes     |         |
 | REINDEX                   | No      |         |
 | RELEASE SAVEPOINT         | No      |         |
 | REPLACE                   | No      |         |
