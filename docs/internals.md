@@ -19,18 +19,29 @@ advantages, integration with cloud services remains crucial for operations
 like backups. Limbo's asynchronous I/O model facilitates this by supporting
 networked storage capabilities.
 
-The front-end to Limbo is the SQLite query language, which is a SQL
-dialect. You can evaluate SQL statements with the Limbo shell:
+The high-level interface to Limbo is the same as in SQLite:
+
+* SQLite query language
+* The `sqlite3_prepare()` function for translating SQL statements to programs
+  ("prepared statements")
+* The `sqlite3_step()` function for executing programs
+
+If we start with the SQLite query language, you can use the `limbo`
+command, for example, to evaluate SQL statements in the shell:
 
 ```
 limbo> SELECT 'hello, world';
 hello, world
 ```
 
-The database system parses the SQL statement `SELECT 'hello, world'`,
-generates a bytecode program for it, and executes it, producing results.
+To execute this SQL statement, the shell uses the `sqlite3_prepare()`
+interface to parse the statement and generate a bytecode program, a step
+called preparing a statement. When a statement is prepared, it can be executed
+using the `sqlite3_step()` function.
+
 To inspect the bytecode program for a SQL statement, you can use the
-`EXPLAIN` command in the shell as follows:
+`EXPLAIN` command in the shell. For our example SQL statement, the bytecode
+looks as follows:
 
 ```
 limbo> EXPLAIN SELECT 'hello, world';
