@@ -4,15 +4,23 @@ This document describes the compatibility of Limbo with SQLite.
 
 ## Table of contents:
 
-- [Features](#features)
-- [SQLite query language](#sqlite-query-language)
+- [Compatibility with SQLite](#compatibility-with-sqlite)
+  - [Table of contents:](#table-of-contents)
+  - [Features](#features)
+  - [SQLite query language](#sqlite-query-language)
     - [Statements](#statements)
     - [Expressions](#expressions)
-    - [Functions](#functions)
-- [SQLite C API](#sqlite-c-api)
-- [SQLite VDBE opcodes](#sqlite-vdbe-opcodes)
-- [Extensions](#extensions)
+    - [SQL functions](#sql-functions)
+      - [Scalar functions](#scalar-functions)
+      - [Mathematical functions](#mathematical-functions)
+      - [Aggregate functions](#aggregate-functions)
+      - [Date and time functions](#date-and-time-functions)
+      - [JSON functions](#json-functions)
+  - [SQLite C API](#sqlite-c-api)
+  - [SQLite VDBE opcodes](#sqlite-vdbe-opcodes)
+  - [Extensions](#extensions)
     - [UUID](#uuid)
+    - [regexp](#regexp)
 
 ## Features
 
@@ -289,7 +297,7 @@ Modifiers:
 | json_type(json,path)               | Yes     |                                                                                                                                              |
 | json_valid(json)                   |         |                                                                                                                                              |
 | json_valid(json,flags)             |         |                                                                                                                                              |
-| json_quote(value)                  |         |                                                                                                                                              |
+| json_quote(value)                  | Yes     |                                                                                                                                              |
 | json_group_array(value)            |         |                                                                                                                                              |
 | jsonb_group_array(value)           |         |                                                                                                                                              |
 | json_group_object(label,value)     |         |                                                                                                                                              |
