@@ -908,6 +908,18 @@ pub fn translate_expr(
 
                         translate_function(
                             program,
+                            args,
+                            referenced_tables,
+                            resolver,
+                            target_register,
+                            func_ctx,
+                        )
+                    }
+                    JsonFunc::JsonQuote => {
+                        let args = expect_arguments_exact!(args, 1, j);
+
+                        translate_function(
+                            program,
                             &args,
                             referenced_tables,
                             resolver,

@@ -12,6 +12,7 @@ pub use crate::json::ser::to_string;
 use crate::types::{LimboText, OwnedValue, TextSubtype};
 use indexmap::IndexMap;
 use jsonb::Error as JsonbError;
+use ser::escape;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -446,6 +447,36 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let result = crate::json::to_string(&value_map).unwrap();
     Ok(OwnedValue::Text(LimboText::json(Rc::new(result))))
+}
+
+pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {
+    match value {
+        OwnedValue::Text(ref t) => {
+            // If X is a JSON value returned by another JSON function,
+            // then this function is a no-op
+            if t.subtype == TextSubtype::Json {
+                // Should just return the json value with no quotes
+                return Ok(value.to_owned());
+            }
+
+            let quoted_value = format!("\"{}\"", escape(&t.value));
+
+            Ok(OwnedValue::Text(LimboText::new(Rc::new(quoted_value))))
+        }
+        // Numbers are unquoted in json
+        OwnedValue::Integer(ref int) => Ok(OwnedValue::Integer(int.to_owned())),
+        OwnedValue::Float(ref float) => Ok(OwnedValue::Float(float.to_owned())),
+        OwnedValue::Blob(_) => crate::bail_constraint_error!("JSON cannot hold BLOB values"),
+        OwnedValue::Null => {
+            let null_value = "null".to_string();
+
+            Ok(OwnedValue::Text(LimboText::new(Rc::new(null_value))))
+        }
+        _ => {
+            // TODO not too sure what message should be here
+            crate::bail_parse_error!("Syntax error");
+        }
+    }
 }
 
 #[cfg(test)]

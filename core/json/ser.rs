@@ -368,7 +368,11 @@ impl ser::SerializeStructVariant for &mut Serializer {
     }
 }
 
-fn escape(v: &str) -> String {
+// TODO not sure if this function can be public
+// But wanted to avoid having the same copy of the function in two different places
+// Maybe this function could be placed in mod file instead
+// As it is used by the json quote funcion
+pub fn escape(v: &str) -> String {
     v.chars()
         .flat_map(|c| match c {
             '"' => vec!['\\', c],
