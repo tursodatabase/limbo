@@ -1701,7 +1701,7 @@ impl Program {
                             }
                             JsonFunc::JsonQuote => {
                                 let json_value = &state.registers[*start_reg];
-                               
+
                                 match json_quote(json_value) {
                                     Ok(result) => state.registers[*dest] = result,
                                     Err(e) => return Err(e),
