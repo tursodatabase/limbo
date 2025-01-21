@@ -31,9 +31,8 @@ use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
-use crate::types::{
-    AggContext, CursorResult, ExternalAggState, OwnedRecord, OwnedValue, Record, SeekKey, SeekOp,
-};
+use crate::types::ExternalAggState;
+use crate::types::{AggContext, CursorResult, OwnedRecord, OwnedValue, Record, SeekKey, SeekOp};
 use crate::util::parse_schema_rows;
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;

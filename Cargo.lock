@@ -1270,6 +1270,9 @@ dependencies = [
  "libloading",
  "limbo_ext",
  "limbo_macros",
+ "limbo_percentile",
+ "limbo_regexp",
+ "limbo_uuid",
  "log",
  "miette",
  "mimalloc",
@@ -1289,7 +1292,6 @@ dependencies = [
  "sqlite3-parser",
  "tempfile",
  "thiserror 1.0.69",
- "uuid",
 ]
 
 [[package]]
