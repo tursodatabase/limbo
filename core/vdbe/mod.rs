@@ -414,7 +414,7 @@ impl Program {
                     state.pc += 1;
                 }
                 Insn::NullRow { cursor_id } => {
-                    let cursor = match must_be_btree_cursor!(
+                    match must_be_btree_cursor!(
                         *cursor_id,
                         self.cursor_ref,
                         btree_table_cursors,
@@ -774,7 +774,7 @@ impl Program {
                     state.pc += 1;
                 }
                 Insn::RewindAsync { cursor_id } => {
-                    let cursor = match must_be_btree_cursor!(
+                    match must_be_btree_cursor!(
                         *cursor_id,
                         self.cursor_ref,
                         btree_table_cursors,
@@ -789,7 +789,7 @@ impl Program {
                     state.pc += 1;
                 }
                 Insn::LastAsync { cursor_id } => {
-                    let cursor = match must_be_btree_cursor!(
+                    match must_be_btree_cursor!(
                         *cursor_id,
                         self.cursor_ref,
                         btree_table_cursors,
@@ -933,14 +933,6 @@ impl Program {
                                 state.registers[*dest] = record.values[*column].clone();
                             } else {
                                 state.registers[*dest] = OwnedValue::Null;
-                            }
-                        }
-                        CursorType::Ephemeral(_) => {
-                            let cursor = ephemeral_cursors.get_mut(cursor_id).unwrap();
-                            if let Some(record) = cursor.record() {
-                                state.registers[*dest] = record.values[*column].clone();
-                            } else {
-                                state.registers[*dest] = OwnedValue::Null
                             }
                         }
                     }
