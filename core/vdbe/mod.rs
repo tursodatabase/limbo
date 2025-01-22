@@ -24,6 +24,7 @@ pub mod insn;
 pub mod likeop;
 pub mod sorter;
 
+use crate::ephemeral::EphemeralCursor;
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::ext::ExtValue;
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc};
@@ -196,6 +197,7 @@ pub struct ProgramState {
     btree_table_cursors: RefCell<BTreeMap<CursorID, BTreeCursor>>,
     btree_index_cursors: RefCell<BTreeMap<CursorID, BTreeCursor>>,
     pseudo_cursors: RefCell<BTreeMap<CursorID, PseudoCursor>>,
+    ephemeral_cursors: RefCell<BTreeMap<CursorID, EphemeralCursor>>,
     sorter_cursors: RefCell<BTreeMap<CursorID, Sorter>>,
     registers: Vec<OwnedValue>,
     last_compare: Option<std::cmp::Ordering>,
@@ -212,6 +214,7 @@ impl ProgramState {
         let btree_index_cursors = RefCell::new(BTreeMap::new());
         let pseudo_cursors = RefCell::new(BTreeMap::new());
         let sorter_cursors = RefCell::new(BTreeMap::new());
+        let ephemeral_cursors = RefCell::new(BTreeMap::new());
         let mut registers = Vec::with_capacity(max_registers);
         registers.resize(max_registers, OwnedValue::Null);
         Self {
@@ -221,6 +224,7 @@ impl ProgramState {
             pseudo_cursors,
             sorter_cursors,
             registers,
+            ephemeral_cursors,
             last_compare: None,
             deferred_seek: None,
             ended_coroutine: HashMap::new(),
@@ -266,6 +270,7 @@ macro_rules! must_be_btree_cursor {
             CursorType::BTreeTable(_) => $btree_table_cursors.get_mut(&$cursor_id).unwrap(),
             CursorType::BTreeIndex(_) => $btree_index_cursors.get_mut(&$cursor_id).unwrap(),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
+            CursorType::Ephemeral(_) => panic!("{} on ephemeral cursor", $insn_name),
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
         };
         cursor
@@ -318,6 +323,7 @@ impl Program {
             trace_insn(self, state.pc as InsnReference, insn);
             let mut btree_table_cursors = state.btree_table_cursors.borrow_mut();
             let mut btree_index_cursors = state.btree_index_cursors.borrow_mut();
+            let mut ephemeral_cursors = state.ephemeral_cursors.borrow_mut();
             let mut pseudo_cursors = state.pseudo_cursors.borrow_mut();
             let mut sorter_cursors = state.sorter_cursors.borrow_mut();
             match insn {
@@ -699,14 +705,28 @@ impl Program {
                     root_page,
                 } => {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
-                    let cursor =
-                        BTreeCursor::new(pager.clone(), *root_page, self.database_header.clone());
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
+                            let cursor = BTreeCursor::new(
+                                pager.clone(),
+                                *root_page,
+                                self.database_header.clone(),
+                            );
+
                             btree_table_cursors.insert(*cursor_id, cursor);
                         }
                         CursorType::BTreeIndex(_) => {
+                            let cursor = BTreeCursor::new(
+                                pager.clone(),
+                                *root_page,
+                                self.database_header.clone(),
+                            );
+
                             btree_index_cursors.insert(*cursor_id, cursor);
+                        }
+                        CursorType::Ephemeral(_) => {
+                            let cursor = EphemeralCursor::new();
+                            ephemeral_cursors.insert(*cursor_id, cursor);
                         }
                         CursorType::Pseudo(_) => {
                             panic!("OpenReadAsync on pseudo cursor");
@@ -843,6 +863,7 @@ impl Program {
                                 state.registers[*dest] = OwnedValue::Null;
                             }
                         }
+                        CursorType::Ephemeral(ephemeral_table) => todo!(),
                     }
 
                     state.pc += 1;
@@ -2284,6 +2305,7 @@ impl Program {
                         CursorType::Sorter => {
                             let _ = sorter_cursors.remove(cursor_id);
                         }
+                        CursorType::Ephemeral(ephemeral_table) => todo!(),
                     }
                     state.pc += 1;
                 }
