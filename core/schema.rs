@@ -950,7 +950,17 @@ mod tests {
 
 #[derive(Debug)]
 pub struct EphemeralTable {
-    rows: BTreeMap<u64, Vec<OwnedValue>>, // rowid -> each index in the Vec is a column
-    next_rowid: u64,                      // generate rowids
-    columns: Vec<Column>,                 // columns
+    pub rows: BTreeMap<u64, Vec<OwnedValue>>, // rowid -> each index in the Vec is a column
+    pub next_rowid: u64,                      // generate rowids
+    pub columns: Vec<Column>,                 // columns
+}
+
+impl EphemeralTable {
+    pub fn new() -> Self {
+        Self {
+            rows: todo!(),
+            next_rowid: todo!(),
+            columns: todo!(),
+        }
+    }
 }

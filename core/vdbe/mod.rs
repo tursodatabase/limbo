@@ -341,7 +341,6 @@ impl ProgramState {
             cursors,
             registers,
             result_row: None,
-            ephemeral_cursors,
             last_compare: None,
             deferred_seek: None,
             ended_coroutine: Bitfield::new(),
@@ -397,7 +396,9 @@ macro_rules! must_be_btree_cursor {
             CursorType::BTreeTable(_) => get_cursor_as_table_mut(&mut $cursors, $cursor_id),
             CursorType::BTreeIndex(_) => get_cursor_as_index_mut(&mut $cursors, $cursor_id),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
-            CursorType::Ephemeral(_) => panic!("{} on ephemeral cursor", $insn_name),
+            CursorType::Ephemeral(_) => {
+                GeneralCursor::Ephemeral($ephemeral_cursors.get_mut(&$cursor_id).unwrap())
+            }
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
             CursorType::VirtualTable(_) => panic!("{} on virtual table cursor", $insn_name),
         };
@@ -946,6 +947,15 @@ impl Program {
                         .replace(Cursor::new_pseudo(cursor));
                     state.pc += 1;
                 }
+                Insn::OpenEphemeral {
+                    cursor_id,
+                    content_reg: _,
+                    num_fields: _,
+                } => {
+                    let cursor = EphemeralCursor::new();
+                    ephemeral_cursors.insert(*cursor_id, cursor);
+                    state.pc += 1;
+                }
                 Insn::RewindAsync { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();
                     let cursor =
@@ -1010,23 +1020,39 @@ impl Program {
                     }
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
                     match cursor_type {
-                        CursorType::BTreeTable(_) | CursorType::BTreeIndex(_) => {
-                            let cursor = must_be_btree_cursor!(
+                        CursorType::BTreeTable(_)
+                        | CursorType::BTreeIndex(_)
+                        | CursorType::Ephemeral(_) => {
+                            match must_be_btree_cursor!(
                                 *cursor_id,
                                 self.cursor_ref,
                                 cursors,
                                 "Column"
-                            );
-                            let record = cursor.record()?;
-                            if let Some(record) = record.as_ref() {
-                                state.registers[*dest] = if cursor.get_null_flag() {
-                                    OwnedValue::Null
-                                } else {
-                                    record.values[*column].clone()
-                                };
-                            } else {
-                                state.registers[*dest] = OwnedValue::Null;
-                            }
+                            ) {
+                                GeneralCursor::BTree(cursor) => {
+                                    let record = cursor.record()?;
+                                    if let Some(record) = record.as_ref() {
+                                        state.registers[*dest] = if cursor.get_null_flag() {
+                                            OwnedValue::Null
+                                        } else {
+                                            record.values[*column].clone()
+                                        };
+                                    } else {
+                                        state.registers[*dest] = OwnedValue::Null;
+                                    }
+                                }
+                                GeneralCursor::Ephemeral(cursor) => {
+                                    if let Some(record) = cursor.record() {
+                                        state.registers[*dest] = if cursor.get_null_flag() {
+                                            OwnedValue::Null
+                                        } else {
+                                            record.values[*column].clone()
+                                        };
+                                    } else {
+                                        state.registers[*dest] = OwnedValue::Null;
+                                    }
+                                }
+                            };
                         }
                         CursorType::Sorter => {
                             let cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
@@ -1049,7 +1075,14 @@ impl Program {
                                 "Insn::Column on virtual table cursor, use Insn::VColumn instead"
                             );
                         }
-                        CursorType::Ephemeral(ephemeral_table) => todo!(),
+                        CursorType::Ephemeral(_) => {
+                            let cursor = ephemeral_cursors.get_mut(cursor_id).unwrap();
+                            if let Some(record) = cursor.record() {
+                                state.registers[*dest] = record.values[*column].clone();
+                            } else {
+                                state.registers[*dest] = OwnedValue::Null
+                            }
+                        }
                     }
 
                     state.pc += 1;
