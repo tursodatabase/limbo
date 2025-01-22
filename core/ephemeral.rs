@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     schema::EphemeralTable,
-    types::{CursorResult, OwnedRecord},
+    types::{CursorResult, OwnedRecord, SeekKey, SeekOp},
     LimboError,
 };
 use crate::{types::OwnedValue, Result};
@@ -26,6 +26,66 @@ impl EphemeralCursor {
             current: None,
             null_flag: false,
         }
+    }
+
+    pub fn do_seek(
+        &mut self,
+        key: SeekKey<'_>,
+        op: SeekOp,
+    ) -> Result<CursorResult<(Option<u64>, Option<OwnedRecord>)>> {
+        let table = self.table.borrow();
+        let rows = &table.rows;
+
+        match key {
+            SeekKey::TableRowId(rowid) => {
+                // Seek by row ID
+                let entry = match op {
+                    SeekOp::EQ => rows.get(&rowid).map(|values| (rowid, values.clone())),
+                    SeekOp::GE => rows
+                        .range(rowid..)
+                        .next()
+                        .map(|(&id, values)| (id, values.clone())),
+                    SeekOp::GT => rows
+                        .range((rowid + 1)..)
+                        .next()
+                        .map(|(&id, values)| (id, values.clone())),
+                };
+
+                if let Some((id, values)) = entry {
+                    self.rowid = Some(id);
+                    self.current = Some(OwnedRecord { values });
+                    self.null_flag = false;
+                    return Ok(CursorResult::Ok((Some(id), self.current.clone())));
+                }
+            }
+            SeekKey::IndexKey(index_key) => {
+                // Seek by index key (ignoring row ID)
+                for (&rowid, values) in rows.iter() {
+                    let record = OwnedRecord {
+                        values: values.clone(),
+                    };
+
+                    let comparison = match op {
+                        SeekOp::EQ => record == *index_key,
+                        SeekOp::GE => record >= *index_key,
+                        SeekOp::GT => record > *index_key,
+                    };
+
+                    if comparison {
+                        self.rowid = Some(rowid);
+                        self.current = Some(record);
+                        self.null_flag = false;
+                        return Ok(CursorResult::Ok((Some(rowid), self.current.clone())));
+                    }
+                }
+            }
+        }
+
+        // No matching record found
+        self.rowid = None;
+        self.current = None;
+        self.null_flag = true;
+        Ok(CursorResult::Ok((None, None)))
     }
 
     pub fn insert(
@@ -219,7 +279,7 @@ mod tests {
 
     use crate::{
         schema::EphemeralTable,
-        types::{CursorResult, LimboText, OwnedRecord, OwnedValue},
+        types::{CursorResult, LimboText, OwnedRecord, OwnedValue, SeekKey, SeekOp},
     };
 
     use super::EphemeralCursor;
@@ -540,5 +600,104 @@ mod tests {
         assert_eq!(cursor.rowid, Some(1));
         assert_eq!(cursor.current, Some(record2));
         assert!(!cursor.null_flag);
+    }
+
+    #[test]
+    fn test_do_seek_by_rowid_eq() {
+        let mut table = EphemeralTable {
+            rows: BTreeMap::new(),
+            next_rowid: 1,
+            columns: vec![],
+        };
+
+        table.rows.insert(1, vec![OwnedValue::Integer(10)]);
+        table.rows.insert(2, vec![OwnedValue::Integer(20)]);
+        table.rows.insert(3, vec![OwnedValue::Integer(30)]);
+
+        let mut cursor = EphemeralCursor {
+            table: Rc::new(RefCell::new(table)),
+            rowid: None,
+            current: None,
+            null_flag: true,
+        };
+
+        let result = cursor.do_seek(SeekKey::TableRowId(2), SeekOp::EQ).unwrap();
+        assert_eq!(
+            result,
+            CursorResult::Ok((
+                Some(2),
+                Some(OwnedRecord {
+                    values: vec![OwnedValue::Integer(20)]
+                })
+            ))
+        );
+        assert_eq!(cursor.rowid, Some(2));
+        assert_eq!(cursor.null_flag, false);
+    }
+
+    #[test]
+    fn test_do_seek_by_index_key_ge() {
+        let mut table = EphemeralTable {
+            rows: BTreeMap::new(),
+            next_rowid: 1,
+            columns: vec![],
+        };
+
+        table.rows.insert(1, vec![OwnedValue::Integer(10)]);
+        table.rows.insert(2, vec![OwnedValue::Integer(20)]);
+        table.rows.insert(3, vec![OwnedValue::Integer(30)]);
+
+        let mut cursor = EphemeralCursor {
+            table: Rc::new(RefCell::new(table)),
+            rowid: None,
+            current: None,
+            null_flag: true,
+        };
+
+        let key = OwnedRecord {
+            values: vec![OwnedValue::Integer(25)],
+        };
+
+        let result = cursor.do_seek(SeekKey::IndexKey(&key), SeekOp::GE).unwrap();
+        assert_eq!(
+            result,
+            CursorResult::Ok((
+                Some(3),
+                Some(OwnedRecord {
+                    values: vec![OwnedValue::Integer(30)]
+                })
+            ))
+        );
+        assert_eq!(cursor.rowid, Some(3));
+        assert_eq!(cursor.null_flag, false);
+    }
+
+    #[test]
+    fn test_do_seek_no_match() {
+        let mut table = EphemeralTable {
+            rows: BTreeMap::new(),
+            next_rowid: 1,
+            columns: vec![],
+        };
+
+        table.rows.insert(1, vec![OwnedValue::Integer(10)]);
+        table.rows.insert(2, vec![OwnedValue::Integer(20)]);
+        table.rows.insert(3, vec![OwnedValue::Integer(30)]);
+
+        let mut cursor = EphemeralCursor {
+            table: Rc::new(RefCell::new(table)),
+            rowid: None,
+            current: None,
+            null_flag: true,
+        };
+
+        let key = OwnedRecord {
+            values: vec![OwnedValue::Integer(40)],
+        };
+
+        let result = cursor.do_seek(SeekKey::IndexKey(&key), SeekOp::EQ).unwrap();
+        assert_eq!(result, CursorResult::Ok((None, None)));
+        assert_eq!(cursor.rowid, None);
+        assert_eq!(cursor.null_flag, true);
     }
 }
