@@ -1,3 +1,4 @@
+use crate::types::OwnedValue;
 use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -8,7 +9,7 @@ use sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 pub struct Schema {
@@ -49,6 +50,7 @@ pub enum Table {
     BTree(Rc<BTreeTable>),
     Pseudo(Rc<PseudoTable>),
     Virtual(Rc<VirtualTable>),
+    EphemeralTable(Rc<EphemeralTable>),
 }
 
 impl Table {
@@ -57,6 +59,7 @@ impl Table {
             Table::BTree(table) => table.root_page,
             Table::Pseudo(_) => unimplemented!(),
             Table::Virtual(_) => unimplemented!(),
+            Self::EphemeralTable(_) => todo!(),
         }
     }
 
@@ -65,6 +68,7 @@ impl Table {
             Self::BTree(table) => &table.name,
             Self::Pseudo(_) => "",
             Self::Virtual(table) => &table.name,
+            Self::EphemeralTable(_) => "ephemeral_table",
         }
     }
 
@@ -73,6 +77,7 @@ impl Table {
             Self::BTree(table) => table.columns.get(index),
             Self::Pseudo(table) => table.columns.get(index),
             Self::Virtual(table) => table.columns.get(index),
+            Self::EphemeralTable(table) => table.columns.get(index),
         }
     }
 
@@ -81,6 +86,7 @@ impl Table {
             Self::BTree(table) => &table.columns,
             Self::Pseudo(table) => &table.columns,
             Self::Virtual(table) => &table.columns,
+            Self::EphemeralTable(table) => &table.columns,
         }
     }
 
@@ -89,6 +95,7 @@ impl Table {
             Self::BTree(table) => Some(table.clone()),
             Self::Pseudo(_) => None,
             Self::Virtual(_) => None,
+            Self::EphemeralTable(_) => None,
         }
     }
 
@@ -939,4 +946,11 @@ mod tests {
         ));
         Ok(())
     }
+}
+
+#[derive(Debug)]
+pub struct EphemeralTable {
+    rows: BTreeMap<u64, Vec<OwnedValue>>, // rowid -> each index in the Vec is a column
+    next_rowid: u64,                      // generate rowids
+    columns: Vec<Column>,                 // columns
 }

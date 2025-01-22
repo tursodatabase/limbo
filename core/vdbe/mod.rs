@@ -23,6 +23,7 @@ pub mod insn;
 pub mod likeop;
 pub mod sorter;
 
+use crate::ephemeral::EphemeralCursor;
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::ext::ExtValue;
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
@@ -340,6 +341,7 @@ impl ProgramState {
             cursors,
             registers,
             result_row: None,
+            ephemeral_cursors,
             last_compare: None,
             deferred_seek: None,
             ended_coroutine: Bitfield::new(),
@@ -395,6 +397,7 @@ macro_rules! must_be_btree_cursor {
             CursorType::BTreeTable(_) => get_cursor_as_table_mut(&mut $cursors, $cursor_id),
             CursorType::BTreeIndex(_) => get_cursor_as_index_mut(&mut $cursors, $cursor_id),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
+            CursorType::Ephemeral(_) => panic!("{} on ephemeral cursor", $insn_name),
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
             CursorType::VirtualTable(_) => panic!("{} on virtual table cursor", $insn_name),
         };
@@ -847,6 +850,10 @@ impl Program {
                                 .unwrap()
                                 .replace(Cursor::new_index(cursor));
                         }
+                        CursorType::Ephemeral(_) => {
+                            let cursor = EphemeralCursor::new();
+                            ephemeral_cursors.insert(*cursor_id, cursor);
+                        }
                         CursorType::Pseudo(_) => {
                             panic!("OpenReadAsync on pseudo cursor");
                         }
@@ -1042,6 +1049,7 @@ impl Program {
                                 "Insn::Column on virtual table cursor, use Insn::VColumn instead"
                             );
                         }
+                        CursorType::Ephemeral(ephemeral_table) => todo!(),
                     }
 
                     state.pc += 1;
