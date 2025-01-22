@@ -551,6 +551,11 @@ pub enum Insn {
         rhs: usize,
         dest: usize,
     },
+    OpenEphemeral {
+        cursor_id: CursorID,
+        content_reg: usize,
+        num_fields: usize,
+    },
 }
 
 fn cast_text_to_numerical(value: &str) -> OwnedValue {
