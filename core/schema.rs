@@ -816,9 +816,9 @@ pub struct EphemeralTable {
 impl EphemeralTable {
     pub fn new() -> Self {
         Self {
-            rows: todo!(),
-            next_rowid: todo!(),
-            columns: todo!(),
+            rows: BTreeMap::new(),
+            next_rowid: 1,
+            columns: vec![],
         }
     }
 }
