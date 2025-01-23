@@ -489,7 +489,7 @@ Modifiers:
 | Next           | No     |         |
 | NextAsync      | Yes    |         |
 | NextAwait      | Yes    |         |
-| Noop           | Yes     |         |
+| Noop           | Yes    |         |
 | Not            | Yes    |         |
 | NotExists      | Yes    |         |
 | NotFound       | No     |         |
@@ -498,7 +498,7 @@ Modifiers:
 | NullRow        | Yes    |         |
 | Once           | No     |         |
 | OpenAutoindex  | No     |         |
-| OpenEphemeral  | No     |         |
+| OpenEphemeral  | Yes    |         |
 | OpenPseudo     | Yes    |         |
 | OpenRead       | Yes    |         |
 | OpenReadAsync  | Yes    |         |
