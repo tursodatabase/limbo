@@ -295,7 +295,6 @@ impl Connection {
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Rows>> {
         let db = self.db.clone();
         let syms: &SymbolTable = &db.syms.borrow();
-
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
@@ -464,6 +463,10 @@ impl Statement {
     pub fn query(&mut self) -> Result<Rows> {
         let stmt = Statement::new(self.program.clone(), self.pager.clone());
         Ok(Rows::new(stmt))
+    }
+
+    pub fn columns(&self) -> &[String] {
+        &self.program.columns
     }
 
     pub fn parameters(&self) -> &parameters::Parameters {
