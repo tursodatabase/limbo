@@ -813,6 +813,12 @@ pub struct EphemeralTable {
     pub columns: Vec<Column>,                 // columns
 }
 
+impl Default for EphemeralTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EphemeralTable {
     pub fn new() -> Self {
         Self {
