@@ -1,4 +1,4 @@
-use crate::{ephemeral, vdbe::builder::CursorType};
+use crate::vdbe::builder::CursorType;
 
 use super::{Insn, InsnReference, OwnedValue, Program};
 use std::rc::Rc;

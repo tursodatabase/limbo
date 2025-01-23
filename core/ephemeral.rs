@@ -1,7 +1,4 @@
-use std::{
-    cell::{Ref, RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     schema::EphemeralTable,
@@ -632,7 +629,7 @@ mod tests {
             ))
         );
         assert_eq!(cursor.rowid, Some(2));
-        assert_eq!(cursor.null_flag, false);
+        assert!(!cursor.null_flag);
     }
 
     #[test]
@@ -669,7 +666,7 @@ mod tests {
             ))
         );
         assert_eq!(cursor.rowid, Some(3));
-        assert_eq!(cursor.null_flag, false);
+        assert!(!cursor.null_flag);
     }
 
     #[test]
@@ -698,6 +695,6 @@ mod tests {
         let result = cursor.do_seek(SeekKey::IndexKey(&key), SeekOp::EQ).unwrap();
         assert_eq!(result, CursorResult::Ok((None, None)));
         assert_eq!(cursor.rowid, None);
-        assert_eq!(cursor.null_flag, true);
+        assert!(cursor.null_flag);
     }
 }
