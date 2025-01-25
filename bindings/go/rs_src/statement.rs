@@ -1,6 +1,6 @@
-use crate::types::ResultCode;
+use crate::types::{ResultCode, TursoValue};
 use crate::TursoConn;
-use limbo_core::{Rows, Statement, StepResult, Value};
+use limbo_core::{Rows, Statement, StepResult};
 use std::ffi::{c_char, c_void};
 
 #[no_mangle]
@@ -19,15 +19,61 @@ pub extern "C" fn db_prepare(ctx: *mut c_void, query: *const c_char) -> *mut c_v
     }
 }
 
+#[no_mangle]
+pub extern "C" fn stmt_execute(ctx: *mut c_void) -> ResultCode {
+    if ctx.is_null() {
+        return ResultCode::Error;
+    }
+    let stmt = TursoStatement::from_ptr(ctx);
+
+    loop {
+        match stmt.statement.step() {
+            Ok(StepResult::Row(_)) => {
+                // unexpected row during execution, error out.
+                return ResultCode::Error;
+            }
+            Ok(StepResult::Done) => {
+                return ResultCode::Done;
+            }
+            Ok(StepResult::IO) => {
+                let _ = stmt.conn.io.run_once();
+            }
+            Ok(StepResult::Busy) => {
+                return ResultCode::Busy;
+            }
+            Ok(StepResult::Interrupt) => {
+                return ResultCode::Interrupt;
+            }
+            Err(_) => {
+                return ResultCode::Error;
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn stmt_query(ctx: *mut c_void) -> *mut c_void {
+    if ctx.is_null() {
+        return std::ptr::null_mut();
+    }
+    let stmt = TursoStatement::from_ptr(ctx);
+    match stmt.statement.query() {
+        Ok(rows) => TursoRows::new(rows, stmt.conn).to_ptr(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 struct TursoStatement<'a> {
     statement: Statement,
-    conn: &'a TursoConn<'a>,
+    conn: &'a mut TursoConn<'a>,
 }
 
 impl<'a> TursoStatement<'a> {
-    fn new(statement: Statement, conn: &'a TursoConn<'a>) -> Self {
+    fn new(statement: Statement, conn: &'a mut TursoConn<'a>) -> Self {
         TursoStatement { statement, conn }
     }
+
+    #[allow(clippy::wrong_self_convention)]
     fn to_ptr(self) -> *mut c_void {
         Box::into_raw(Box::new(self)) as *mut c_void
     }
@@ -39,31 +85,17 @@ impl<'a> TursoStatement<'a> {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn db_get_columns(ctx: *mut c_void) -> *const c_void {
-    if ctx.is_null() {
-        return std::ptr::null();
-    }
-    let stmt = TursoStatement::from_ptr(ctx);
-    let columns = stmt.statement.columns();
-    let mut column_names = Vec::new();
-    for column in columns {
-        column_names.push(column.name().to_string());
-    }
-    let c_string = std::ffi::CString::new(column_names.join(",")).unwrap();
-    c_string.into_raw() as *const c_void
-}
-
 struct TursoRows<'a> {
-    rows: Rows<'a>,
+    rows: Rows,
     conn: &'a mut TursoConn<'a>,
 }
 
 impl<'a> TursoRows<'a> {
-    fn new(rows: Rows<'a>, conn: &'a mut TursoConn<'a>) -> Self {
+    fn new(rows: Rows, conn: &'a mut TursoConn<'a>) -> Self {
         TursoRows { rows, conn }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn to_ptr(self) -> *mut c_void {
         Box::into_raw(Box::new(self)) as *mut c_void
     }
@@ -77,24 +109,20 @@ impl<'a> TursoRows<'a> {
 }
 
 #[no_mangle]
-pub extern "C" fn rows_next(ctx: *mut c_void, rows_ptr: *mut c_void) -> ResultCode {
-    if rows_ptr.is_null() || ctx.is_null() {
+pub extern "C" fn rows_next(ctx: *mut c_void) -> ResultCode {
+    if ctx.is_null() {
         return ResultCode::Error;
     }
-    let rows = unsafe { &mut *(rows_ptr as *mut Rows) };
-    let conn = TursoConn::from_ptr(ctx);
+    let ctx = TursoRows::from_ptr(ctx);
 
-    match rows.next_row() {
+    match ctx.rows.next_row() {
         Ok(StepResult::Row(row)) => {
-            conn.cursor = Some(row.values);
+            ctx.conn.cursor = Some(row.values);
             ResultCode::Row
         }
-        Ok(StepResult::Done) => {
-            // No more rows
-            ResultCode::Done
-        }
+        Ok(StepResult::Done) => ResultCode::Done,
         Ok(StepResult::IO) => {
-            let _ = conn.io.run_once();
+            let _ = ctx.conn.io.run_once();
             ResultCode::Io
         }
         Ok(StepResult::Busy) => ResultCode::Busy,
@@ -104,57 +132,83 @@ pub extern "C" fn rows_next(ctx: *mut c_void, rows_ptr: *mut c_void) -> ResultCo
 }
 
 #[no_mangle]
-pub extern "C" fn rows_get_value(ctx: *mut c_void, col_idx: usize) -> *const c_char {
+pub extern "C" fn rows_get_value(ctx: *mut c_void, col_idx: usize) -> *const c_void {
     if ctx.is_null() {
         return std::ptr::null();
     }
-    let conn = TursoConn::from_ptr(ctx);
+    let ctx = TursoRows::from_ptr(ctx);
 
-    if let Some(ref cursor) = conn.cursor {
+    if let Some(ref cursor) = ctx.conn.cursor {
         if let Some(value) = cursor.get(col_idx) {
-            let c_string = std::ffi::CString::new(value.to_string()).unwrap();
-            return c_string.into_raw(); // Caller must free this pointer
+            let val = TursoValue::from_value(value);
+            return val.to_ptr();
         }
     }
-    std::ptr::null() // No data or invalid index
+    std::ptr::null()
 }
 
-// Free the returned string
 #[no_mangle]
-pub extern "C" fn free_c_string(s: *mut c_char) {
+pub extern "C" fn free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe { drop(std::ffi::CString::from_raw(s)) };
     }
 }
+
 #[no_mangle]
-pub extern "C" fn rows_get_string(
-    ctx: *mut c_void,
+pub extern "C" fn rows_get_columns(
     rows_ptr: *mut c_void,
-    col_idx: i32,
-) -> *const c_char {
-    if rows_ptr.is_null() || ctx.is_null() {
-        return std::ptr::null();
+    out_length: *mut usize,
+) -> *mut *const c_char {
+    if rows_ptr.is_null() || out_length.is_null() {
+        return std::ptr::null_mut();
     }
-    let _rows = unsafe { &mut *(rows_ptr as *mut Rows) };
-    let conn = TursoConn::from_ptr(ctx);
-    if col_idx > conn.cursor_idx as i32 || conn.cursor.is_none() {
-        return std::ptr::null();
+    let rows = TursoRows::from_ptr(rows_ptr);
+    let c_strings: Vec<std::ffi::CString> = rows
+        .rows
+        .columns()
+        .iter()
+        .map(|name| std::ffi::CString::new(name.as_str()).unwrap())
+        .collect();
+
+    let c_ptrs: Vec<*const c_char> = c_strings.iter().map(|s| s.as_ptr()).collect();
+    unsafe {
+        *out_length = c_ptrs.len();
     }
-    if let Some(values) = &conn.cursor {
-        let value = &values[col_idx as usize];
-        match value {
-            Value::Text(s) => {
-                return s.as_ptr() as *const i8;
-            }
-            _ => return std::ptr::null(),
-        }
-    };
-    std::ptr::null()
+
+    let ptr = c_ptrs.as_ptr();
+    std::mem::forget(c_strings);
+    std::mem::forget(c_ptrs);
+    ptr as *mut *const c_char
 }
 
 #[no_mangle]
 pub extern "C" fn rows_close(rows_ptr: *mut c_void) {
     if !rows_ptr.is_null() {
         let _ = unsafe { Box::from_raw(rows_ptr as *mut Rows) };
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_columns(columns: *mut *const c_char) {
+    if columns.is_null() {
+        return;
+    }
+    unsafe {
+        let mut idx = 0;
+        while !(*columns.add(idx)).is_null() {
+            let _ = std::ffi::CString::from_raw(*columns.add(idx) as *mut c_char);
+            idx += 1;
+        }
+        let _ = Box::from_raw(columns);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_rows(rows: *mut c_void) {
+    if rows.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(rows as *mut Rows);
     }
 }

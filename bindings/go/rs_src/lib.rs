@@ -8,6 +8,9 @@ use std::{
     sync::Arc,
 };
 
+/// # Safety
+/// Safe to be called from Go with null terminated DSN string.
+/// performs null check on the path.
 #[no_mangle]
 pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
     if path.is_null() {
@@ -50,11 +53,12 @@ impl<'a> TursoConn<'_> {
             cursor: None,
         }
     }
+    #[allow(clippy::wrong_self_convention)]
     fn to_ptr(self) -> *mut c_void {
         Box::into_raw(Box::new(self)) as *mut c_void
     }
 
-    fn from_ptr(ptr: *mut c_void) -> &'static mut TursoConn<'a> {
+    fn from_ptr(ptr: *mut c_void) -> &'a mut TursoConn<'a> {
         if ptr.is_null() {
             panic!("Null pointer");
         }
@@ -68,7 +72,7 @@ impl<'a> TursoConn<'_> {
 #[no_mangle]
 pub unsafe extern "C" fn db_close(db: *mut c_void) {
     if !db.is_null() {
-        let _ = unsafe { Box::from_raw(db) };
+        let _ = unsafe { Box::from_raw(db as *mut TursoConn) };
     }
 }
 

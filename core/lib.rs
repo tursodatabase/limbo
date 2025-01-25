@@ -516,6 +516,10 @@ impl Rows {
     pub fn next_row(&mut self) -> Result<StepResult<'_>> {
         self.stmt.step()
     }
+
+    pub fn columns(&self) -> &[String] {
+        self.stmt.columns()
+    }
 }
 
 pub(crate) struct SymbolTable {
