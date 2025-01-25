@@ -645,6 +645,13 @@ pub enum Insn {
         content_reg: usize,
         num_fields: usize,
     },
+    
+    /// Take the logical AND of the values in registers P1 and P2 and write the result into register P3.
+    And {
+        lhs: usize,
+        rhs: usize,
+        dest: usize,
+    },
 }
 
 fn cast_text_to_numerical(value: &str) -> OwnedValue {
