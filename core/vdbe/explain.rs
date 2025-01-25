@@ -419,6 +419,9 @@ pub fn insn_to_str(
                     CursorType::Pseudo(pseudo_table) => {
                         Some(&pseudo_table.columns.get(*column).unwrap().name)
                     }
+                    CursorType::Ephemeral(ephemeral_table) => {
+                        Some(&ephemeral_table.columns.get(*column).unwrap().name)
+                    }
                     CursorType::Sorter => None,
                 };
                 (
@@ -1119,6 +1122,19 @@ pub fn insn_to_str(
                 OwnedValue::build_text(Rc::new("".to_string())),
                 0,
                 format!("r[{}]=r[{}] + r[{}]", dest, lhs, rhs),
+            ),
+            Insn::OpenEphemeral {
+                cursor_id,
+                content_reg,
+                num_fields,
+            } => (
+                "OpenEphemeral",
+                *cursor_id as i32,
+                *content_reg as i32,
+                *num_fields as i32,
+                OwnedValue::build_text(Rc::new("".to_string())),
+                0,
+                format!("{} columns in r[{}]", num_fields, content_reg),
             ),
         };
     format!(
