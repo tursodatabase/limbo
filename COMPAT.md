@@ -377,7 +377,7 @@ Modifiers:
 | json_type(json,path)               | Yes     |                                                                                                                                              |
 | json_valid(json)                   |         |                                                                                                                                              |
 | json_valid(json,flags)             |         |                                                                                                                                              |
-| json_quote(value)                  |         |                                                                                                                                              |
+| json_quote(value)                  | Yes     |                                                                                                                                              |
 | json_group_array(value)            |         |                                                                                                                                              |
 | jsonb_group_array(value)           |         |                                                                                                                                              |
 | json_group_object(label,value)     |         |                                                                                                                                              |
