@@ -563,6 +563,11 @@ pub enum Insn {
         rhs: usize,
         dest: usize,
     },
+    /// Add two registers and store the result in the first register. Always returns an integer
+    AddImm {
+        lhs: usize,
+        rhs: usize,
+    },
 }
 
 fn cast_text_to_numerical(value: &str) -> OwnedValue {
@@ -1020,6 +1025,56 @@ pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         }
         _ => OwnedValue::Integer(1),
     }
+}
+
+pub fn exec_add_imm(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
+    if let OwnedValue::Agg(agg) = lhs {
+        lhs = agg.final_value();
+    }
+    if let OwnedValue::Agg(agg) = rhs {
+        rhs = agg.final_value();
+    }
+    match (lhs, rhs) {
+        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
+            let result = lhs.overflowing_add(*rhs);
+            if result.1 {
+                OwnedValue::Integer(*lhs + *rhs)
+            } else {
+                OwnedValue::Integer(result.0)
+            }
+        }
+        (OwnedValue::Float(f1), OwnedValue::Float(f2)) => {
+            OwnedValue::Integer(sqlite_float_to_integer(f1 + f2))
+        }
+        (OwnedValue::Float(f), OwnedValue::Integer(i))
+        | (OwnedValue::Integer(i), OwnedValue::Float(f)) => {
+            OwnedValue::Integer(sqlite_float_to_integer(*f) + *i)
+        }
+        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Integer(0),
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_add_imm(
+            &cast_text_to_numerical(&lhs.value),
+            &cast_text_to_numerical(&rhs.value),
+        ),
+        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
+            exec_add_imm(&cast_text_to_numerical(&text.value), other)
+        }
+        // TODO maybe here it should return 0. Not sure yet
+        // There are no test cases in sqlite code base for AddImm
+        // so it is difficult to assert the correct behavior
+        _ => todo!(),
+    }
+}
+
+/// Converts float to int according to sqlite source code \
+/// https://github.com/sqlite/sqlite/blob/master/src/vdbemem.c#L767
+fn sqlite_float_to_integer(f: f64) -> i64 {
+    if f < -9223372036854774784.0 {
+        return i64::MIN;
+    }
+    if f > 9223372036854774784.0 {
+        return i64::MAX;
+    }
+    f as i64
 }
 
 #[cfg(test)]

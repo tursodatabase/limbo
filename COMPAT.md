@@ -403,7 +403,7 @@ Modifiers:
 | Opcode         | Status |
 |----------------|--------|
 | Add            | Yes    |
-| AddImm         | No     |
+| AddImm         | Yes    |
 | Affinity       | No     |
 | AggFinal       | Yes    |
 | AggStep        | Yes    |
