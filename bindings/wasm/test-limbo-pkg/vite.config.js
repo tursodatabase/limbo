@@ -8,14 +8,22 @@ export default defineConfig({
       "Cross-Origin-Embedder-Policy": "require-corp",
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Resource-Policy": "cross-origin",
+      //Cross-Origin-Embedder-Policy: require-corp
     },
     fs: {
-      allow: ["../web/dist"],
+      allow: ["./node_modules/limbo-wasm/web/dist"],
     },
+  },
+  optimizeDeps: {
+    exclude: ["limbo-wasm"],
   },
   worker: {
     format: "es",
     rollupOptions: {
+      input: {
+        main: "index.html",
+        worker: "src/limbo-worker.js",
+      },
       output: {
         format: "es",
       },
