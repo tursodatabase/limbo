@@ -1248,15 +1248,6 @@ pub fn insn_to_str(
                 0,
                 format!("{} columns in r[{}]", num_fields, content_reg),
             ),
-            Insn::Or { lhs, rhs, dest } => (
-                "Or",
-                *rhs as i32,
-                *lhs as i32,
-                *dest as i32,
-                OwnedValue::build_text(Rc::new("".to_string())),
-                0,
-                format!("r[{}]=(r[{}] || r[{}])", dest, lhs, rhs),
-            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",
