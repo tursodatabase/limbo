@@ -14,6 +14,7 @@ pub struct EphemeralCursor {
     null_flag: bool,
 }
 
+#[allow(dead_code)]
 impl EphemeralCursor {
     pub fn new() -> Self {
         let table = Rc::new(RefCell::new(EphemeralTable::new()));

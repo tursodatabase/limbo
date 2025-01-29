@@ -50,6 +50,7 @@ pub enum Table {
     BTree(Rc<BTreeTable>),
     Pseudo(Rc<PseudoTable>),
     Virtual(Rc<VirtualTable>),
+    #[allow(dead_code)]
     EphemeralTable(Rc<EphemeralTable>),
 }
 
