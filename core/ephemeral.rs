@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     schema::EphemeralTable,
     types::{CursorResult, OwnedRecord, SeekKey, SeekOp},
@@ -8,7 +6,7 @@ use crate::{
 use crate::{types::OwnedValue, Result};
 
 pub struct EphemeralCursor {
-    table: Rc<RefCell<EphemeralTable>>,
+    table: EphemeralTable,
     rowid: Option<u64>,
     current: Option<OwnedRecord>,
     null_flag: bool,
@@ -17,9 +15,8 @@ pub struct EphemeralCursor {
 #[allow(dead_code)]
 impl EphemeralCursor {
     pub fn new() -> Self {
-        let table = Rc::new(RefCell::new(EphemeralTable::new()));
         Self {
-            table,
+            table: EphemeralTable::new(),
             rowid: None,
             current: None,
             null_flag: false,
@@ -31,8 +28,7 @@ impl EphemeralCursor {
         key: SeekKey<'_>,
         op: SeekOp,
     ) -> Result<CursorResult<(Option<u64>, Option<OwnedRecord>)>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         match key {
             SeekKey::TableRowId(rowid) => {
@@ -92,8 +88,6 @@ impl EphemeralCursor {
         record: &OwnedRecord,
         moved_before: bool,
     ) -> Result<CursorResult<()>> {
-        let mut table = self.table.borrow_mut();
-
         // Generate a new row ID if necessary
         let rowid = if moved_before {
             // Traverse to find the correct position (here, just use `key` as rowid for simplicity)
@@ -106,13 +100,18 @@ impl EphemeralCursor {
             }
         } else {
             // Use the next available rowid
-            let rowid = table.next_rowid;
-            table.next_rowid += 1;
+            let rowid = self.table.next_rowid;
+            self.table.next_rowid += 1;
             rowid
         };
 
         // Insert the record into the table
-        if table.rows.insert(rowid, record.values.clone()).is_some() {
+        if self
+            .table
+            .rows
+            .insert(rowid, record.values.clone())
+            .is_some()
+        {
             // If a row already exists with the same rowid, overwrite it
             self.rowid = Some(rowid);
             self.current = Some(record.clone());
@@ -129,8 +128,7 @@ impl EphemeralCursor {
     }
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         if let Some((&first_rowid, row_data)) = rows.iter().next() {
             self.rowid = Some(first_rowid);
@@ -148,8 +146,7 @@ impl EphemeralCursor {
     }
 
     pub fn last(&mut self) -> Result<CursorResult<()>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         if let Some((&last_rowid, row_data)) = rows.iter().next_back() {
             self.rowid = Some(last_rowid);
@@ -188,8 +185,7 @@ impl EphemeralCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         if self.rowid.is_none() {
             if let Some((&first_rowid, row_data)) = rows.iter().next() {
@@ -218,8 +214,7 @@ impl EphemeralCursor {
         Ok(CursorResult::Ok(()))
     }
     pub fn prev(&mut self) -> Result<CursorResult<()>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         if self.rowid.is_none() {
             if let Some((&first_rowid, row_data)) = rows.iter().next_back() {
@@ -249,8 +244,7 @@ impl EphemeralCursor {
     }
 
     pub fn exists(&mut self, key: &OwnedValue) -> Result<CursorResult<bool>> {
-        let table = self.table.borrow();
-        let rows = &table.rows;
+        let rows = &self.table.rows;
 
         for (rowid, row_data) in rows.iter() {
             if row_data.contains(key) {
@@ -297,7 +291,7 @@ mod tests {
         table.rows.insert(2, val2.clone());
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -336,7 +330,7 @@ mod tests {
         table.rows.insert(2, val2.clone());
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -379,7 +373,7 @@ mod tests {
         table.rows.insert(2, val2.clone());
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -405,7 +399,7 @@ mod tests {
         };
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -433,7 +427,7 @@ mod tests {
         table.rows.insert(2, val2.clone());
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -459,7 +453,7 @@ mod tests {
         };
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -485,7 +479,7 @@ mod tests {
         table.rows.insert(2, vec![val2.clone()]);
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -517,7 +511,7 @@ mod tests {
         table.rows.insert(2, vec![val2.clone()]);
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -539,7 +533,7 @@ mod tests {
         };
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -554,9 +548,8 @@ mod tests {
 
         cursor.insert(&key, &record, false).unwrap();
 
-        let table = cursor.table.borrow();
-        assert_eq!(table.rows.len(), 1);
-        assert_eq!(table.rows.get(&1), Some(&record.values));
+        assert_eq!(cursor.table.rows.len(), 1);
+        assert_eq!(cursor.table.rows.get(&1), Some(&record.values));
         assert_eq!(cursor.rowid, Some(1));
         assert_eq!(cursor.current, Some(record));
         assert!(!cursor.null_flag);
@@ -571,7 +564,7 @@ mod tests {
         };
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -592,9 +585,8 @@ mod tests {
         cursor.insert(&key, &record1, false).unwrap();
         cursor.insert(&key, &record2, true).unwrap();
 
-        let table = cursor.table.borrow();
-        assert_eq!(table.rows.len(), 1);
-        assert_eq!(table.rows.get(&1), Some(&record2.values));
+        assert_eq!(cursor.table.rows.len(), 1);
+        assert_eq!(cursor.table.rows.get(&1), Some(&record2.values));
         assert_eq!(cursor.rowid, Some(1));
         assert_eq!(cursor.current, Some(record2));
         assert!(!cursor.null_flag);
@@ -613,7 +605,7 @@ mod tests {
         table.rows.insert(3, vec![OwnedValue::Integer(30)]);
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -646,7 +638,7 @@ mod tests {
         table.rows.insert(3, vec![OwnedValue::Integer(30)]);
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
@@ -683,7 +675,7 @@ mod tests {
         table.rows.insert(3, vec![OwnedValue::Integer(30)]);
 
         let mut cursor = EphemeralCursor {
-            table: Rc::new(RefCell::new(table)),
+            table,
             rowid: None,
             current: None,
             null_flag: true,
