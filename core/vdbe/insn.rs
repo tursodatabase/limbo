@@ -642,8 +642,7 @@ pub enum Insn {
     /// Open a new cursor P1 to a transient table.
     OpenEphemeral {
         cursor_id: CursorID,
-        content_reg: usize,
-        num_fields: usize,
+        is_btree: bool,
     },
 }
 

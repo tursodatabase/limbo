@@ -282,7 +282,7 @@ fn get_cursor_as_virtual_mut<'long, 'short>(
     cursor
 }
 
-fn get_cursor_as_ephemeral_mut<'long, 'short>(
+fn get_cursor_as_ephemeral_table_mut<'long, 'short>(
     cursors: &'short mut RefMut<'long, Vec<Option<Cursor>>>,
     cursor_id: CursorID,
 ) -> &'short mut EphemeralCursor {
@@ -291,7 +291,19 @@ fn get_cursor_as_ephemeral_mut<'long, 'short>(
         .expect("cursor id out of bounds")
         .as_mut()
         .expect("cursor not allocated")
-        .as_ephemeral_mut()
+        .as_ephemeral_table_mut()
+}
+
+fn get_cursor_as_ephemeral_index_mut<'long, 'short>(
+    cursors: &'short mut RefMut<'long, Vec<Option<Cursor>>>,
+    cursor_id: CursorID,
+) -> &'short mut EphemeralCursor {
+    cursors
+        .get_mut(cursor_id)
+        .expect("cursor id out of bounds")
+        .as_mut()
+        .expect("cursor not allocated")
+        .as_ephemeral_index_mut()
 }
 struct Bitfield<const N: usize>([u64; N]);
 
@@ -416,9 +428,12 @@ macro_rules! must_be_general_cursor {
             CursorType::BTreeIndex(_) => {
                 GeneralCursor::BTree(get_cursor_as_index_mut(&mut $cursors, $cursor_id))
             }
-            CursorType::Ephemeral(_) => {
-                GeneralCursor::Ephemeral(get_cursor_as_ephemeral_mut(&mut $cursors, $cursor_id))
-            }
+            CursorType::EphemeralTable(_) => GeneralCursor::Ephemeral(
+                get_cursor_as_ephemeral_table_mut(&mut $cursors, $cursor_id),
+            ),
+            CursorType::EphemeralIndex(_) => GeneralCursor::Ephemeral(
+                get_cursor_as_ephemeral_index_mut(&mut $cursors, $cursor_id),
+            ),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
             CursorType::VirtualTable(_) => panic!("{} on virtual table cursor", $insn_name),
@@ -874,11 +889,15 @@ impl Program {
                                 .unwrap()
                                 .replace(Cursor::new_index(cursor));
                         }
-                        CursorType::Ephemeral(_) => {
-                            cursors
-                                .get_mut(*cursor_id)
-                                .unwrap()
-                                .replace(Cursor::new_ephemeral(EphemeralCursor::new()));
+                        CursorType::EphemeralTable(_) => {
+                            cursors.get_mut(*cursor_id).unwrap().replace(
+                                Cursor::new_ephemeral_table(EphemeralCursor::new_with_table()),
+                            );
+                        }
+                        CursorType::EphemeralIndex(_) => {
+                            cursors.get_mut(*cursor_id).unwrap().replace(
+                                Cursor::new_ephemeral_table(EphemeralCursor::new_with_index()),
+                            );
                         }
                         CursorType::Pseudo(_) => {
                             panic!("OpenReadAsync on pseudo cursor");
@@ -974,15 +993,25 @@ impl Program {
                 }
                 Insn::OpenEphemeral {
                     cursor_id,
-                    content_reg: _,
-                    num_fields: _,
+                    is_btree,
                 } => {
                     let mut cursors = state.cursors.borrow_mut();
-                    let cursor = EphemeralCursor::new();
-                    cursors
-                        .get_mut(*cursor_id)
-                        .unwrap()
-                        .replace(Cursor::new_ephemeral(cursor));
+
+                    if *is_btree {
+                        cursors
+                            .get_mut(*cursor_id)
+                            .unwrap()
+                            .replace(Cursor::new_ephemeral_table(
+                                EphemeralCursor::new_with_table(),
+                            ));
+                    } else {
+                        cursors
+                            .get_mut(*cursor_id)
+                            .unwrap()
+                            .replace(Cursor::new_ephemeral_index(
+                                EphemeralCursor::new_with_index(),
+                            ));
+                    }
                     state.pc += 1;
                 }
                 Insn::RewindAsync { cursor_id } => {
@@ -1012,15 +1041,6 @@ impl Program {
                         GeneralCursor::Ephemeral(cursor) => return_if_io!(cursor.rewind()),
                     }
 
-                    state.pc += 1;
-                }
-                Insn::LastAsync { cursor_id } => {
-                    let mut cursors = state.cursors.borrow_mut();
-                    match must_be_general_cursor!(*cursor_id, self.cursor_ref, cursors, "LastAsync")
-                    {
-                        GeneralCursor::BTree(cursor) => return_if_io!(cursor.last()),
-                        GeneralCursor::Ephemeral(cursor) => return_if_io!(cursor.last()),
-                    }
                     state.pc += 1;
                 }
                 Insn::LastAwait {
@@ -1103,7 +1123,8 @@ impl Program {
                     match cursor_type {
                         CursorType::BTreeTable(_)
                         | CursorType::BTreeIndex(_)
-                        | CursorType::Ephemeral(_) => {
+                        | CursorType::EphemeralTable(_)
+                        | CursorType::EphemeralIndex(_) => {
                             match must_be_general_cursor!(
                                 *cursor_id,
                                 self.cursor_ref,

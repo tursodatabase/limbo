@@ -1,4 +1,5 @@
 use crate::types::OwnedValue;
+use crate::types::{OwnedRecord, OwnedValue};
 use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -948,6 +949,25 @@ mod tests {
         Ok(())
     }
 }
+#[derive(Debug)]
+pub struct EphemeralIndex {
+    pub rows: BTreeMap<IndexId, OwnedRecord>, // rowid -> each index in the Vec is a column
+    pub columns: Vec<Column>,                 // columns
+}
+
+impl EphemeralIndex {
+    pub fn new() -> Self {
+        Self {
+            rows: BTreeMap::new(),
+            columns: vec![],
+        }
+    }
+}
+
+// What defines row uniqueness is the combination of the values of the first column with
+// the rowid. In this way, we can have multiple rows pointing to the same rowid.
+// https://www.sqlite.org/queryplanner.html
+type IndexId = (OwnedValue, u64);
 
 #[derive(Debug)]
 pub struct EphemeralTable {

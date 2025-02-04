@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     parameters::Parameters,
-    schema::{BTreeTable, EphemeralTable, Index, PseudoTable},
+    schema::{BTreeTable, EphemeralIndex, EphemeralTable, Index, PseudoTable},
     storage::sqlite3_ondisk::DatabaseHeader,
     translate::plan::{ResultSetColumn, TableReference},
     Connection, VirtualTable,
@@ -39,7 +39,8 @@ pub enum CursorType {
     BTreeTable(Rc<BTreeTable>),
     BTreeIndex(Rc<Index>),
     Pseudo(Rc<PseudoTable>),
-    Ephemeral(Rc<EphemeralTable>),
+    EphemeralTable(Rc<EphemeralTable>),
+    EphemeralIndex(Rc<EphemeralIndex>),
     Sorter,
     VirtualTable(Rc<VirtualTable>),
 }

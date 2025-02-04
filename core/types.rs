@@ -671,7 +671,8 @@ pub enum Cursor {
     Table(BTreeCursor),
     Index(BTreeCursor),
     Pseudo(PseudoCursor),
-    Ephemeral(EphemeralCursor),
+    EphemeralTable(EphemeralCursor),
+    EphemeralIndex(EphemeralCursor),
     Sorter(Sorter),
     Virtual(VTabOpaqueCursor),
 }
@@ -693,8 +694,12 @@ impl Cursor {
         Self::Sorter(cursor)
     }
 
-    pub fn new_ephemeral(cursor: EphemeralCursor) -> Self {
-        Self::Ephemeral(cursor)
+    pub fn new_ephemeral_table(cursor: EphemeralCursor) -> Self {
+        Self::EphemeralTable(cursor)
+    }
+
+    pub fn new_ephemeral_index(cursor: EphemeralCursor) -> Self {
+        Self::EphemeralIndex(cursor)
     }
 
     pub fn as_table_mut(&mut self) -> &mut BTreeCursor {
@@ -732,10 +737,17 @@ impl Cursor {
         }
     }
 
-    pub fn as_ephemeral_mut(&mut self) -> &mut EphemeralCursor {
+    pub fn as_ephemeral_table_mut(&mut self) -> &mut EphemeralCursor {
         match self {
-            Self::Ephemeral(cursor) => cursor,
-            _ => panic!("Cursor is not ephemeral"),
+            Self::EphemeralTable(cursor) => cursor,
+            _ => panic!("Cursor is not ephemeral table"),
+        }
+    }
+
+    pub fn as_ephemeral_index_mut(&mut self) -> &mut EphemeralCursor {
+        match self {
+            Self::EphemeralIndex(cursor) => cursor,
+            _ => panic!("Cursor is not ephemeral index"),
         }
     }
 }
