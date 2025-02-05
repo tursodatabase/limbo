@@ -1,8 +1,29 @@
 #!/usr/bin/env tclsh
 
 set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
 
 source $testdir/insert.test
 source $testdir/pragma.test
 source $testdir/changes.test
 source $testdir/total-changes.test
+
+set STMT "create table temp (t1 integer, primary key (t1));"
+
+set vals 2
+
+for {set i 0} {$i < $vals} {incr i} {
+    append STMT "insert into temp values ($i);"
+}
+
+append STMT "SELECT count(t1) FROM temp;"
+
+puts $STMT
+
+do_execsql_test_on_specific_db {:memory:} mass-insert "$STMT" $vals
+
+
+# foreach i $FMT {
+#   do_execsql_test strftime-invalid-$i "SELECT strftime('$i','2025-01-23T13:14:30.567');" {}
+# }
