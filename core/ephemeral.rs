@@ -786,7 +786,7 @@ mod tests {
         use crate::{
             ephemeral::{Ephemeral, EphemeralCursor},
             schema::EphemeralIndex,
-            types::{CursorResult, LimboText, OwnedRecord, OwnedValue, SeekOp},
+            types::{CursorResult, LimboText, OwnedRecord, OwnedValue},
             LimboError,
         };
 

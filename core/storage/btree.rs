@@ -1769,6 +1769,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(()))
     }
 
+    #[allow(dead_code)]
     pub fn last(&mut self) -> Result<CursorResult<()>> {
         match self.move_to_rightmost()? {
             CursorResult::Ok(_) => self.prev(),
