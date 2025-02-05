@@ -2634,6 +2634,14 @@ impl Program {
                     state.registers[*root] = OwnedValue::Integer(root_page as i64);
                     state.pc += 1;
                 }
+                Insn::DropBtree { db, root } => {
+                    if *db > 0 {
+                        todo!("temp databases not implemented yet");
+                    }
+                    let mut cursor = Box::new(BTreeCursor::new(pager.clone(), *root));
+                    cursor.btree_drop()?;
+                    state.pc += 1;
+                }
                 Insn::Close { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();
                     cursors.get_mut(*cursor_id).unwrap().take();
