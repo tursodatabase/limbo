@@ -2,44 +2,85 @@ use super::{Buffer, Completion, File, OpenFlags, IO};
 use crate::Result;
 
 use log::debug;
+use memmap2::MmapMut;
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
-    collections::BTreeMap,
     rc::Rc,
     sync::Arc,
 };
 
 pub struct MemoryIO {
-    pages: UnsafeCell<BTreeMap<usize, MemPage>>,
+    // pages: UnsafeCell<BTreeMap<usize, MemPage>>,
     size: Cell<usize>,
+    pages: UnsafeCell<MmapMut>,
 }
 
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
-type MemPage = Box<[u8; PAGE_SIZE]>;
+// type MemPage = Box<[u8; PAGE_SIZE]>;
+type MemPage = [u8];
+// TODO: initial pages flag
+const INITIAL_PAGES: usize = 4;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
         Ok(Arc::new(Self {
-            pages: BTreeMap::new().into(),
+            // pages: BTreeMap::new().into(),
             size: 0.into(),
+            pages: MmapMut::map_anon(PAGE_SIZE * INITIAL_PAGES)?.into(),
         }))
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_allocate_page(&self, page_no: usize) -> &mut MemPage {
-        unsafe {
-            let pages = &mut *self.pages.get();
-            pages
-                .entry(page_no)
-                .or_insert_with(|| Box::new([0; PAGE_SIZE]))
+    fn get_or_allocate_page(&self, page_no: usize) -> Result<&mut MemPage> {
+        let start = page_no * PAGE_SIZE;
+        let end = start + PAGE_SIZE;
+
+        let page = unsafe {
+            let page = &mut *self.pages.get();
+            &mut page[start..end]
+        };
+        if page.is_empty() {
+            // For now double capacity
+            self.resize(self.size.get() * 2)?;
+            Ok(page)
+        } else {
+            Ok(page)
         }
+
+        // unsafe {
+        //     let pages = &mut *self.pages.get();
+        //     pages
+        //         .entry(page_no)
+        //         .or_insert_with(|| Box::new([0; PAGE_SIZE]))
+        // }
     }
 
     fn get_page(&self, page_no: usize) -> Option<&MemPage> {
-        unsafe { (*self.pages.get()).get(&page_no) }
+        let start = page_no * PAGE_SIZE;
+        let end = start + PAGE_SIZE;
+        let page = unsafe { &mut *self.pages.get() };
+
+        let page = &page[start..end];
+        if page.is_empty() {
+            Some(page)
+        } else {
+            None
+        }
+        // unsafe { (*self.pages.get()).get(&page_no) }
+    }
+
+    fn resize(&self, capacity: usize) -> Result<()> {
+        // TODO use remap here for linux
+        let pages = unsafe { &mut *self.pages.get() };
+        let mut new_pages = MmapMut::map_anon(PAGE_SIZE * capacity)?;
+        new_pages[..pages.len()].clone_from_slice(pages);
+
+        *pages = new_pages;
+
+        Ok(())
     }
 }
 
@@ -141,7 +182,7 @@ impl File for MemoryFile {
             let bytes_to_write = remaining.min(PAGE_SIZE - page_offset);
 
             {
-                let page = self.io.get_or_allocate_page(page_no);
+                let page = self.io.get_or_allocate_page(page_no)?;
                 page[page_offset..page_offset + bytes_to_write]
                     .copy_from_slice(&data[buf_offset..buf_offset + bytes_to_write]);
             }
