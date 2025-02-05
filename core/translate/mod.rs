@@ -89,7 +89,13 @@ pub fn translate(
         }
         ast::Stmt::Detach(_) => bail_parse_error!("DETACH not supported yet"),
         ast::Stmt::DropIndex { .. } => bail_parse_error!("DROP INDEX not supported yet"),
-        ast::Stmt::DropTable { .. } => bail_parse_error!("DROP TABLE not supported yet"),
+        // ast::Stmt::DropTable { .. } => bail_parse_error!("DROP TABLE not supported yet"),
+        ast::Stmt::DropTable {
+            if_exists,
+            tbl_name,
+        } => {
+            translate_drop_table(&mut program, tbl_name, if_exists, schema)?;
+        }
         ast::Stmt::DropTrigger { .. } => bail_parse_error!("DROP TRIGGER not supported yet"),
         ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
         ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
@@ -513,6 +519,224 @@ fn translate_create_table(
     program.emit_goto(start_offset);
 
     Ok(program)
+}
+
+fn translate_drop_table(
+    program: &mut ProgramBuilder,
+    tbl_name: ast::QualifiedName,
+    if_exists: bool,
+    schema: &Schema,
+) -> Result<()> {
+    let table = schema.get_table(tbl_name.name.0.as_str());
+    if table.is_none() {
+        if if_exists {
+            let init_label = program.emit_init();
+            let start_offset = program.offset();
+            program.emit_halt();
+            program.resolve_label(init_label, program.offset());
+            program.emit_transaction(true);
+            program.emit_constant_insns();
+            program.emit_goto(start_offset);
+
+            return Ok(());
+        }
+        bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
+    }
+    let table = table.unwrap(); //  safe to do since we have a check before this
+
+    let init_label = program.emit_init();
+    let start_offset = program.offset();
+
+    //  1. Drop the table BTree
+    program.emit_insn(Insn::DropBtree {
+        db: 0,
+        root: table.root_page,
+    });
+
+    //  TODO: Drop indexes?
+
+    //  2. Delete table metadata from sqlite_schema
+    let table_name = "sqlite_schema";
+    let table = schema.get_table(&table_name).unwrap();
+    let sqlite_schema_cursor_id = program.alloc_cursor_id(
+        Some(table_name.to_string()),
+        CursorType::BTreeTable(table.clone()),
+    );
+    program.emit_insn(Insn::OpenWriteAsync {
+        cursor_id: sqlite_schema_cursor_id,
+        root_page: 1,
+    });
+    program.emit_insn(Insn::OpenWriteAwait {});
+
+    //  Rewind to the very beginning of the cursor
+    program.emit_insn(Insn::RewindAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    let end_metadata_label = program.allocate_label();
+    program.emit_insn(Insn::RewindAwait {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_empty: end_metadata_label,
+    });
+    let metadata_loop = program.allocate_label();
+    program.resolve_label(metadata_loop, program.offset());
+
+    //  Load row details
+    let tbl_name_reg = program.alloc_register();
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id,
+        column: 2,
+        dest: tbl_name_reg,
+    });
+    let string_reg = program.emit_string8_new_reg(tbl_name.name.0.clone());
+    let next_label = program.allocate_label();
+    program.emit_insn(Insn::Ne {
+        lhs: tbl_name_reg,
+        rhs: string_reg,
+        target_pc: next_label,
+        flags: CmpInsFlags::default(),
+    });
+
+    //  Delete matching row
+    program.emit_insn(Insn::DeleteAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    program.emit_insn(Insn::DeleteAwait {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+
+    //  Move to next row
+    program.resolve_label(next_label, program.offset());
+    program.emit_insn(Insn::NextAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    program.emit_insn(Insn::NextAwait {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_next: metadata_loop,
+    });
+    program.resolve_label(end_metadata_label, program.offset());
+
+    //  Update schema
+    let parse_schema_where_clause = format!("tbl_name = {}", tbl_name.name.0);
+    program.emit_insn(Insn::ParseSchema {
+        db: 0,
+        where_clause: parse_schema_where_clause,
+    });
+
+    program.emit_halt();
+    program.resolve_label(init_label, program.offset());
+    program.emit_transaction(true);
+    program.emit_goto(start_offset);
+
+    Ok(program)
+}
+
+fn translate_drop_table(
+    program: &mut ProgramBuilder,
+    tbl_name: ast::QualifiedName,
+    if_exists: bool,
+    schema: &Schema,
+) -> Result<()> {
+    let table = schema.get_table(tbl_name.name.0.as_str());
+    if table.is_none() {
+        if if_exists {
+            let init_label = program.emit_init();
+            let start_offset = program.offset();
+            program.emit_halt();
+            program.resolve_label(init_label, program.offset());
+            program.emit_transaction(true);
+            program.emit_constant_insns();
+            program.emit_goto(start_offset);
+
+            return Ok(());
+        }
+        bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
+    }
+    let table = table.unwrap(); //  safe to do since we have a check before this
+
+    let init_label = program.emit_init();
+    let start_offset = program.offset();
+
+    //  1. Drop the table BTree
+    program.emit_insn(Insn::DropBtree {
+        db: 0,
+        root: table.root_page,
+    });
+
+    //  TODO: Drop indexes?
+
+    //  2. Delete table metadata from sqlite_schema
+    let table_name = "sqlite_schema";
+    let table = schema.get_table(&table_name).unwrap();
+    let sqlite_schema_cursor_id = program.alloc_cursor_id(
+        Some(table_name.to_string()),
+        CursorType::BTreeTable(table.clone()),
+    );
+    program.emit_insn(Insn::OpenWriteAsync {
+        cursor_id: sqlite_schema_cursor_id,
+        root_page: 1,
+    });
+    program.emit_insn(Insn::OpenWriteAwait {});
+
+    //  Rewind to the very beginning of the cursor
+    program.emit_insn(Insn::RewindAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    let end_metadata_label = program.allocate_label();
+    program.emit_insn(Insn::RewindAwait {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_empty: end_metadata_label,
+    });
+    let metadata_loop = program.allocate_label();
+    program.resolve_label(metadata_loop, program.offset());
+
+    //  Load row details
+    let tbl_name_reg = program.alloc_register();
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id,
+        column: 2,
+        dest: tbl_name_reg,
+    });
+    let string_reg = program.emit_string8_new_reg(tbl_name.name.0.clone());
+    let next_label = program.allocate_label();
+    program.emit_insn(Insn::Ne {
+        lhs: tbl_name_reg,
+        rhs: string_reg,
+        target_pc: next_label,
+        flags: CmpInsFlags::default(),
+    });
+
+    //  Delete matching row
+    program.emit_insn(Insn::DeleteAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    program.emit_insn(Insn::DeleteAwait {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+
+    //  Move to next row
+    program.resolve_label(next_label, program.offset());
+    program.emit_insn(Insn::NextAsync {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+    program.emit_insn(Insn::NextAwait {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_next: metadata_loop,
+    });
+    program.resolve_label(end_metadata_label, program.offset());
+
+    //  Update schema
+    let parse_schema_where_clause = format!("tbl_name = {}", tbl_name.name.0);
+    program.emit_insn(Insn::ParseSchema {
+        db: 0,
+        where_clause: parse_schema_where_clause,
+    });
+
+    program.emit_halt();
+    program.resolve_label(init_label, program.offset());
+    program.emit_transaction(true);
+    program.emit_goto(start_offset);
+
+    Ok(())
 }
 
 enum PrimaryKeyDefinitionType<'a> {

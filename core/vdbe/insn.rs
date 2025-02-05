@@ -590,6 +590,14 @@ pub enum Insn {
         flags: usize,
     },
 
+    //  Drop a b-tree
+    DropBtree {
+        //  The database within which this b-tree needs to be dropped (P1).
+        db: usize,
+        //  The root page of this b-tree (P2).
+        root: usize,
+    },
+
     /// Close a cursor.
     Close {
         cursor_id: CursorID,

@@ -12,6 +12,7 @@ use crate::{LimboError, Result};
 use std::cell::{Ref, RefCell};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
@@ -2233,6 +2234,111 @@ impl BTreeCursor {
         }
 
         Ok(Some(n_overflow))
+    }
+
+    pub fn btree_drop(&mut self) -> Result<CursorResult<()>> {
+        self.move_to_root();
+
+        loop {
+            let page = self.stack.top();
+            return_if_locked!(page);
+
+            if !page.is_loaded() {
+                self.pager.load_page(Arc::clone(&page))?;
+                return Ok(CursorResult::IO);
+            }
+
+            let contents = page.get().contents.as_ref().unwrap();
+            //  TOOD: Uncomment after Krishvishal's PR https://github.com/tursodatabase/limbo/pull/785 merged
+            // let current_page_id = page.get().id;
+
+            if !contents.is_leaf() {
+                let mut has_unprocessed_children = false;
+
+                //  Process all the regular cells first
+                for cell_idx in 0..contents.cell_count() {
+                    let cell = contents.cell_get(
+                        cell_idx,
+                        Rc::clone(&self.pager),
+                        self.payload_overflow_threshold_max(contents.page_type()),
+                        self.payload_overflow_threshold_min(contents.page_type()),
+                        self.usable_space(),
+                    )?;
+                    if let BTreeCell::TableInteriorCell(interior) = cell {
+                        let child_page =
+                            self.pager.read_page(interior._left_child_page as usize)?;
+                        self.stack.push(child_page);
+                        has_unprocessed_children = true;
+                        break;
+                    }
+                }
+
+                if !has_unprocessed_children {
+                    if let Some(rightmost) = contents.rightmost_pointer() {
+                        let rightmost_page = self.pager.read_page(rightmost as usize)?;
+                        self.stack.push(rightmost_page);
+                        continue;
+                    }
+                }
+
+                if has_unprocessed_children {
+                    continue;
+                }
+            } else {
+                for cell_idx in 0..contents.cell_count() {
+                    let cell = contents.cell_get(
+                        cell_idx,
+                        Rc::clone(&self.pager),
+                        self.payload_overflow_threshold_max(contents.page_type()),
+                        self.payload_overflow_threshold_min(contents.page_type()),
+                        self.usable_space(),
+                    )?;
+                    if let BTreeCell::TableLeafCell(TableLeafCell {
+                        _rowid,
+                        _payload,
+                        first_overflow_page: Some(overflow_page_id),
+                    }) = cell
+                    {
+                        let mut current_overflow_id = overflow_page_id;
+                        loop {
+                            let overflow_page =
+                                self.pager.read_page(current_overflow_id as usize)?;
+                            return_if_locked!(overflow_page);
+
+                            if !overflow_page.is_loaded() {
+                                self.pager.load_page(Arc::clone(&overflow_page))?;
+                                return Ok(CursorResult::IO);
+                            }
+
+                            let overflow_contents = overflow_page.get().contents.as_ref().unwrap();
+                            let next_overflow_id = u32::from_be_bytes(
+                                overflow_contents.as_ptr()[..4].try_into().unwrap(),
+                            );
+
+                            //  TODO: Uncomment after Krishvishal's PR https://github.com/tursodatabase/limbo/pull/785 is merged
+                            // self.pager
+                            //     .free_page(Some(overflow_page), current_overflow_id as usize)?;
+
+                            if next_overflow_id == 0 {
+                                break;
+                            }
+                            current_overflow_id = next_overflow_id;
+                        }
+                    }
+                }
+            }
+
+            //  All children & overflow pages have been processed
+            //  TODO: Uncomment after Krishvishal's PR https://github.com/tursodatabase/limbo/pull/785 is merged
+            // self.pager.free_page(Some(page), current_page_id)?;
+
+            if self.stack.has_parent() {
+                self.stack.pop();
+            } else {
+                break;
+            }
+        }
+        Ok(CursorResult::Ok(()))
     }
 }
 

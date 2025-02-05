@@ -1101,6 +1101,15 @@ pub fn insn_to_str(
                 0,
                 format!("r[{}]=root iDb={} flags={}", root, db, flags),
             ),
+            Insn::DropBtree { db, root } => (
+                "DropBtree",
+                *db as i32,
+                *root as i32,
+                0,
+                OwnedValue::build_text(Rc::new("".to_string())),
+                0,
+                format!("root iDb={}", db),
+            ),
             Insn::Close { cursor_id } => (
                 "Close",
                 *cursor_id as i32,
