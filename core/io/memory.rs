@@ -6,6 +6,7 @@ use memmap2::MmapMut;
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
     collections::BTreeMap,
+    io::Write,
     rc::Rc,
     sync::Arc,
 };
@@ -21,7 +22,7 @@ const PAGE_SIZE: usize = 4096;
 // type MemPage = Box<[u8; PAGE_SIZE]>;
 type MemPage = [u8];
 // TODO: initial pages flag
-const INITIAL_PAGES: usize = 4;
+const INITIAL_PAGES: usize = 5;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
@@ -43,7 +44,15 @@ impl MemoryIO {
             let page = &mut *self.pages.get();
             page.len()
         };
-        if !range.contains(&len_pages) {
+        // dbg!(
+        //     "get_or_allocate_page",
+        //     &start,
+        //     &end,
+        //     &range,
+        //     &len_pages,
+        //     range.contains(&len_pages)
+        // );
+        if end > len_pages {
             let cap_pages = len_pages / PAGE_SIZE;
             self.resize(cap_pages * 2)?;
         }
@@ -200,6 +209,16 @@ impl File for MemoryFile {
             let page_no = offset / PAGE_SIZE;
             let page_offset = offset % PAGE_SIZE;
             let bytes_to_write = remaining.min(PAGE_SIZE - page_offset);
+
+            // dbg!(
+            //     "page write",
+            //     &offset,
+            //     &remaining,
+            //     &buf_offset,
+            //     &page_no,
+            //     &page_offset,
+            //     &bytes_to_write
+            // );
 
             {
                 let page = self.io.get_or_allocate_page(page_no)?;
