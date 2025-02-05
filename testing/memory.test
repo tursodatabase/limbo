@@ -1,0 +1,8 @@
+#!/usr/bin/env tclsh
+
+set testdir [file dirname $argv0]
+
+source $testdir/insert.test
+source $testdir/pragma.test
+source $testdir/changes.test
+source $testdir/total-changes.test

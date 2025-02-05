@@ -5,6 +5,7 @@ use log::debug;
 use memmap2::MmapMut;
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
+    collections::BTreeMap,
     rc::Rc,
     sync::Arc,
 };
@@ -37,25 +38,31 @@ impl MemoryIO {
     fn get_or_allocate_page(&self, page_no: usize) -> Result<&mut MemPage> {
         let start = page_no * PAGE_SIZE;
         let end = start + PAGE_SIZE;
+        let range = start..end;
+        let len_pages = unsafe {
+            let page = &mut *self.pages.get();
+            page.len()
+        };
+        if !range.contains(&len_pages) {
+            let cap_pages = len_pages / PAGE_SIZE;
+            self.resize(cap_pages * 2)?;
+        }
+
+        // dbg!("current bounds get_or_allocate_page", start, end);
 
         let page = unsafe {
             let page = &mut *self.pages.get();
             &mut page[start..end]
         };
-        if page.is_empty() {
-            // For now double capacity
-            self.resize(self.size.get() * 2)?;
-            Ok(page)
-        } else {
-            Ok(page)
-        }
+        Ok(page)
 
-        // unsafe {
+        // let page = unsafe {
         //     let pages = &mut *self.pages.get();
         //     pages
         //         .entry(page_no)
         //         .or_insert_with(|| Box::new([0; PAGE_SIZE]))
-        // }
+        // };
+        // Ok(page)
     }
 
     fn get_page(&self, page_no: usize) -> Option<&MemPage> {
@@ -63,17 +70,20 @@ impl MemoryIO {
         let end = start + PAGE_SIZE;
         let page = unsafe { &mut *self.pages.get() };
 
+        // dbg!("get_page", page_no, start, end);
+
         let page = &page[start..end];
         if page.is_empty() {
-            Some(page)
-        } else {
             None
+        } else {
+            Some(page)
         }
         // unsafe { (*self.pages.get()).get(&page_no) }
     }
 
     fn resize(&self, capacity: usize) -> Result<()> {
         // TODO use remap here for linux
+        // dbg!("resizing with new capacity", capacity);
         let pages = unsafe { &mut *self.pages.get() };
         let mut new_pages = MmapMut::map_anon(PAGE_SIZE * capacity)?;
         new_pages[..pages.len()].clone_from_slice(pages);
@@ -143,11 +153,21 @@ impl File for MemoryFile {
             let mut remaining = read_len;
             let mut buf_offset = 0;
 
+            // dbg!("page read", &offset, &remaining, &buf_offset);
+
             while remaining > 0 {
                 let page_no = offset / PAGE_SIZE;
                 let page_offset = offset % PAGE_SIZE;
                 let bytes_to_read = remaining.min(PAGE_SIZE - page_offset);
+
+                // dbg!(
+                //     "page remaining read",
+                //     &page_no,
+                //     &page_offset,
+                //     &bytes_to_read
+                // );
                 if let Some(page) = self.io.get_page(page_no) {
+                    // dbg!("pread page size", page.len());
                     read_buf.as_mut_slice()[buf_offset..buf_offset + bytes_to_read]
                         .copy_from_slice(&page[page_offset..page_offset + bytes_to_read]);
                 } else {

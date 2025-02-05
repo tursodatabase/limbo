@@ -29,6 +29,8 @@ impl DatabaseStorage for FileStorage {
         };
         let size = r.buf().len();
         assert!(page_idx > 0);
+        // dbg!("file storage", &size);
+
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {
             return Err(LimboError::NotADB);
         }
