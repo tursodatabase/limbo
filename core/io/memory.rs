@@ -2,7 +2,10 @@ use super::{Buffer, Completion, File, OpenFlags, IO};
 use crate::Result;
 
 use log::debug;
-use memmap2::{MmapMut, RemapOptions};
+#[cfg(target_os = "linux")]
+use memmap2::RemapOptions;
+
+use memmap2::MmapMut;
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
     collections::BTreeMap,
