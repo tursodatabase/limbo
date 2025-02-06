@@ -95,5 +95,5 @@ test-json:
 .PHONY: test-json
 
 test-memory:
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/memory.test
+	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/memory.py
 .PHONY: test-memory
