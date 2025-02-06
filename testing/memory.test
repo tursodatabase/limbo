@@ -5,7 +5,7 @@ source $testdir/tester.tcl
 
 set STMT "CREATE TABLE temp (t1 integer);"
 
-set vals 100
+set vals 1000
 
 for {set i 0} {$i < $vals} {incr i} {
     append STMT "INSERT INTO temp VALUES ($i);"
