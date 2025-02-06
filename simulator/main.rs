@@ -308,8 +308,12 @@ fn doublecheck(
 ) {
     {
         let mut env_ = env.lock().unwrap();
-        env_.db =
-            Database::open_file(env_.io.clone(), paths.doublecheck_db.to_str().unwrap()).unwrap();
+        env_.db = Database::open_file(
+            env_.io.clone(),
+            paths.doublecheck_db.to_str().unwrap(),
+            false,
+        )
+        .unwrap();
     }
 
     // Run the simulation again

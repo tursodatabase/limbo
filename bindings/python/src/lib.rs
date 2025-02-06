@@ -277,7 +277,7 @@ pub fn connect(path: &str) -> Result<Connection> {
         io: Arc<dyn limbo_core::IO>,
         path: &str,
     ) -> std::result::Result<Arc<limbo_core::Database>, PyErr> {
-        limbo_core::Database::open_file(io, path).map_err(|e| {
+        limbo_core::Database::open_file(io, path, false).map_err(|e| {
             PyErr::new::<DatabaseError, _>(format!("Failed to open database: {:?}", e))
         })
     }

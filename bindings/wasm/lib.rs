@@ -41,7 +41,8 @@ impl Database {
             buffer_pool.clone(),
         )));
 
-        let db = limbo_core::Database::open(io, page_io, wal, wal_shared, buffer_pool).unwrap();
+        let db =
+            limbo_core::Database::open(io, page_io, wal, wal_shared, buffer_pool, false).unwrap();
         let conn = db.connect();
         Database { db, conn }
     }

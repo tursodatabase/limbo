@@ -50,6 +50,8 @@ pub struct Opts {
         \t'io-uring' when built for Linux with feature 'io_uring'\n"
     )]
     pub io: Io,
+    #[clap(long, help = "Enable experimental MVCC feature")]
+    pub experimental_mvcc: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -209,7 +211,7 @@ impl<'a> Limbo<'a> {
                 _path => get_io(DbLocation::Path, opts.io)?,
             }
         };
-        let db = Database::open_file(io.clone(), &db_file)?;
+        let db = Database::open_file(io.clone(), &db_file, opts.experimental_mvcc)?;
         let conn = db.connect();
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
@@ -409,7 +411,7 @@ impl<'a> Limbo<'a> {
             }
         };
         self.io = Arc::clone(&io);
-        let db = Database::open_file(self.io.clone(), path)?;
+        let db = Database::open_file(self.io.clone(), path, self.opts.experimental_mvcc)?;
         self.conn = db.connect();
         self.opts.db_file = path.to_string();
         Ok(())
