@@ -2634,7 +2634,7 @@ impl Program {
                     state.registers[*root] = OwnedValue::Integer(root_page as i64);
                     state.pc += 1;
                 }
-                Insn::DropBtree { db, root } => {
+                Insn::DropTable { db, root } => {
                     if *db > 0 {
                         todo!("temp databases not implemented yet");
                     }
