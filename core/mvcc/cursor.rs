@@ -1,17 +1,18 @@
 use crate::mvcc::clock::LogicalClock;
 use crate::mvcc::database::{MvStore, Result, Row, RowID};
 use std::fmt::Debug;
+use std::rc::Rc;
 
 #[derive(Debug)]
-pub struct ScanCursor<'a, Clock: LogicalClock> {
-    pub db: &'a MvStore<Clock>,
+pub struct ScanCursor<Clock: LogicalClock> {
+    pub db: Rc<MvStore<Clock>>,
     pub row_ids: Vec<RowID>,
     pub index: usize,
     tx_id: u64,
 }
 
-impl<'a, Clock: LogicalClock> ScanCursor<'a, Clock> {
-    pub fn new(db: &'a MvStore<Clock>, tx_id: u64, table_id: u64) -> Result<ScanCursor<'a, Clock>> {
+impl<Clock: LogicalClock> ScanCursor<Clock> {
+    pub fn new(db: Rc<MvStore<Clock>>, tx_id: u64, table_id: u64) -> Result<ScanCursor<Clock>> {
         let row_ids = db.scan_row_ids_for_table(table_id)?;
         Ok(Self {
             db,
@@ -19,6 +20,10 @@ impl<'a, Clock: LogicalClock> ScanCursor<'a, Clock> {
             row_ids,
             index: 0,
         })
+    }
+
+    pub fn insert(&self, row: Row) -> Result<()> {
+        self.db.insert(self.tx_id, row)
     }
 
     pub fn current_row_id(&self) -> Option<RowID> {

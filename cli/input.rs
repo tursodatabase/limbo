@@ -65,6 +65,7 @@ pub struct Settings {
     pub echo: bool,
     pub is_stdout: bool,
     pub io: Io,
+    pub experimental_mvcc: bool,
 }
 
 impl From<&Opts> for Settings {
@@ -80,6 +81,7 @@ impl From<&Opts> for Settings {
                 .as_ref()
                 .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
             io: opts.io,
+            experimental_mvcc: opts.experimental_mvcc,
         }
     }
 }

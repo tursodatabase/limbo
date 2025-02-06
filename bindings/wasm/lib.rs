@@ -32,7 +32,7 @@ impl Database {
         let wal_path = format!("{}-wal", path);
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size).unwrap();
 
-        let db = limbo_core::Database::open(io, page_io, wal_shared).unwrap();
+        let db = limbo_core::Database::open(io, page_io, wal_shared, false).unwrap();
         let conn = db.connect().unwrap();
         Database { db, conn }
     }
