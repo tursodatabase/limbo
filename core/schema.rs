@@ -10,7 +10,7 @@ use sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 pub struct Schema {
@@ -951,23 +951,19 @@ mod tests {
 }
 #[derive(Debug)]
 pub struct EphemeralIndex {
-    pub rows: BTreeMap<IndexId, OwnedRecord>, // rowid -> each index in the Vec is a column
-    pub columns: Vec<Column>,                 // columns
+    // Indexes rows has no data, all values from the record are used as key
+    pub rows: BTreeSet<OwnedRecord>,
+    pub columns: Vec<Column>,
 }
 
 impl EphemeralIndex {
     pub fn new() -> Self {
         Self {
-            rows: BTreeMap::new(),
+            rows: BTreeSet::new(),
             columns: vec![],
         }
     }
 }
-
-// What defines row uniqueness is the combination of the values of the first column with
-// the rowid. In this way, we can have multiple rows pointing to the same rowid.
-// https://www.sqlite.org/queryplanner.html
-type IndexId = (OwnedValue, u64);
 
 #[derive(Debug)]
 pub struct EphemeralTable {

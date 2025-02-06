@@ -73,20 +73,35 @@ impl EphemeralCursor {
                     unreachable!("index seek key should be a record");
                 };
 
-                let rows = &index.rows;
-                let index = index_key.values.first().expect("No values in index record");
+                let search_key = index_key.clone();
 
-                let mut range = match op {
-                    SeekOp::EQ => rows.range((index.clone(), 0)..=(index.clone(), u64::MAX)),
-                    SeekOp::GE => rows.range((index.clone(), 0)..),
-                    SeekOp::GT => rows.range((index.clone(), 0)..), // To exclude index we need to implement Ord for OwnedValue
+                // Exclude the last value for comparison
+                let trimmed_key = OwnedRecord {
+                    values: search_key.values[..search_key.values.len() - 1].to_vec(),
                 };
 
-                if let Some((index, row)) = range.next() {
-                    self.rowid = Some(index.1);
-                    self.current = Some(row.clone());
+                let rows = &index.rows;
+                let mut range = match op {
+                    SeekOp::EQ => rows.range(trimmed_key.clone()..=trimmed_key.clone()),
+                    SeekOp::GE => rows.range(trimmed_key.clone()..),
+                    SeekOp::GT => rows.range(trimmed_key.clone()..),
+                };
+
+                // this is an obvious makeshift but I didn't find any better way to do it
+                if matches!(op, SeekOp::GT) {
+                    range.next();
+                }
+
+                if let Some(record) = range.next() {
+                    let rowid = match record.values.last() {
+                        Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                        _ => unreachable!("index records should have an integer rowid"),
+                    };
+
+                    self.rowid = Some(rowid);
+                    self.current = Some(record.clone());
                     self.null_flag = false;
-                    return Ok(CursorResult::Ok((self.rowid, self.current.clone())));
+                    return Ok(CursorResult::Ok((Some(rowid), self.current.clone())));
                 }
             }
         }
@@ -107,7 +122,6 @@ impl EphemeralCursor {
         match &mut self.source {
             Ephemeral::Table(table) => {
                 let rowid = if moved_before {
-                    // Traverse to find the correct position (here, just use `key` as rowid for simplicity)
                     if let OwnedValue::Integer(rowid) = key {
                         *rowid as u64
                     } else {
@@ -116,16 +130,13 @@ impl EphemeralCursor {
                         ));
                     }
                 } else {
-                    // Use the next available rowid
                     let rowid = table.next_rowid;
                     table.next_rowid += 1;
                     rowid
                 };
 
-                // Insert the record into the table
                 table.rows.insert(rowid, record.values.clone());
 
-                // Update cursor state
                 self.rowid = Some(rowid);
                 self.current = Some(record.clone());
                 self.null_flag = false;
@@ -138,36 +149,14 @@ impl EphemeralCursor {
                         "Invalid key type for rowid".to_string(),
                     ));
                 };
+                let mut record = record.clone();
 
-                let key = match record.values.first().expect("No values in index record") {
-                    OwnedValue::Null | OwnedValue::Agg(_) | OwnedValue::Record(_) => {
-                        return Err(LimboError::InternalError(
-                            "Key of index cannot be Null, Agg nor Record".to_string(),
-                        ));
-                    }
-                    OwnedValue::Integer(value) => OwnedValue::Integer(*value),
-                    OwnedValue::Float(value) => OwnedValue::Float(*value),
-                    OwnedValue::Text(value) => OwnedValue::Text(value.clone()),
-                    OwnedValue::Blob(value) => OwnedValue::Blob(value.clone()),
-                };
+                index
+                    .rows
+                    .retain(|r| !r.values.contains(&OwnedValue::Integer(*rowid)));
 
-                // Check existing index entries for type consistency
-                // TODO: probably this should be inside the EphemeralIndex
-                if let Some((existing_key, _)) = index.rows.iter().next() {
-                    if !matches!(
-                        (existing_key, &key),
-                        ((OwnedValue::Integer(_), _), OwnedValue::Integer(_))
-                            | ((OwnedValue::Float(_), _), OwnedValue::Float(_))
-                            | ((OwnedValue::Text(_), _), OwnedValue::Text(_))
-                            | ((OwnedValue::Blob(_), _), OwnedValue::Blob(_))
-                    ) {
-                        return Err(LimboError::InternalError(
-                            "Mismatched key type in index".to_string(),
-                        ));
-                    }
-                }
-
-                index.rows.insert((key, *rowid as u64), record.clone());
+                record.values.push(OwnedValue::Integer(*rowid));
+                index.rows.insert(record.clone());
 
                 self.rowid = Some(*rowid as u64);
                 self.current = Some(record.clone());
@@ -177,7 +166,7 @@ impl EphemeralCursor {
             }
         }
     }
-    // USE COMPOSITE KEYS LIKE (ROWID, OWNEDVALUE) this will facilitate things a LOT
+
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
         match &self.source {
             Ephemeral::Table(table) => {
@@ -191,9 +180,14 @@ impl EphemeralCursor {
                 }
             }
             Ephemeral::Index(index) => {
-                if let Some(((_, rowid), row_data)) = index.rows.iter().next() {
-                    self.rowid = Some(*rowid);
-                    self.current = Some(row_data.clone());
+                if let Some(row) = index.rows.iter().next() {
+                    let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
+                        return Err(LimboError::InternalError(
+                            "Invalid key type for rowid".to_string(),
+                        ));
+                    };
+                    self.rowid = Some(*rowid as u64);
+                    self.current = Some(row.clone());
                     self.null_flag = false;
                     return Ok(CursorResult::Ok(()));
                 }
@@ -219,9 +213,15 @@ impl EphemeralCursor {
                 }
             }
             Ephemeral::Index(index) => {
-                if let Some(((_, rowid), row_data)) = index.rows.iter().next_back() {
-                    self.rowid = Some(*rowid);
-                    self.current = Some(row_data.clone());
+                if let Some(row) = index.rows.iter().next_back() {
+                    let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
+                        return Err(LimboError::InternalError(
+                            "Invalid key type for rowid".to_string(),
+                        ));
+                    };
+
+                    self.rowid = Some(*rowid as u64);
+                    self.current = Some(row.clone());
                     self.null_flag = false;
                     return Ok(CursorResult::Ok(()));
                 }
@@ -282,20 +282,28 @@ impl EphemeralCursor {
             }
             Ephemeral::Index(index) => {
                 if self.rowid.is_none() {
-                    if let Some(((_, rowid), row_data)) = index.rows.iter().next() {
-                        self.rowid = Some(*rowid);
-                        self.current = Some(row_data.clone());
+                    if let Some(row) = index.rows.iter().next() {
+                        let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
+                            return Err(LimboError::InternalError(
+                                "Invalid key type for rowid".to_string(),
+                            ));
+                        };
+                        self.rowid = Some(*rowid as u64);
+                        self.current = Some(row.clone());
                         self.null_flag = false;
                         return Ok(CursorResult::Ok(()));
                     }
-                } else if let Some(OwnedRecord { values }) = &self.current {
-                    let key = values.first().expect("No values in index record");
-                    let mut iter = index.rows.range((key.clone(), 0)..);
-                    iter.next(); // ignore first result since we don't support Exclude in OwnedValue. That would require the impl of Ord
-                    if let Some(((_, rowid), row_data)) = iter.next() {
-                        println!("{row_data:?}");
-                        self.rowid = Some(*rowid);
-                        self.current = Some(row_data.clone());
+                } else if let Some(current) = &self.current {
+                    let mut iter = index.rows.range(current..);
+                    iter.next(); // ignore first result since we don't support Exclude in OwnedRecord. That would require the impl of RangeBound
+                    if let Some(row) = iter.next() {
+                        let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
+                            return Err(LimboError::InternalError(
+                                "Invalid key type for rowid".to_string(),
+                            ));
+                        };
+                        self.rowid = Some(*rowid as u64);
+                        self.current = Some(row.clone());
                         self.null_flag = false;
                         return Ok(CursorResult::Ok(()));
                     }
@@ -336,21 +344,28 @@ impl EphemeralCursor {
             }
             Ephemeral::Index(index) => {
                 if self.rowid.is_none() {
-                    if let Some(((_, rowid), row_data)) = index.rows.iter().next_back() {
-                        self.rowid = Some(*rowid);
-                        self.current = Some(row_data.clone());
+                    if let Some(row) = index.rows.iter().next_back() {
+                        let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
+                            return Err(LimboError::InternalError(
+                                "Invalid key type for rowid".to_string(),
+                            ));
+                        };
+                        self.rowid = Some(*rowid as u64);
+                        self.current = Some(row.clone());
                         self.null_flag = false;
                         return Ok(CursorResult::Ok(()));
                     }
-                } else if let Some(OwnedRecord { values }) = &self.current {
-                    let key = values.first().expect("No values in index record");
-                    if let Some(((_, prev_rowid), row_data)) = index
-                        .rows
-                        .range(..(key.clone(), self.rowid.unwrap()))
-                        .next_back()
-                    {
-                        self.rowid = Some(*prev_rowid);
-                        self.current = Some(row_data.clone());
+                } else if let Some(current) = &self.current {
+                    if let Some(prev_record) = index.rows.range(..current).next_back() {
+                        let OwnedValue::Integer(prev_rowid) = prev_record.values.last().unwrap()
+                        else {
+                            return Err(LimboError::InternalError(
+                                "Invalid key type for rowid".to_string(),
+                            ));
+                        };
+
+                        self.rowid = Some(*prev_rowid as u64);
+                        self.current = Some(prev_record.clone());
                         self.null_flag = false;
                         return Ok(CursorResult::Ok(()));
                     }
@@ -384,25 +399,27 @@ impl EphemeralCursor {
                 }
             }
             Ephemeral::Index(index) => {
-                let key = match key {
-                    OwnedValue::Null | OwnedValue::Agg(_) | OwnedValue::Record(_) => {
-                        return Err(LimboError::InternalError(
-                            "Key of index cannot be Null, Agg nor Record".to_string(),
-                        ));
-                    }
-                    OwnedValue::Integer(value) => OwnedValue::Integer(*value),
-                    OwnedValue::Float(value) => OwnedValue::Float(*value),
-                    OwnedValue::Text(value) => OwnedValue::Text(value.clone()),
-                    OwnedValue::Blob(value) => OwnedValue::Blob(value.clone()),
+                let search_key = match key {
+                    OwnedValue::Record(record) => record.clone(),
+                    _ => OwnedRecord {
+                        values: vec![key.clone()],
+                    },
                 };
 
-                let mut iter = index.rows.range((key.clone(), 0)..(key.clone(), u64::MAX));
+                let mut iter = index.rows.range(search_key.clone()..);
+                if let Some(record) = iter.next() {
+                    if record.values.contains(&key) {
+                        let OwnedValue::Integer(rowid) = record.values.last().unwrap() else {
+                            return Err(LimboError::InternalError(
+                                "Invalid key type for rowid".to_string(),
+                            ));
+                        };
 
-                if let Some(((_, rowid), row_data)) = iter.next() {
-                    self.rowid = Some(*rowid);
-                    self.current = Some(row_data.clone());
-                    self.null_flag = false;
-                    return Ok(CursorResult::Ok(true));
+                        self.rowid = Some(*rowid as u64);
+                        self.current = Some(record.clone());
+                        self.null_flag = false;
+                        return Ok(CursorResult::Ok(true));
+                    }
                 }
             }
         }
@@ -781,19 +798,18 @@ mod tests {
     }
 
     mod test_index {
-        use std::{collections::BTreeMap, rc::Rc};
+        use std::{collections::BTreeSet, rc::Rc};
 
         use crate::{
             ephemeral::{Ephemeral, EphemeralCursor},
             schema::EphemeralIndex,
-            types::{CursorResult, LimboText, OwnedRecord, OwnedValue},
-            LimboError,
+            types::{CursorResult, LimboText, OwnedRecord, OwnedValue, SeekKey, SeekOp},
         };
 
         #[test]
         fn test_next() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let val1 = OwnedRecord {
@@ -802,17 +818,13 @@ mod tests {
 
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
 
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 2), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
 
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
@@ -831,7 +843,7 @@ mod tests {
         #[test]
         fn test_prev() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let val1 = OwnedRecord {
@@ -840,17 +852,13 @@ mod tests {
 
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
 
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 1), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
                 rowid: None,
@@ -865,14 +873,14 @@ mod tests {
             assert_eq!(cursor.current, Some(val1));
 
             cursor.prev().unwrap(); // Should go out of bounds
-            assert!(cursor.current.is_none());
             assert!(cursor.null_flag);
+            assert!(cursor.current.is_none());
         }
 
         #[test]
         fn test_last() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let val1 = OwnedRecord {
@@ -881,17 +889,13 @@ mod tests {
 
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
 
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 2), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
                 rowid: None,
@@ -901,14 +905,14 @@ mod tests {
 
             cursor.last().unwrap(); // Move to the last row
             assert_eq!(cursor.current, Some(val2));
-            assert_eq!(cursor.rowid, Some(2));
+            assert_eq!(cursor.rowid, Some(44));
             assert!(!cursor.null_flag);
         }
 
         #[test]
         fn test_last_empty_table() {
             let table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
 
@@ -928,7 +932,7 @@ mod tests {
         #[test]
         fn test_rewind() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
 
@@ -938,16 +942,12 @@ mod tests {
 
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 2), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
 
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
@@ -958,14 +958,14 @@ mod tests {
 
             cursor.rewind().unwrap(); // Move to the first row
             assert_eq!(cursor.current, Some(val1));
-            assert_eq!(cursor.rowid, Some(1));
+            assert_eq!(cursor.rowid, Some(47));
             assert!(!cursor.null_flag);
         }
 
         #[test]
         fn test_rewind_empty_table() {
             let table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
 
@@ -976,7 +976,7 @@ mod tests {
                 null_flag: true,
             };
 
-            cursor.rewind().unwrap(); // Calling rewind on an empty table
+            cursor.rewind().unwrap();
             assert!(cursor.current.is_none());
             assert!(cursor.null_flag);
             assert!(cursor.rowid.is_none());
@@ -985,7 +985,7 @@ mod tests {
         #[test]
         fn test_exists_key_found() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let val1 = OwnedRecord {
@@ -993,17 +993,13 @@ mod tests {
             };
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
 
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 2), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
 
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
@@ -1012,17 +1008,17 @@ mod tests {
                 null_flag: true,
             };
 
-            let result = cursor.exists(&OwnedValue::Integer(44)).unwrap();
+            let result = cursor.exists(&OwnedValue::Integer(42)).unwrap();
             assert_eq!(result, CursorResult::Ok(true));
-            assert_eq!(cursor.rowid, Some(2));
-            assert_eq!(cursor.current, Some(val2));
+            assert_eq!(cursor.rowid, Some(47));
+            assert_eq!(cursor.current, Some(val1));
             assert!(!cursor.null_flag);
         }
 
         #[test]
         fn test_exists_key_not_found() {
             let mut table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let val1 = OwnedRecord {
@@ -1031,17 +1027,13 @@ mod tests {
 
             let val2 = OwnedRecord {
                 values: vec![
-                    OwnedValue::Integer(44),
                     OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Integer(44),
                 ],
             };
 
-            table
-                .rows
-                .insert((OwnedValue::Integer(42), 1), val1.clone());
-            table
-                .rows
-                .insert((OwnedValue::Integer(44), 2), val2.clone());
+            table.rows.insert(val1.clone());
+            table.rows.insert(val2.clone());
 
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(table),
@@ -1060,7 +1052,7 @@ mod tests {
         #[test]
         fn test_insert_new_row() {
             let table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
             let record = OwnedRecord {
@@ -1078,20 +1070,22 @@ mod tests {
                 .insert(&OwnedValue::Integer(1), &record, false)
                 .unwrap();
 
-            if let Ephemeral::Index(table) = cursor.source {
+            let mut values = record.values.clone();
+            values.push(OwnedValue::Integer(1));
+            let result = OwnedRecord { values };
+
+            if let Ephemeral::Index(ref table) = cursor.source {
                 assert_eq!(table.rows.len(), 1);
-                let expected_key = (OwnedValue::Integer(42), 1);
-                assert_eq!(table.rows.get(&expected_key), Some(&record));
                 assert_eq!(cursor.rowid, Some(1));
-                assert_eq!(cursor.current, Some(record));
+                assert_eq!(cursor.current, Some(result));
                 assert!(!cursor.null_flag);
             }
         }
 
         #[test]
-        fn test_insert_dont_overwrite_row() {
+        fn test_insert_overwrite_row() {
             let table = EphemeralIndex {
-                rows: BTreeMap::new(),
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
 
@@ -1104,35 +1098,74 @@ mod tests {
 
             let key = OwnedValue::Integer(1);
             let record1 = OwnedRecord {
-                values: vec![OwnedValue::Text(LimboText::new(Rc::new(
-                    "First".to_string(),
-                )))],
+                values: vec![
+                    OwnedValue::Text(LimboText::new(Rc::new("First".to_string()))),
+                    OwnedValue::Integer(42),
+                ],
             };
 
-            let id = OwnedValue::Text(LimboText::new(Rc::new("Second".to_string())));
             let record2 = OwnedRecord {
-                values: vec![id.clone()],
+                values: vec![
+                    OwnedValue::Text(LimboText::new(Rc::new("Second".to_string()))),
+                    OwnedValue::Integer(43),
+                ],
             };
 
             cursor.insert(&key, &record1, false).unwrap();
             cursor.insert(&key, &record2, true).unwrap();
 
-            if let Ephemeral::Index(table) = cursor.source {
-                assert_eq!(table.rows.len(), 2);
-                let expected_key = (id, 1);
-                assert_eq!(table.rows.get(&expected_key), Some(&record2));
+            let mut values = record2.values.clone();
+            values.push(OwnedValue::Integer(1));
+            let result = OwnedRecord { values };
+
+            if let Ephemeral::Index(ref table) = cursor.source {
+                assert_eq!(table.rows.len(), 1);
                 assert_eq!(cursor.rowid, Some(1));
-                assert_eq!(cursor.current, Some(record2));
+                assert_eq!(cursor.current, Some(result));
                 assert!(!cursor.null_flag);
             }
         }
 
         #[test]
-        fn test_index_key_type_consistency() {
-            let index = EphemeralIndex {
-                rows: BTreeMap::new(),
+        fn test_do_seek_index_gt() {
+            let mut index = EphemeralIndex {
+                rows: BTreeSet::new(),
                 columns: vec![],
             };
+
+            let record1 = OwnedRecord {
+                values: vec![
+                    OwnedValue::Integer(1),
+                    OwnedValue::Integer(10),
+                    OwnedValue::Integer(100),
+                ],
+            };
+            let record2 = OwnedRecord {
+                values: vec![
+                    OwnedValue::Integer(2),
+                    OwnedValue::Integer(20),
+                    OwnedValue::Integer(200),
+                ],
+            };
+            let record3 = OwnedRecord {
+                values: vec![
+                    OwnedValue::Integer(2),
+                    OwnedValue::Integer(25),
+                    OwnedValue::Integer(300),
+                ],
+            };
+            let record4 = OwnedRecord {
+                values: vec![
+                    OwnedValue::Integer(3),
+                    OwnedValue::Integer(30),
+                    OwnedValue::Integer(400),
+                ],
+            };
+
+            index.rows.insert(record1.clone());
+            index.rows.insert(record2.clone());
+            index.rows.insert(record3.clone());
+            index.rows.insert(record4.clone());
 
             let mut cursor = EphemeralCursor {
                 source: Ephemeral::Index(index),
@@ -1141,25 +1174,18 @@ mod tests {
                 null_flag: true,
             };
 
-            // First insert: integer key
-            let record1 = OwnedRecord {
-                values: vec![OwnedValue::Integer(42)],
+            let key = OwnedRecord {
+                values: vec![OwnedValue::Integer(2), OwnedValue::Integer(20)],
             };
-            let result1 = cursor.insert(&OwnedValue::Integer(1), &record1, false);
-            assert!(result1.is_ok(), "First insertion should succeed");
 
-            // Second insert: text key (should fail)
-            let record2 = OwnedRecord {
-                values: vec![OwnedValue::Text(LimboText::new(Rc::new(
-                    "Invalid".to_string(),
-                )))],
-            };
-            let result2 = cursor.insert(&OwnedValue::Integer(2), &record2, false);
+            let search_key = SeekKey::IndexKey(&key);
 
-            assert!(
-                matches!(result2, Err(LimboError::InternalError(_))),
-                "Mismatched key type should result in an InternalError"
-            );
+            let result = cursor.do_seek(search_key, SeekOp::GT).unwrap();
+
+            assert_eq!(result, CursorResult::Ok((Some(300), Some(record3.clone()))));
+            assert_eq!(cursor.rowid, Some(300));
+            assert_eq!(cursor.current, Some(record3));
+            assert!(!cursor.null_flag);
         }
     }
 }
