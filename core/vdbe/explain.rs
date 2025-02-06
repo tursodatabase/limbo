@@ -1101,8 +1101,8 @@ pub fn insn_to_str(
                 0,
                 format!("r[{}]=root iDb={} flags={}", root, db, flags),
             ),
-            Insn::DropBtree { db, root } => (
-                "DropBtree",
+            Insn::DropTable { db, root } => (
+                "DropTable",
                 *db as i32,
                 *root as i32,
                 0,

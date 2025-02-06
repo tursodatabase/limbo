@@ -590,8 +590,8 @@ pub enum Insn {
         flags: usize,
     },
 
-    //  Drop a b-tree
-    DropBtree {
+    //  Drop a table
+    DropTable {
         //  The database within which this b-tree needs to be dropped (P1).
         db: usize,
         //  The root page of this b-tree (P2).
