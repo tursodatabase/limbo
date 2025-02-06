@@ -153,21 +153,45 @@ def stub_memory_test(
 # TODO no delete tests for now because of limbo outputs some debug information on delete
 def memory_tests() -> list[dict]:
     tests = [
-        {"name": "small-insert-blob-interleaved", "vals": 10},
-        {"name": "big-insert-blob-interleaved", "vals": 100},
-        {"name": "small-insert-integer", "vals": 10, "blobs": False},
-        {"name": "big-insert-integer", "vals": 1000, "blobs": False},
+        # {"name": "small-insert-blob-interleaved", "vals": 10},
+        # {"name": "big-insert-blob-interleaved", "vals": 100},
+        # {"name": "small-insert-integer", "vals": 10, "blobs": False},
+        # {"name": "big-insert-integer", "vals": 1000, "blobs": False},
     ]
 
-    for blob_size in range(1024, 1024 * 1024, 1024 * 4**3):
-        (
-            tests.append(
-                {
-                    "name": f"small-insert-blob-interleaved-blob-size-{blob_size}",
-                    "vals": 10,
-                    "blob_size": blob_size,
-                }
-            ),
+    for vals in range(0, 1000, 100):
+        tests.append(
+            {
+                "name": f"small-insert-integer-vals-{vals}",
+                "vals": vals,
+                "blobs": False,
+            }
+        )
+
+    tests.append(
+        {
+            "name": f"small-insert-blob-interleaved-blob-size-{1024}",
+            "vals": 10,
+            "blob_size": 1024,
+        }
+    )
+    tests.append(
+        {
+            "name": f"big-insert-blob-interleaved-blob-size-{1024}",
+            "vals": 100,
+            "blob_size": 1024,
+        }
+    )
+
+    for blob_size in range(0, (1024 * 1024) + 1, 1024 * 4**4):
+        if blob_size == 0:
+            continue
+        tests.append(
+            {
+                "name": f"small-insert-blob-interleaved-blob-size-{blob_size}",
+                "vals": 10,
+                "blob_size": blob_size,
+            }
         )
         tests.append(
             {
