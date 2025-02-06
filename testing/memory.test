@@ -14,12 +14,19 @@ set STMT "create table temp (t1 integer, primary key (t1));"
 set vals 1000
 
 for {set i 0} {$i < $vals} {incr i} {
-    append STMT "insert into temp values ($i);"
+    append STMT "INSERT INTO temp VALUES ($i);"
 }
 
-append STMT "SELECT count(t1) FROM temp;"
+# append STMT "SELECT count(t1) FROM temp;"
 
 # puts $STMT
 
-do_execsql_test_on_specific_db {:memory:} mass-insert "$STMT" $vals
+
+do_execsql_test_on_specific_db {:memory:} mass-insert "$STMT SELECT count(t1) FROM temp;" $vals
+
+for {set i 0} {$i < $vals} {incr i} {
+    append STMT "DELETE FROM temp WHERE t1=$i;"
+}
+
+do_execsql_test_on_specific_db {:memory:} mass-insert-delete "$STMT  SELECT count(t1) FROM temp;" 0
 
