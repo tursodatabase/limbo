@@ -253,5 +253,9 @@ impl File for MemoryFile {
 impl Drop for MemoryFile {
     fn drop(&mut self) {
         // no-op
+        // TODO ideally we could have some flags 
+        // in Memory File, that when this is dropped 
+        // if the persist flag is true we could flush the mmap to disk
+        // We would also have to store the file name here in this case
     }
 }
