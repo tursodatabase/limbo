@@ -2,7 +2,7 @@ use super::{Buffer, Completion, File, OpenFlags, IO};
 use crate::Result;
 
 use log::debug;
-use memmap2::MmapMut;
+use memmap2::{MmapMut, RemapOptions};
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
     collections::BTreeMap,
@@ -39,7 +39,6 @@ impl MemoryIO {
     fn get_or_allocate_page(&self, page_no: usize) -> Result<&mut MemPage> {
         let start = page_no * PAGE_SIZE;
         let end = start + PAGE_SIZE;
-        let range = start..end;
         let len_pages = unsafe {
             let page = &mut *self.pages.get();
             page.len()
@@ -91,13 +90,23 @@ impl MemoryIO {
     }
 
     fn resize(&self, capacity: usize) -> Result<()> {
-        // TODO use remap here for linux
-        // dbg!("resizing with new capacity", capacity);
         let pages = unsafe { &mut *self.pages.get() };
-        let mut new_pages = MmapMut::map_anon(PAGE_SIZE * capacity)?;
-        new_pages[..pages.len()].clone_from_slice(pages);
+        let new_cap = PAGE_SIZE * capacity;
+        // TODO use remap here for linux
+        #[cfg(target_os = "linux")]
+        {
+            unsafe {
+                pages.remap(new_cap, RemapOptions::new().may_move(true))?;
+            }
+        }
 
-        *pages = new_pages;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut new_pages = MmapMut::map_anon(new_cap)?;
+            new_pages[..pages.len()].clone_from_slice(pages);
+
+            *pages = new_pages;
+        }
 
         Ok(())
     }
@@ -253,8 +262,8 @@ impl File for MemoryFile {
 impl Drop for MemoryFile {
     fn drop(&mut self) {
         // no-op
-        // TODO ideally we could have some flags 
-        // in Memory File, that when this is dropped 
+        // TODO ideally we could have some flags
+        // in Memory File, that when this is dropped
         // if the persist flag is true we could flush the mmap to disk
         // We would also have to store the file name here in this case
     }
