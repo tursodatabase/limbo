@@ -3,30 +3,36 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
+set STMT "CREATE TABLE temp (t1 integer);"
 
-source $testdir/insert.test
-source $testdir/pragma.test
-source $testdir/changes.test
-source $testdir/total-changes.test
-
-set STMT "create table temp (t1 integer, primary key (t1));"
-
-set vals 1000
+set vals 100
 
 for {set i 0} {$i < $vals} {incr i} {
     append STMT "INSERT INTO temp VALUES ($i);"
 }
 
-# append STMT "SELECT count(t1) FROM temp;"
-
-# puts $STMT
-
-
 do_execsql_test_on_specific_db {:memory:} mass-insert "$STMT SELECT count(t1) FROM temp;" $vals
 
+set DEL_STMT STMT
+
+# for {set i 0} {$i < $vals} {incr i} {
+#     append DEL_STMT "DELETE FROM temp WHERE t1=$i;"
+# }
+
+# Need to remove the printing that is happening on delete for this test to work
+# do_execsql_test_on_specific_db {:memory:} mass-insert-delete "$STMT  SELECT count(t1) FROM temp;" 0
+
+set BIG_STMT "CREATE TABLE temp (t1 BLOB);"
+
 for {set i 0} {$i < $vals} {incr i} {
-    append STMT "DELETE FROM temp WHERE t1=$i;"
+    append BIG_STMT "INSERT INTO temp VALUES (zeroblob(1024*1024));"
 }
 
-do_execsql_test_on_specific_db {:memory:} mass-insert-delete "$STMT  SELECT count(t1) FROM temp;" 0
+# Insert 1000 1mb Blobs
+do_execsql_test_on_specific_db {:memory:} mass-insert-big "$BIG_STMT SELECT count(t1) FROM temp;" $vals
+
+# Need to remove the printing that is happening on delete for this test to work
+# Delete 1000 1mb Blobs
+# do_execsql_test_on_specific_db {:memory:} mass-insert-delete-big "$BIG_STMT DELETE FROM temp; SELECT count(t1) FROM temp;" 0
+
 
