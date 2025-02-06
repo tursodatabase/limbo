@@ -8,32 +8,28 @@ use memmap2::RemapOptions;
 use memmap2::MmapMut;
 use std::{
     cell::{Cell, RefCell, UnsafeCell},
-    collections::BTreeMap,
-    io::Write,
     rc::Rc,
     sync::Arc,
 };
 
 pub struct MemoryIO {
-    // pages: UnsafeCell<BTreeMap<usize, MemPage>>,
     size: Cell<usize>,
     pages: UnsafeCell<MmapMut>,
 }
 
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
-// type MemPage = Box<[u8; PAGE_SIZE]>;
 type MemPage = [u8];
 // TODO: initial pages flag
-const INITIAL_PAGES: usize = 5;
+const INITIAL_PAGES: usize = 16;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
         Ok(Arc::new(Self {
-            // pages: BTreeMap::new().into(),
             size: 0.into(),
+            // Initial size of 4kb * 16 = 64kb
             pages: MmapMut::map_anon(PAGE_SIZE * INITIAL_PAGES)?.into(),
         }))
     }
@@ -46,56 +42,38 @@ impl MemoryIO {
             let page = &mut *self.pages.get();
             page.len()
         };
-        // dbg!(
-        //     "get_or_allocate_page",
-        //     &start,
-        //     &end,
-        //     &range,
-        //     &len_pages,
-        //     range.contains(&len_pages)
-        // );
+
         if end > len_pages {
             let cap_pages = len_pages / PAGE_SIZE;
             self.resize(cap_pages * 2)?;
         }
-
-        // dbg!("current bounds get_or_allocate_page", start, end);
 
         let page = unsafe {
             let page = &mut *self.pages.get();
             &mut page[start..end]
         };
         Ok(page)
-
-        // let page = unsafe {
-        //     let pages = &mut *self.pages.get();
-        //     pages
-        //         .entry(page_no)
-        //         .or_insert_with(|| Box::new([0; PAGE_SIZE]))
-        // };
-        // Ok(page)
     }
 
     fn get_page(&self, page_no: usize) -> Option<&MemPage> {
         let start = page_no * PAGE_SIZE;
         let end = start + PAGE_SIZE;
-        let page = unsafe { &mut *self.pages.get() };
+        let pages = unsafe { &mut *self.pages.get() };
 
-        // dbg!("get_page", page_no, start, end);
+        // Make sure that we are accessing into a valid memory page
+        assert!(end <= pages.len());
 
-        let page = &page[start..end];
+        let page = &pages[start..end];
         if page.is_empty() {
             None
         } else {
             Some(page)
         }
-        // unsafe { (*self.pages.get()).get(&page_no) }
     }
 
     fn resize(&self, capacity: usize) -> Result<()> {
         let pages = unsafe { &mut *self.pages.get() };
         let new_cap = PAGE_SIZE * capacity;
-        // TODO use remap here for linux
         #[cfg(target_os = "linux")]
         {
             unsafe {
@@ -174,21 +152,12 @@ impl File for MemoryFile {
             let mut remaining = read_len;
             let mut buf_offset = 0;
 
-            // dbg!("page read", &offset, &remaining, &buf_offset);
-
             while remaining > 0 {
                 let page_no = offset / PAGE_SIZE;
                 let page_offset = offset % PAGE_SIZE;
                 let bytes_to_read = remaining.min(PAGE_SIZE - page_offset);
 
-                // dbg!(
-                //     "page remaining read",
-                //     &page_no,
-                //     &page_offset,
-                //     &bytes_to_read
-                // );
                 if let Some(page) = self.io.get_page(page_no) {
-                    // dbg!("pread page size", page.len());
                     read_buf.as_mut_slice()[buf_offset..buf_offset + bytes_to_read]
                         .copy_from_slice(&page[page_offset..page_offset + bytes_to_read]);
                 } else {
@@ -221,16 +190,6 @@ impl File for MemoryFile {
             let page_no = offset / PAGE_SIZE;
             let page_offset = offset % PAGE_SIZE;
             let bytes_to_write = remaining.min(PAGE_SIZE - page_offset);
-
-            // dbg!(
-            //     "page write",
-            //     &offset,
-            //     &remaining,
-            //     &buf_offset,
-            //     &page_no,
-            //     &page_offset,
-            //     &bytes_to_write
-            // );
 
             {
                 let page = self.io.get_or_allocate_page(page_no)?;

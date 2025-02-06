@@ -391,10 +391,8 @@ impl Wal for WalFile {
 
     /// Find the latest frame containing a page.
     fn find_frame(&self, page_id: u64) -> Result<Option<u64>> {
-        // dbg!("find frame");
         let shared = self.shared.read();
         let frames = shared.frame_cache.get(&page_id);
-        // dbg!("frames", &frames);
         if frames.is_none() {
             return Ok(None);
         }

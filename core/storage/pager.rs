@@ -235,8 +235,6 @@ impl Pager {
         let page = Arc::new(Page::new(page_idx));
         page.set_locked();
 
-        // dbg!("read_page");
-
         if let Some(frame_id) = self.wal.borrow().find_frame(page_idx as u64)? {
             self.wal
                 .borrow()
@@ -249,8 +247,6 @@ impl Pager {
             page_cache.insert(page_key, page.clone());
             return Ok(page);
         }
-
-        // dbg!("read_page_disk");
 
         sqlite3_ondisk::begin_read_page(
             self.page_io.clone(),
