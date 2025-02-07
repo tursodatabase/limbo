@@ -21,17 +21,28 @@ pub struct MemoryIO {
 const PAGE_SIZE: usize = 4096;
 type MemPage = [u8];
 const INITIAL_PAGES: OnceCell<usize> = OnceCell::new();
+const DEFAULT_INITIAL_PAGES: usize = 16;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
         // INITIAL PAGES changes in CI to test for resizing of memory pages
-        let initial_pages =
-            INITIAL_PAGES.get_or_init(|| std::env::var("CI").map(|_| 5).unwrap_or_else(|_| 16)).clone();
+        let initial_pages = INITIAL_PAGES
+            .get_or_init(|| {
+                std::env::var("INITIAL_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
+                    let initial_pages = str_num.parse::<usize>().unwrap_or(DEFAULT_INITIAL_PAGES);
+                    if initial_pages == 0 {
+                        panic!("INITIAL_PAGES flag cannot be zero")
+                    }
+                    initial_pages
+                })
+            })
+            .clone();
+
         Ok(Arc::new(Self {
             size: 0.into(),
-            // Initial size of 4kb * 16 = 64kb
+            // Initial default size of 4kb * 16 pages = 64kb
             pages: MmapMut::map_anon(PAGE_SIZE * initial_pages)?.into(),
         }))
     }

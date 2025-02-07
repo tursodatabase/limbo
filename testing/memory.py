@@ -6,6 +6,12 @@ import select
 
 sqlite_exec = "./target/debug/limbo"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
+ci = os.getenv("CI")
+initial_pages = 16
+if ci:
+    initial_pages = 5
+curr_env = os.environ.copy()
+curr_env["INITIAL_PAGES"] = str(initial_pages)
 
 
 def init_limbo():
@@ -15,8 +21,8 @@ def init_limbo():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
+        env=curr_env,
     )
-    # write_to_pipe(pipe, test_data)
     return pipe
 
 
@@ -140,8 +146,6 @@ def stub_memory_test(
     big_stmt = "".join(big_stmt)
     expected = "\n".join(expected)
 
-    # print("out", out)
-
     run_test(
         pipe,
         big_stmt,
@@ -152,12 +156,7 @@ def stub_memory_test(
 
 # TODO no delete tests for now because of limbo outputs some debug information on delete
 def memory_tests() -> list[dict]:
-    tests = [
-        # {"name": "small-insert-blob-interleaved", "vals": 10},
-        # {"name": "big-insert-blob-interleaved", "vals": 100},
-        # {"name": "small-insert-integer", "vals": 10, "blobs": False},
-        # {"name": "big-insert-integer", "vals": 1000, "blobs": False},
-    ]
+    tests = []
 
     for vals in range(0, 1000, 100):
         tests.append(
@@ -216,7 +215,6 @@ def main():
                 print(f"Test FAILED: {e}")
                 pipe.terminate()
                 exit(1)
-    # pipe.terminate()
     print("All tests passed successfully.")
 
 
