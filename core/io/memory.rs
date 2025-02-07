@@ -20,17 +20,17 @@ pub struct MemoryIO {
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
 type MemPage = [u8];
-// TODO: initial pages flag
-const INITIAL_PAGES: usize = 16;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
+        // INITIAL PAGES changes in CI to test for resizing of memory pages
+        let initial_pages = std::env::var("CI").map(|_| 5).unwrap_or_else(|_| 16);
         Ok(Arc::new(Self {
             size: 0.into(),
             // Initial size of 4kb * 16 = 64kb
-            pages: MmapMut::map_anon(PAGE_SIZE * INITIAL_PAGES)?.into(),
+            pages: MmapMut::map_anon(PAGE_SIZE * initial_pages)?.into(),
         }))
     }
 
