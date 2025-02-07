@@ -7,7 +7,7 @@ use memmap2::RemapOptions;
 
 use memmap2::MmapMut;
 use std::{
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::{Cell, OnceCell, RefCell, UnsafeCell},
     rc::Rc,
     sync::Arc,
 };
@@ -20,13 +20,15 @@ pub struct MemoryIO {
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
 type MemPage = [u8];
+const INITIAL_PAGES: OnceCell<usize> = OnceCell::new();
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
         // INITIAL PAGES changes in CI to test for resizing of memory pages
-        let initial_pages = std::env::var("CI").map(|_| 5).unwrap_or_else(|_| 16);
+        let initial_pages =
+            INITIAL_PAGES.get_or_init(|| std::env::var("CI").map(|_| 5).unwrap_or_else(|_| 16)).clone();
         Ok(Arc::new(Self {
             size: 0.into(),
             // Initial size of 4kb * 16 = 64kb
