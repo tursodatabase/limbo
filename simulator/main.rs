@@ -86,7 +86,7 @@ fn main() -> Result<(), String> {
     if cli_opts.watch {
         watch_mode(seed, &cli_opts, &paths, last_execution.clone()).unwrap();
     } else {
-        run_simulator(seed, &cli_opts, &paths, env, plans, last_execution.clone());
+        run_simulator(seed, &cli_opts, &paths, env, plans, last_execution.clone())?;
     }
 
     Ok(())
@@ -159,7 +159,7 @@ fn run_simulator(
     env: SimulatorEnv,
     plans: Vec<InteractionPlan>,
     last_execution: Arc<Mutex<Execution>>,
-) {
+) -> Result<(), String> {
     std::panic::set_hook(Box::new(move |info| {
         log::error!("panic occurred");
 
@@ -184,14 +184,15 @@ fn run_simulator(
         last_execution.clone(),
     );
 
-    if cli_opts.doublecheck {
-        doublecheck(env.clone(), paths, &plans, last_execution.clone(), result);
+    let result = if cli_opts.doublecheck {
+        doublecheck(env.clone(), paths, &plans, last_execution.clone(), result)
     } else {
         // No doublecheck, run shrinking if panicking or found a bug.
         match &result {
             SandboxedResult::Correct => {
                 log::info!("simulation succeeded");
                 println!("simulation succeeded");
+                Ok(())
             }
             SandboxedResult::Panicked {
                 error,
@@ -276,9 +277,10 @@ fn run_simulator(
                     let mut f = std::fs::File::create(&paths.shrunk_plan).unwrap();
                     f.write_all(&shrunk_plan).unwrap();
                 }
+                Result::Err("simulation failed, bug found".to_string())
             }
         }
-    }
+    };
 
     // Print the seed, the locations of the database and the plan file at the end again for easily accessing them.
     println!("database path: {:?}", paths.db);
@@ -297,6 +299,8 @@ fn run_simulator(
     }
     println!("simulator history path: {:?}", paths.history);
     println!("seed: {}", seed);
+
+    result
 }
 
 fn doublecheck(
@@ -305,7 +309,7 @@ fn doublecheck(
     plans: &[InteractionPlan],
     last_execution: Arc<Mutex<Execution>>,
     result: SandboxedResult,
-) {
+) -> Result<(), String> {
     {
         let mut env_ = env.lock().unwrap();
         env_.db =
@@ -323,29 +327,51 @@ fn doublecheck(
     match (result, result2) {
         (SandboxedResult::Correct, SandboxedResult::Panicked { .. }) => {
             log::error!("doublecheck failed! first run succeeded, but second run panicked.");
+            Result::Err(
+                "doublecheck failed! first run succeeded, but second run panicked.".to_string(),
+            )
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Panicked { .. }) => {
             log::error!(
                 "doublecheck failed! first run failed an assertion, but second run panicked."
             );
+            Result::Err(
+                "doublecheck failed! first run failed an assertion, but second run panicked."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::Correct) => {
             log::error!("doublecheck failed! first run panicked, but second run succeeded.");
+            Result::Err(
+                "doublecheck failed! first run panicked, but second run succeeded.".to_string(),
+            )
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::FoundBug { .. }) => {
             log::error!(
                 "doublecheck failed! first run panicked, but second run failed an assertion."
             );
+            Result::Err(
+                "doublecheck failed! first run panicked, but second run failed an assertion."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Correct, SandboxedResult::FoundBug { .. }) => {
             log::error!(
                 "doublecheck failed! first run succeeded, but second run failed an assertion."
             );
+            Result::Err(
+                "doublecheck failed! first run succeeded, but second run failed an assertion."
+                    .to_string(),
+            )
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Correct) => {
             log::error!(
                 "doublecheck failed! first run failed an assertion, but second run succeeded."
             );
+            Result::Err(
+                "doublecheck failed! first run failed an assertion, but second run succeeded."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Correct, SandboxedResult::Correct)
         | (SandboxedResult::FoundBug { .. }, SandboxedResult::FoundBug { .. })
@@ -355,8 +381,10 @@ fn doublecheck(
             let doublecheck_db_bytes = std::fs::read(&paths.doublecheck_db).unwrap();
             if db_bytes != doublecheck_db_bytes {
                 log::error!("doublecheck failed! database files are different.");
+                Result::Err("doublecheck failed! database files are different.".to_string())
             } else {
                 log::info!("doublecheck succeeded! database files are the same.");
+                Result::Ok(())
             }
         }
     }
