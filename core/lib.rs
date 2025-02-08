@@ -316,10 +316,8 @@ impl Connection {
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
         let db = self.db.clone();
         let syms: &SymbolTable = &db.syms.borrow();
-        println!("the command {:?}", cmd);
         match cmd {
             Cmd::Stmt(stmt) => {
-                println!("AST: {:?}", stmt);
                 let program = Rc::new(translate::translate(
                     &self.schema.borrow(),
                     stmt,
@@ -329,7 +327,6 @@ impl Connection {
                     syms,
                     QueryMode::Normal,
                 )?);
-                println!("the generated program {:?}", program);
                 let stmt = Statement::new(program, self.pager.clone());
                 Ok(Some(stmt))
             }
@@ -370,13 +367,11 @@ impl Connection {
     }
 
     pub fn execute(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<()> {
-        println!("running execute");
         let sql = sql.as_ref();
         let db = &self.db;
         let syms: &SymbolTable = &db.syms.borrow();
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
-        println!("the command {:?}", cmd);
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Explain(stmt) => {

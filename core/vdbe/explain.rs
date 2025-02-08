@@ -1101,6 +1101,22 @@ pub fn insn_to_str(
                 0,
                 format!("r[{}]=root iDb={} flags={}", root, db, flags),
             ),
+            Insn::Destroy {
+                root,
+                former_root_reg,
+                is_temp,
+            } => (
+                "Destroy",
+                *root as i32,
+                *former_root_reg as i32,
+                *is_temp as i32,
+                OwnedValue::build_text(Rc::new("".to_string())),
+                0,
+                format!(
+                    "root iDb={} former_root={} is_temp={}",
+                    root, former_root_reg, is_temp
+                ),
+            ),
             Insn::DropTable { db, root } => (
                 "DropTable",
                 *db as i32,

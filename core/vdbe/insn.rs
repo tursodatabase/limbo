@@ -590,6 +590,16 @@ pub enum Insn {
         flags: usize,
     },
 
+    /// Deletes an entire database table or index whose root page in the database file is given by P1.
+    Destroy {
+        /// The root page of the table/index to destroy
+        root: usize,
+        /// Register to store the former value of any moved root page (for AUTOVACUUM)
+        former_root_reg: usize,
+        /// Whether this is a temporary table (1) or main database table (0)
+        is_temp: usize,
+    },
+
     //  Drop a table
     DropTable {
         //  The database within which this b-tree needs to be dropped (P1).

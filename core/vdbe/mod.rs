@@ -2687,13 +2687,23 @@ impl Program {
                     state.registers[*root] = OwnedValue::Integer(root_page as i64);
                     state.pc += 1;
                 }
-                Insn::DropTable { db, root } => {
-                    if *db > 0 {
-                        todo!("temp databases not implemented yet");
+                Insn::Destroy {
+                    root,
+                    former_root_reg: _,
+                    is_temp,
+                } => {
+                    if *is_temp == 1 {
+                        todo!("temp databases not implemented yet.");
                     }
                     let mut cursor = Box::new(BTreeCursor::new(pager.clone(), *root));
                     cursor.btree_drop()?;
                     state.pc += 1;
+                }
+                Insn::DropTable { db, root: _ } => {
+                    if *db > 0 {
+                        todo!("temp databases not implemented yet");
+                    }
+                    //  TODO (Zaid): implement the functionality to clean up in-memory structures
                 }
                 Insn::Close { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();
