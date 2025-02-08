@@ -1,5 +1,4 @@
-use crate::types::OwnedValue;
-use crate::types::{OwnedRecord, OwnedValue};
+use crate::types::{OwnedValue, Record};
 use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -952,7 +951,7 @@ mod tests {
 #[derive(Debug)]
 pub struct EphemeralIndex {
     // Indexes rows has no data, all values from the record are used as key
-    pub rows: BTreeSet<OwnedRecord>,
+    pub rows: BTreeSet<Record>,
     pub columns: Vec<Column>,
 }
 

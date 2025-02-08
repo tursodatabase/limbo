@@ -1,13 +1,13 @@
 use crate::{
     schema::{EphemeralIndex, EphemeralTable},
-    types::{CursorResult, OwnedRecord, SeekKey, SeekOp},
+    types::{CursorResult, Record, SeekKey, SeekOp},
     LimboError,
 };
 use crate::{types::OwnedValue, Result};
 pub struct EphemeralCursor {
     source: Ephemeral,
     rowid: Option<u64>,
-    current: Option<OwnedRecord>,
+    current: Option<Record>,
     null_flag: bool,
 }
 
@@ -40,7 +40,7 @@ impl EphemeralCursor {
         &mut self,
         key: SeekKey<'_>,
         op: SeekOp,
-    ) -> Result<CursorResult<(Option<u64>, Option<OwnedRecord>)>> {
+    ) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
         match &mut self.source {
             Ephemeral::Table(table) => {
                 let SeekKey::TableRowId(rowid) = key else {
@@ -63,7 +63,7 @@ impl EphemeralCursor {
 
                 if let Some((id, values)) = entry {
                     self.rowid = Some(id);
-                    self.current = Some(OwnedRecord { values });
+                    self.current = Some(Record { values });
                     self.null_flag = false;
                     return Ok(CursorResult::Ok((Some(id), self.current.clone())));
                 }
@@ -76,7 +76,7 @@ impl EphemeralCursor {
                 let search_key = index_key.clone();
 
                 // Exclude the last value for comparison
-                let trimmed_key = OwnedRecord {
+                let trimmed_key = Record {
                     values: search_key.values[..search_key.values.len() - 1].to_vec(),
                 };
 
@@ -116,7 +116,7 @@ impl EphemeralCursor {
     pub fn insert(
         &mut self,
         key: &OwnedValue,
-        record: &OwnedRecord,
+        record: &Record,
         moved_before: bool,
     ) -> Result<CursorResult<()>> {
         match &mut self.source {
@@ -172,7 +172,7 @@ impl EphemeralCursor {
             Ephemeral::Table(table) => {
                 if let Some((&first_rowid, row_data)) = table.rows.iter().next() {
                     self.rowid = Some(first_rowid);
-                    self.current = Some(OwnedRecord {
+                    self.current = Some(Record {
                         values: row_data.clone(),
                     });
                     self.null_flag = false;
@@ -205,7 +205,7 @@ impl EphemeralCursor {
             Ephemeral::Table(table) => {
                 if let Some((&last_rowid, row_data)) = table.rows.iter().next_back() {
                     self.rowid = Some(last_rowid);
-                    self.current = Some(OwnedRecord {
+                    self.current = Some(Record {
                         values: row_data.clone(),
                     });
                     self.null_flag = false;
@@ -239,7 +239,7 @@ impl EphemeralCursor {
         Ok(())
     }
 
-    pub fn record(&self) -> Option<&OwnedRecord> {
+    pub fn record(&self) -> Option<&Record> {
         self.current.as_ref()
     }
 
@@ -261,7 +261,7 @@ impl EphemeralCursor {
                 if self.rowid.is_none() {
                     if let Some((&first_rowid, row_data)) = table.rows.iter().next() {
                         self.rowid = Some(first_rowid);
-                        self.current = Some(OwnedRecord {
+                        self.current = Some(Record {
                             values: row_data.clone(),
                         });
                         self.null_flag = false;
@@ -272,7 +272,7 @@ impl EphemeralCursor {
                         table.rows.range((current_rowid + 1)..).next()
                     {
                         self.rowid = Some(next_rowid);
-                        self.current = Some(OwnedRecord {
+                        self.current = Some(Record {
                             values: row_data.clone(),
                         });
                         self.null_flag = false;
@@ -295,7 +295,7 @@ impl EphemeralCursor {
                     }
                 } else if let Some(current) = &self.current {
                     let mut iter = index.rows.range(current..);
-                    iter.next(); // ignore first result since we don't support Exclude in OwnedRecord. That would require the impl of RangeBound
+                    iter.next(); // ignore first result since we don't support Exclude in Record. That would require the impl of RangeBound
                     if let Some(row) = iter.next() {
                         let OwnedValue::Integer(rowid) = row.values.last().unwrap() else {
                             return Err(LimboError::InternalError(
@@ -323,7 +323,7 @@ impl EphemeralCursor {
                 if self.rowid.is_none() {
                     if let Some((&first_rowid, row_data)) = table.rows.iter().next_back() {
                         self.rowid = Some(first_rowid);
-                        self.current = Some(OwnedRecord {
+                        self.current = Some(Record {
                             values: row_data.clone(),
                         });
                         self.null_flag = false;
@@ -334,7 +334,7 @@ impl EphemeralCursor {
                         table.rows.range(..current_rowid).next_back()
                     {
                         self.rowid = Some(next_rowid);
-                        self.current = Some(OwnedRecord {
+                        self.current = Some(Record {
                             values: row_data.clone(),
                         });
                         self.null_flag = false;
@@ -391,7 +391,7 @@ impl EphemeralCursor {
 
                 if let Some(row) = table.rows.get(&(*key as u64)) {
                     self.rowid = Some(*key as u64);
-                    self.current = Some(OwnedRecord {
+                    self.current = Some(Record {
                         values: row.clone(),
                     });
                     self.null_flag = false;
@@ -401,7 +401,7 @@ impl EphemeralCursor {
             Ephemeral::Index(index) => {
                 let search_key = match key {
                     OwnedValue::Record(record) => record.clone(),
-                    _ => OwnedRecord {
+                    _ => Record {
                         values: vec![key.clone()],
                     },
                 };
@@ -441,7 +441,7 @@ mod tests {
         use crate::{
             ephemeral::{Ephemeral, EphemeralCursor},
             schema::EphemeralTable,
-            types::{CursorResult, LimboText, OwnedRecord, OwnedValue, SeekKey, SeekOp},
+            types::{CursorResult, OwnedValue, Record, SeekKey, SeekOp, Text},
         };
 
         #[test]
@@ -452,9 +452,7 @@ mod tests {
                 columns: vec![],
             };
             let val1 = vec![OwnedValue::Integer(42)];
-            let val2 = vec![OwnedValue::Text(LimboText::new(Rc::new(
-                "Hello".to_string(),
-            )))];
+            let val2 = vec![OwnedValue::Text(Text::new(Rc::new("Hello".to_string())))];
             table.rows.insert(1, val1.clone());
             table.rows.insert(2, val2.clone());
 
@@ -468,7 +466,7 @@ mod tests {
             cursor.next().unwrap(); // Move to the first row
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val1.clone()
                 })
             );
@@ -476,7 +474,7 @@ mod tests {
             cursor.next().unwrap(); // Move to the second row
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val2.clone()
                 })
             );
@@ -491,9 +489,7 @@ mod tests {
             };
 
             let val1 = vec![OwnedValue::Integer(42)];
-            let val2 = vec![OwnedValue::Text(LimboText::new(Rc::new(
-                "Hello".to_string(),
-            )))];
+            let val2 = vec![OwnedValue::Text(Text::new(Rc::new("Hello".to_string())))];
             table.rows.insert(1, val1.clone());
             table.rows.insert(2, val2.clone());
 
@@ -507,7 +503,7 @@ mod tests {
             cursor.prev().unwrap(); // Should move to row 2
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val2.clone()
                 })
             );
@@ -515,7 +511,7 @@ mod tests {
             cursor.prev().unwrap(); // Should move to row 1
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val1.clone()
                 })
             );
@@ -534,9 +530,7 @@ mod tests {
             };
 
             let val1 = vec![OwnedValue::Integer(42)];
-            let val2 = vec![OwnedValue::Text(LimboText::new(Rc::new(
-                "Hello".to_string(),
-            )))];
+            let val2 = vec![OwnedValue::Text(Text::new(Rc::new("Hello".to_string())))];
             table.rows.insert(1, val1.clone());
             table.rows.insert(2, val2.clone());
 
@@ -550,7 +544,7 @@ mod tests {
             cursor.last().unwrap(); // Move to the last row
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val2.clone()
                 })
             );
@@ -588,9 +582,7 @@ mod tests {
             };
 
             let val1 = vec![OwnedValue::Integer(42)];
-            let val2 = vec![OwnedValue::Text(LimboText::new(Rc::new(
-                "Hello".to_string(),
-            )))];
+            let val2 = vec![OwnedValue::Text(Text::new(Rc::new("Hello".to_string())))];
             table.rows.insert(1, val1.clone());
             table.rows.insert(2, val2.clone());
 
@@ -604,7 +596,7 @@ mod tests {
             cursor.rewind().unwrap(); // Move to the first row
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: val1.clone()
                 })
             );
@@ -642,7 +634,7 @@ mod tests {
             };
 
             let val1 = OwnedValue::Integer(42);
-            let val2 = OwnedValue::Text(LimboText::new(Rc::new("Hello".to_string())));
+            let val2 = OwnedValue::Text(Text::new(Rc::new("Hello".to_string())));
             table.rows.insert(1, vec![val1.clone()]);
             table.rows.insert(2, vec![val2.clone()]);
 
@@ -658,7 +650,7 @@ mod tests {
             assert_eq!(cursor.rowid, Some(1));
             assert_eq!(
                 cursor.current,
-                Some(OwnedRecord {
+                Some(Record {
                     values: vec![val1.clone()]
                 })
             );
@@ -674,7 +666,7 @@ mod tests {
             };
 
             let val1 = OwnedValue::Integer(42);
-            let val2 = OwnedValue::Text(LimboText::new(Rc::new("Hello".to_string())));
+            let val2 = OwnedValue::Text(Text::new(Rc::new("Hello".to_string())));
             table.rows.insert(1, vec![val1.clone()]);
             table.rows.insert(2, vec![val2.clone()]);
 
@@ -708,10 +700,8 @@ mod tests {
             };
 
             let key = OwnedValue::Integer(1);
-            let record = OwnedRecord {
-                values: vec![OwnedValue::Text(LimboText::new(Rc::new(
-                    "Hello".to_string(),
-                )))],
+            let record = Record {
+                values: vec![OwnedValue::Text(Text::new(Rc::new("Hello".to_string())))],
             };
 
             cursor.insert(&key, &record, false).unwrap();
@@ -740,15 +730,11 @@ mod tests {
             };
 
             let key = OwnedValue::Integer(1);
-            let record1 = OwnedRecord {
-                values: vec![OwnedValue::Text(LimboText::new(Rc::new(
-                    "First".to_string(),
-                )))],
+            let record1 = Record {
+                values: vec![OwnedValue::Text(Text::new(Rc::new("First".to_string())))],
             };
-            let record2 = OwnedRecord {
-                values: vec![OwnedValue::Text(LimboText::new(Rc::new(
-                    "Second".to_string(),
-                )))],
+            let record2 = Record {
+                values: vec![OwnedValue::Text(Text::new(Rc::new("Second".to_string())))],
             };
 
             cursor.insert(&key, &record1, false).unwrap();
@@ -787,7 +773,7 @@ mod tests {
                 result,
                 CursorResult::Ok((
                     Some(2),
-                    Some(OwnedRecord {
+                    Some(Record {
                         values: vec![OwnedValue::Integer(20)]
                     })
                 ))
@@ -803,7 +789,7 @@ mod tests {
         use crate::{
             ephemeral::{Ephemeral, EphemeralCursor},
             schema::EphemeralIndex,
-            types::{CursorResult, LimboText, OwnedRecord, OwnedValue, SeekKey, SeekOp},
+            types::{CursorResult, OwnedValue, Record, SeekKey, SeekOp, Text},
         };
 
         #[test]
@@ -812,13 +798,13 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -846,13 +832,13 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -883,13 +869,13 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -936,13 +922,13 @@ mod tests {
                 columns: vec![],
             };
 
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -988,12 +974,12 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -1021,13 +1007,13 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let val1 = OwnedRecord {
+            let val1 = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
-            let val2 = OwnedRecord {
+            let val2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(std::rc::Rc::new("Hello".to_string()))),
+                    OwnedValue::Text(Text::new(std::rc::Rc::new("Hello".to_string()))),
                     OwnedValue::Integer(44),
                 ],
             };
@@ -1055,7 +1041,7 @@ mod tests {
                 rows: BTreeSet::new(),
                 columns: vec![],
             };
-            let record = OwnedRecord {
+            let record = Record {
                 values: vec![OwnedValue::Integer(42), OwnedValue::Integer(47)],
             };
 
@@ -1072,7 +1058,7 @@ mod tests {
 
             let mut values = record.values.clone();
             values.push(OwnedValue::Integer(1));
-            let result = OwnedRecord { values };
+            let result = Record { values };
 
             if let Ephemeral::Index(ref table) = cursor.source {
                 assert_eq!(table.rows.len(), 1);
@@ -1097,16 +1083,16 @@ mod tests {
             };
 
             let key = OwnedValue::Integer(1);
-            let record1 = OwnedRecord {
+            let record1 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(Rc::new("First".to_string()))),
+                    OwnedValue::Text(Text::new(Rc::new("First".to_string()))),
                     OwnedValue::Integer(42),
                 ],
             };
 
-            let record2 = OwnedRecord {
+            let record2 = Record {
                 values: vec![
-                    OwnedValue::Text(LimboText::new(Rc::new("Second".to_string()))),
+                    OwnedValue::Text(Text::new(Rc::new("Second".to_string()))),
                     OwnedValue::Integer(43),
                 ],
             };
@@ -1116,7 +1102,7 @@ mod tests {
 
             let mut values = record2.values.clone();
             values.push(OwnedValue::Integer(1));
-            let result = OwnedRecord { values };
+            let result = Record { values };
 
             if let Ephemeral::Index(ref table) = cursor.source {
                 assert_eq!(table.rows.len(), 1);
@@ -1133,28 +1119,28 @@ mod tests {
                 columns: vec![],
             };
 
-            let record1 = OwnedRecord {
+            let record1 = Record {
                 values: vec![
                     OwnedValue::Integer(1),
                     OwnedValue::Integer(10),
                     OwnedValue::Integer(100),
                 ],
             };
-            let record2 = OwnedRecord {
+            let record2 = Record {
                 values: vec![
                     OwnedValue::Integer(2),
                     OwnedValue::Integer(20),
                     OwnedValue::Integer(200),
                 ],
             };
-            let record3 = OwnedRecord {
+            let record3 = Record {
                 values: vec![
                     OwnedValue::Integer(2),
                     OwnedValue::Integer(25),
                     OwnedValue::Integer(300),
                 ],
             };
-            let record4 = OwnedRecord {
+            let record4 = Record {
                 values: vec![
                     OwnedValue::Integer(3),
                     OwnedValue::Integer(30),
@@ -1174,7 +1160,7 @@ mod tests {
                 null_flag: true,
             };
 
-            let key = OwnedRecord {
+            let key = Record {
                 values: vec![OwnedValue::Integer(2), OwnedValue::Integer(20)],
             };
 

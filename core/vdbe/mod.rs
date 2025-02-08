@@ -328,7 +328,6 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-<<<<<<< HEAD
 pub struct VTabOpaqueCursor(*mut c_void);
 
 impl VTabOpaqueCursor {
@@ -339,11 +338,11 @@ impl VTabOpaqueCursor {
     pub fn as_ptr(&self) -> *mut c_void {
         self.0
     }
-=======
+}
+
 pub enum GeneralCursor<'a> {
     BTree(&'a mut BTreeCursor),
     Ephemeral(&'a mut EphemeralCursor),
->>>>>>> fa7db68d (Adapt EphemeralCursor to recent changes and optimizations)
 }
 
 /// The program state describes the environment in which the program executes.
@@ -1176,14 +1175,6 @@ impl Program {
                             panic!(
                                 "Insn::Column on virtual table cursor, use Insn::VColumn instead"
                             );
-                        }
-                        CursorType::Ephemeral(_) => {
-                            let cursor = ephemeral_cursors.get_mut(cursor_id).unwrap();
-                            if let Some(record) = cursor.record() {
-                                state.registers[*dest] = record.values[*column].clone();
-                            } else {
-                                state.registers[*dest] = OwnedValue::Null
-                            }
                         }
                     }
 
