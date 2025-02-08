@@ -25,7 +25,7 @@ pub struct Opts {
     pub database: Option<PathBuf>,
     #[clap(index = 2, help = "Optional SQL command to execute")]
     pub sql: Option<String>,
-    #[clap(short = 'm', long, default_value_t = OutputMode::Raw)]
+    #[clap(short = 'm', long, default_value_t = OutputMode::List)]
     pub output_mode: OutputMode,
     #[clap(short, long, default_value = "")]
     pub output: String,
@@ -88,7 +88,7 @@ impl Default for Io {
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum OutputMode {
-    Raw,
+    List,
     Pretty,
 }
 
@@ -123,7 +123,7 @@ pub enum Command {
     Cwd,
     /// Display information about settings
     ShowInfo,
-    /// Set the value of NULL to be printedin 'raw' mode
+    /// Set the value of NULL to be printedin 'list' mode
     NullValue,
     /// Toggle 'echo' mode to repeat commands before execution
     Echo,
@@ -164,7 +164,7 @@ impl Command {
             Self::Help => ".help",
             Self::Schema => ".schema ?<table>?",
             Self::Opcodes => ".opcodes",
-            Self::OutputMode => ".mode raw|pretty",
+            Self::OutputMode => ".mode list|pretty",
             Self::SetOutput => ".output ?file?",
             Self::Cwd => ".cd <directory>",
             Self::ShowInfo => ".show",
@@ -225,11 +225,17 @@ pub struct Settings {
 
 impl From<&Opts> for Settings {
     fn from(opts: &Opts) -> Self {
+        let is_stdout = opts.output.is_empty();
+        let output_mode = if opts.output_mode == OutputMode::List && is_stdout {
+            OutputMode::Pretty
+        } else {
+            opts.output_mode
+        };
         Self {
             null_value: String::new(),
-            output_mode: opts.output_mode,
+            output_mode,
             echo: false,
-            is_stdout: opts.output.is_empty(),
+            is_stdout,
             output_filename: opts.output.clone(),
             db_file: opts
                 .database
@@ -262,7 +268,7 @@ impl std::fmt::Display for Settings {
 }
 
 impl Limbo {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(interactive: bool) -> anyhow::Result<Self> {
         let opts = Opts::parse();
         let db_file = opts
             .database
@@ -298,7 +304,7 @@ impl Limbo {
         if opts.sql.is_some() {
             app.handle_first_input(opts.sql.as_ref().unwrap());
         }
-        if !opts.quiet {
+        if !opts.quiet && interactive {
             app.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
             app.writeln("Enter \".help\" for usage hints.")?;
             app.display_in_memory()?;
@@ -390,7 +396,7 @@ impl Limbo {
             Ok(file) => {
                 self.writer = Box::new(file);
                 self.opts.is_stdout = false;
-                self.opts.output_mode = OutputMode::Raw;
+                self.opts.output_mode = OutputMode::List;
                 self.opts.output_filename = path.to_string();
                 Ok(())
             }
@@ -615,7 +621,7 @@ impl Limbo {
     ) -> anyhow::Result<()> {
         match output {
             Ok(Some(ref mut rows)) => match self.opts.output_mode {
-                OutputMode::Raw => loop {
+                OutputMode::List => loop {
                     if self.interrupt_count.load(Ordering::SeqCst) > 0 {
                         println!("Query interrupted.");
                         return Ok(());
@@ -925,7 +931,7 @@ Special Commands:
 .quit                      Stop interpreting input stream and exit.
 .show                      Display current settings.
 .open <database_file>      Open and connect to a database file.
-.output <mode>             Change the output mode. Available modes are 'raw' and 'pretty'.
+.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'.
 .schema <table_name>       Show the schema of the specified table.
 .tables <pattern>          List names of tables matching LIKE pattern TABLE
 .opcodes                   Display all the opcodes defined by the virtual machine
