@@ -547,6 +547,7 @@ fn translate_drop_table(
         }
         bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
     }
+    let table = table.unwrap(); // safe since we just checked for None
 
     let init_label = program.emit_init();
     let start_offset = program.offset();
@@ -555,14 +556,16 @@ fn translate_drop_table(
     program.emit_null(null_reg);
     let tbl_name_reg = program.alloc_register(); //  r2
     let table_reg = program.emit_string8_new_reg(tbl_name.name.0.clone()); //  r3
+    program.mark_last_insn_constant();
     let table_type = program.emit_string8_new_reg("trigger".to_string()); //  r4
+    program.mark_last_insn_constant();
     let row_id_reg = program.alloc_register(); //  r5
 
     let table_name = "sqlite_schema";
-    let table = schema.get_table(&table_name).unwrap();
+    let schema_table = schema.get_table(&table_name).unwrap();
     let sqlite_schema_cursor_id = program.alloc_cursor_id(
         Some(table_name.to_string()),
-        CursorType::BTreeTable(table.clone()),
+        CursorType::BTreeTable(schema_table.clone()),
     );
     program.emit_insn(Insn::OpenWriteAsync {
         cursor_id: sqlite_schema_cursor_id,
@@ -628,16 +631,18 @@ fn translate_drop_table(
     program.resolve_label(end_metadata_label, program.offset());
     //  end of loop on schema table
 
-    //  2. Drop the table structure
-    program.emit_insn(Insn::DropTable {
-        db: 0,
+    //  2. Destroy the table structure
+    program.emit_insn(Insn::Destroy {
         root: table.root_page,
+        former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
+        is_temp: 0,
     });
 
     //  end of the program
     program.emit_halt();
     program.resolve_label(init_label, program.offset());
     program.emit_transaction(true);
+    program.emit_constant_insns();
 
     program.emit_goto(start_offset);
 
