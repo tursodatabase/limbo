@@ -533,6 +533,16 @@ impl PageContent {
         }
     }
 
+    pub fn rightmost_pointer_raw(&self) -> Option<*mut u8> {
+        match self.page_type() {
+            PageType::IndexInterior | PageType::TableInterior => {
+                Some(unsafe { self.as_ptr().as_mut_ptr().add(self.offset + 8) })
+            }
+            PageType::IndexLeaf => None,
+            PageType::TableLeaf => None,
+        }
+    }
+
     pub fn cell_get(
         &self,
         idx: usize,
