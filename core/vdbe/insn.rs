@@ -640,6 +640,11 @@ pub enum Insn {
         db: usize,
         dest: usize,
     },
+    /// Open a new cursor P1 to a transient table.
+    OpenEphemeral {
+        cursor_id: CursorID,
+        is_btree: bool,
+    },
 }
 
 fn cast_text_to_numerical(value: &str) -> OwnedValue {

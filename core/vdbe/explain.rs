@@ -479,6 +479,14 @@ pub fn insn_to_str(
                         let name = pseudo_table.columns.get(*column).unwrap().name.as_ref();
                         name
                     }
+                    CursorType::EphemeralTable(table) => {
+                        let name = table.columns.get(*column).unwrap().name.as_ref();
+                        name
+                    }
+                    CursorType::EphemeralIndex(index) => {
+                        let name = index.columns.get(*column).unwrap().name.as_ref();
+                        name
+                    }
                     CursorType::Sorter => None,
                     CursorType::VirtualTable(v) => v.columns.get(*column).unwrap().name.as_ref(),
                 };
@@ -1232,6 +1240,18 @@ pub fn insn_to_str(
                 OwnedValue::build_text(Rc::new("".to_string())),
                 0,
                 "".to_string(),
+            ),
+            Insn::OpenEphemeral {
+                cursor_id,
+                is_btree,
+            } => (
+                "OpenEphemeral",
+                *cursor_id as i32,
+                *is_btree as i32,
+                0,
+                OwnedValue::build_text(Rc::new("".to_string())),
+                0,
+                format!("Operate as BTreeTable: {}", is_btree),
             ),
         };
     format!(

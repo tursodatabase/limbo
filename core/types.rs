@@ -1,5 +1,6 @@
 use limbo_ext::{AggCtx, FinalizeFunction, StepFunction};
 
+use crate::ephemeral::EphemeralCursor;
 use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};
 use crate::pseudo::PseudoCursor;
@@ -670,6 +671,8 @@ pub enum Cursor {
     Table(BTreeCursor),
     Index(BTreeCursor),
     Pseudo(PseudoCursor),
+    EphemeralTable(EphemeralCursor),
+    EphemeralIndex(EphemeralCursor),
     Sorter(Sorter),
     Virtual(VTabOpaqueCursor),
 }
@@ -689,6 +692,14 @@ impl Cursor {
 
     pub fn new_sorter(cursor: Sorter) -> Self {
         Self::Sorter(cursor)
+    }
+
+    pub fn new_ephemeral_table(cursor: EphemeralCursor) -> Self {
+        Self::EphemeralTable(cursor)
+    }
+
+    pub fn new_ephemeral_index(cursor: EphemeralCursor) -> Self {
+        Self::EphemeralIndex(cursor)
     }
 
     pub fn as_table_mut(&mut self) -> &mut BTreeCursor {
@@ -725,8 +736,23 @@ impl Cursor {
             _ => panic!("Cursor is not a virtual cursor"),
         }
     }
+
+    pub fn as_ephemeral_table_mut(&mut self) -> &mut EphemeralCursor {
+        match self {
+            Self::EphemeralTable(cursor) => cursor,
+            _ => panic!("Cursor is not ephemeral table"),
+        }
+    }
+
+    pub fn as_ephemeral_index_mut(&mut self) -> &mut EphemeralCursor {
+        match self {
+            Self::EphemeralIndex(cursor) => cursor,
+            _ => panic!("Cursor is not ephemeral index"),
+        }
+    }
 }
 
+#[derive(PartialEq, Debug)]
 pub enum CursorResult<T> {
     Ok(T),
     IO,
