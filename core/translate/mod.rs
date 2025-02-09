@@ -224,7 +224,7 @@ fn emit_schema_entry(
     if let Some(sql) = sql {
         program.emit_string8(sql, sql_reg);
     } else {
-        program.emit_null(sql_reg);
+        program.emit_null(sql_reg, None);
     }
 
     let record_reg = program.alloc_register();
@@ -552,8 +552,8 @@ fn translate_drop_table(
     let init_label = program.emit_init();
     let start_offset = program.offset();
 
-    let null_reg = program.alloc_register(); //  r1
-    program.emit_null(null_reg);
+    let r1 = program.alloc_register(); //  r1
+    program.emit_null(r1, None);
     let tbl_name_reg = program.alloc_register(); //  r2
     let table_reg = program.emit_string8_new_reg(tbl_name.name.0.clone()); //  r3
     program.mark_last_insn_constant();
@@ -573,6 +573,7 @@ fn translate_drop_table(
     });
     program.emit_insn(Insn::OpenWriteAwait {});
 
+    //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
     //  loop to beginning of schema table
     program.emit_insn(Insn::RewindAsync {
         cursor_id: sqlite_schema_cursor_id,
@@ -637,6 +638,10 @@ fn translate_drop_table(
         former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
         is_temp: 0,
     });
+
+    let r6 = program.alloc_register();
+    let r7 = program.alloc_register();
+    program.emit_null(r6, Some(r7));
 
     //  end of the program
     program.emit_halt();

@@ -233,7 +233,7 @@ fn query_pragma(
                     // dflt_value
                     match &column.default {
                         None => {
-                            program.emit_null(base_reg + 4);
+                            program.emit_null(base_reg + 4, None);
                         }
                         Some(expr) => {
                             program.emit_string8(expr.to_string(), base_reg + 4);
