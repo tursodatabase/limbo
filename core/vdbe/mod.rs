@@ -2699,11 +2699,16 @@ impl Program {
                     cursor.btree_destroy()?;
                     state.pc += 1;
                 }
-                Insn::DropTable { db, root: _ } => {
+                Insn::DropTable {
+                    db,
+                    _p2,
+                    _p3,
+                    table_name,
+                } => {
                     if *db > 0 {
                         todo!("temp databases not implemented yet");
                     }
-                    //  TODO (Zaid): implement the functionality to clean up in-memory structures
+                    //  TODO (Zaid): implement the functionality to clean up in-memory structures for table_name
                 }
                 Insn::Close { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();

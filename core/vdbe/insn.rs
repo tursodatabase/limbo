@@ -602,10 +602,14 @@ pub enum Insn {
 
     //  Drop a table
     DropTable {
-        //  The database within which this b-tree needs to be dropped (P1).
+        ///  The database within which this b-tree needs to be dropped (P1).
         db: usize,
-        //  The root page of this b-tree (P2).
-        root: usize,
+        ///  unused register p2
+        _p2: usize,
+        ///  unused register p3
+        _p3: usize,
+        //  The name of the table being dropped
+        table_name: String,
     },
 
     /// Close a cursor.

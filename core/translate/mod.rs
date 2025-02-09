@@ -643,6 +643,20 @@ fn translate_drop_table(
     let r7 = program.alloc_register();
     program.emit_null(r6, Some(r7));
 
+    //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
+    //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+
+    //  4. TODO: Open a write cursor to the schema table and re-insert all triggers into the sqlite schema table from the ephemeral table and delete old trigger
+    //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+
+    //  Drop the in-memory structures for the table
+    program.emit_insn(Insn::DropTable {
+        db: 0,
+        _p2: 0,
+        _p3: 0,
+        table_name: tbl_name.name.0,
+    });
+
     //  end of the program
     program.emit_halt();
     program.resolve_label(init_label, program.offset());

@@ -1117,14 +1117,19 @@ pub fn insn_to_str(
                     root, former_root_reg, is_temp
                 ),
             ),
-            Insn::DropTable { db, root } => (
+            Insn::DropTable {
+                db,
+                _p2,
+                _p3,
+                table_name,
+            } => (
                 "DropTable",
                 *db as i32,
-                *root as i32,
                 0,
-                OwnedValue::build_text(Rc::new("".to_string())),
                 0,
-                format!("root iDb={}", db),
+                OwnedValue::build_text(Rc::new(table_name.clone())),
+                0,
+                format!("DROP TABLE {}", table_name),
             ),
             Insn::Close { cursor_id } => (
                 "Close",
