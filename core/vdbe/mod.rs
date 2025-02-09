@@ -2655,7 +2655,12 @@ impl Program {
                     if *db > 0 {
                         todo!("temp databases not implemented yet");
                     }
-                    //  TODO (Zaid): implement the functionality to clean up in-memory structures for table_name
+                    if let Some(conn) = self.connection.upgrade() {
+                        let mut schema = RefCell::borrow_mut(&conn.schema);
+                        schema.remove_indices_for_table(table_name);
+                        schema.remove_table(table_name);
+                    }
+                    state.pc += 1;
                 }
                 Insn::Close { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();
