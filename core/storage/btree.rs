@@ -2236,7 +2236,7 @@ impl BTreeCursor {
         Ok(Some(n_overflow))
     }
 
-    pub fn btree_drop(&mut self) -> Result<CursorResult<()>> {
+    pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
         self.move_to_root();
 
         loop {

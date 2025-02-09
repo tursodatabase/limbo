@@ -2696,7 +2696,7 @@ impl Program {
                         todo!("temp databases not implemented yet.");
                     }
                     let mut cursor = Box::new(BTreeCursor::new(pager.clone(), *root));
-                    cursor.btree_drop()?;
+                    cursor.btree_destroy()?;
                     state.pc += 1;
                 }
                 Insn::DropTable { db, root: _ } => {
