@@ -438,14 +438,9 @@ impl PageContent {
         u16::from_be_bytes([buf[self.offset + pos], buf[self.offset + pos + 1]])
     }
 
-    fn read_u32(&self, pos: usize) -> u32 {
+    pub fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
-        u32::from_be_bytes([
-            buf[self.offset + pos],
-            buf[self.offset + pos + 1],
-            buf[self.offset + pos + 2],
-            buf[self.offset + pos + 3],
-        ])
+        read_u32(buf, self.offset + pos)
     }
 
     pub fn write_u8(&self, pos: usize, value: u8) {
@@ -1378,6 +1373,10 @@ impl WalHeader {
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { std::mem::transmute::<&WalHeader, &[u8; size_of::<WalHeader>()]>(self) }
     }
+}
+
+pub fn read_u32(buf: &[u8], pos: usize) -> u32 {
+    u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
 }
 
 #[cfg(test)]
