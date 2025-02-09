@@ -30,6 +30,11 @@ impl Schema {
         self.tables.insert(name, table);
     }
 
+    pub fn remove_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.tables.remove(&name);
+    }
+
     pub fn get_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
         let name = normalize_ident(name);
         self.tables.get(&name).cloned()
@@ -41,6 +46,11 @@ impl Schema {
             .entry(table_name)
             .or_default()
             .push(index.clone())
+    }
+
+    pub fn remove_indices_for_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.indexes.remove(&name);
     }
 }
 
