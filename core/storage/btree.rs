@@ -959,9 +959,7 @@ impl BTreeCursor {
                 // load sibling pages
                 // start loading right page first
                 let mut pgno: u32 = unsafe { right_pointer.cast::<u32>().read().swap_bytes() };
-                self.write_info
-                    .rightmost_pointer
-                    .replace(Some(right_pointer));
+                write_info.rightmost_pointer.replace(Some(right_pointer));
                 let mut current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
                     let page = self.pager.read_page(pgno as usize)?;
@@ -1000,8 +998,10 @@ impl BTreeCursor {
                     .pages_to_balance
                     .borrow_mut()
                     .reverse();
-                self.state.write_info().unwrap().state = WriteState::BalanceNonRootWaitLoadPages;
-                return Ok(CursorResult::IO);
+                (
+                    WriteState::BalanceNonRootWaitLoadPages,
+                    Ok(CursorResult::IO),
+                )
             }
             WriteState::BalanceNonRootWaitLoadPages => {
                 let write_info = self.state.write_info().unwrap();
@@ -1332,7 +1332,7 @@ impl BTreeCursor {
 
                 // Write right pointer in parent page to point to new rightmost page
                 let right_page_id = pages_to_balance_new.last().unwrap().get().id as u32;
-                let rightmost_pointer = self.write_info.rightmost_pointer.borrow_mut().unwrap();
+                let rightmost_pointer = write_info.rightmost_pointer.borrow_mut().unwrap();
                 let rightmost_pointer =
                     unsafe { std::slice::from_raw_parts_mut(rightmost_pointer, 4) };
                 rightmost_pointer[0..4].copy_from_slice(&right_page_id.to_be_bytes());
@@ -1437,8 +1437,7 @@ impl BTreeCursor {
                 // TODO: balance root
                 self.stack.pop();
                 // TODO: free pages
-                write_info.state = WriteState::Finish;
-                return Ok(CursorResult::Ok(()));
+                (WriteState::Finish, Ok(CursorResult::Ok(())))
             }
             WriteState::Finish => todo!(),
         };
