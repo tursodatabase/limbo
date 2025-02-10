@@ -1,6 +1,8 @@
 use crate::{function::ExternalFunc, util::columns_from_create_table_body, Database, VirtualTable};
 use fallible_iterator::FallibleIterator;
-use limbo_ext::{ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabModuleImpl};
+use limbo_ext::{
+    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabModuleImpl, VfsImpl,
+};
 pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 use sqlite3_parser::{
     ast::{Cmd, Stmt},
@@ -91,6 +93,23 @@ unsafe extern "C" fn declare_vtab(
     db.declare_vtab_impl(&name_str, &sql_str)
 }
 
+unsafe extern "C" fn register_vfs(
+    ctx: *mut c_void,
+    name: *const c_char,
+    vfs: *const VfsImpl,
+) -> ResultCode {
+    if ctx.is_null() || name.is_null() || vfs.is_null() {
+        return ResultCode::Error;
+    }
+    let c_str = unsafe { CStr::from_ptr(name) };
+    let name_str = match c_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return ResultCode::Error,
+    };
+    let db = unsafe { &mut *(ctx as *mut Database) };
+    db.register_vfs_impl(name_str, vfs)
+}
+
 impl Database {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
         self.syms.borrow_mut().functions.insert(
@@ -149,7 +168,14 @@ impl Database {
             register_aggregate_function,
             register_module,
             declare_vtab,
+            register_vfs,
         }
+    }
+
+    pub fn register_vfs_impl(&self, name: String, vfs: *const VfsImpl) -> ResultCode {
+        println!("Registering VFS: {}", name);
+        self.syms.borrow_mut().vfs_modules.insert(name, vfs);
+        ResultCode::OK
     }
 
     pub fn register_builtins(&self) -> Result<(), String> {
