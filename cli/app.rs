@@ -133,6 +133,8 @@ pub enum Command {
     Import,
     /// Loads an extension library
     LoadExtension,
+    /// List available VFS
+    ListVfs,
 }
 
 impl Command {
@@ -145,6 +147,7 @@ impl Command {
             | Self::Opcodes
             | Self::ShowInfo
             | Self::Tables
+            | Self::ListVfs
             | Self::SetOutput => 0,
             Self::Open
             | Self::OutputMode
@@ -173,6 +176,7 @@ impl Command {
             Self::Tables => ".tables",
             Self::LoadExtension => ".load",
             Self::Import => &IMPORT_HELP,
+            Self::ListVfs => ".vfslist",
         }
     }
 }
@@ -196,6 +200,7 @@ impl FromStr for Command {
             ".echo" => Ok(Self::Echo),
             ".import" => Ok(Self::Import),
             ".load" => Ok(Self::LoadExtension),
+            ".vfslist" => Ok(Self::ListVfs),
             _ => Err("Unknown command".to_string()),
         }
     }
@@ -378,6 +383,14 @@ impl Limbo {
         let db = Database::open_file(self.io.clone(), path)?;
         self.conn = db.connect();
         self.opts.db_file = path.to_string();
+        Ok(())
+    }
+
+    fn list_vfs(&mut self) -> io::Result<()> {
+        let vfs_list = self.conn.list_vfs();
+        for vfs in vfs_list {
+            let _ = self.writeln(vfs);
+        }
         Ok(())
     }
 
@@ -598,6 +611,9 @@ impl Limbo {
                     if let Err(e) = self.handle_load_extension(args[1]) {
                         let _ = self.writeln(&e);
                     }
+                }
+                Command::ListVfs => {
+                    let _ = self.list_vfs();
                 }
             }
         } else {
