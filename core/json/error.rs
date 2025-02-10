@@ -110,7 +110,7 @@ pub fn set_location<T>(res: &mut Result<T>, span: &Span<'_>) {
 impl From<Error> for crate::LimboError {
     fn from(err: Error) -> Self {
         match err {
-            Error::Message { msg, .. } => crate::LimboError::ParseError(msg),
+            Error::Message { .. } => crate::LimboError::ParseError("malformed JSON".to_string()),
         }
     }
 }

@@ -2,6 +2,7 @@ mod de;
 mod error;
 mod json_operations;
 mod json_path;
+mod raw_jsonb;
 mod ser;
 
 use std::rc::Rc;
@@ -11,10 +12,10 @@ use crate::json::de::ordered_object;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{json_patch, json_remove};
 use crate::json::json_path::{json_path, JsonPath, PathElement};
+use crate::json::raw_jsonb::RawJsonb;
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, Text, TextSubtype};
 use indexmap::IndexMap;
-use jsonb::Error as JsonbError;
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 
@@ -49,15 +50,14 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
 
             Ok(OwnedValue::Text(Text::json(Rc::new(json))))
         }
-        OwnedValue::Blob(b) => {
-            // TODO: use get_json_value after we implement a single Struct
-            //   to represent both JSON and JSONB
-            if let Ok(json) = jsonb::from_slice(b) {
+        OwnedValue::Blob(_) => match get_json_value(json_value) {
+            Ok(json) => {
+                let json = crate::json::to_string(&json).unwrap();
+
                 Ok(OwnedValue::Text(Text::json(Rc::new(json.to_string()))))
-            } else {
-                crate::bail_parse_error!("malformed JSON");
             }
-        }
+            Err(e) => Err(e),
+        },
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => {
             let json_val = get_json_value(json_value)?;
@@ -73,18 +73,11 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
 
 fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
     match json_value {
-        OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
-            Ok(json) => Ok(json),
-            Err(_) => {
-                crate::bail_parse_error!("malformed JSON")
-            }
-        },
+        OwnedValue::Text(ref t) => from_str::<Val>(t.as_str()).map_err(Into::into),
         OwnedValue::Blob(b) => {
-            if let Ok(_json) = jsonb::from_slice(b) {
-                todo!("jsonb to json conversion");
-            } else {
-                crate::bail_parse_error!("malformed JSON");
-            }
+            let jsonb = RawJsonb::new(b);
+
+            jsonb.try_into().map_err(Into::into)
         }
         OwnedValue::Null => Ok(Val::Null),
         OwnedValue::Float(f) => Ok(Val::Float(*f)),
@@ -623,13 +616,9 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
                 }
             }
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(0)),
-            Err(JsonbError::Syntax(_, pos)) => Ok(OwnedValue::Integer(pos as i64)),
-            _ => Err(crate::error::LimboError::InternalError(
-                "failed to determine json error position".into(),
-            )),
-        },
+        OwnedValue::Blob(_b) => {
+            unimplemented!("json_error_position for JSONB is not implemented")
+        }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(0)),
     }
@@ -665,10 +654,7 @@ pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
             Ok(_) => Ok(OwnedValue::Integer(1)),
             Err(_) => Ok(OwnedValue::Integer(0)),
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(1)),
-            Err(_) => Ok(OwnedValue::Integer(0)),
-        },
+        OwnedValue::Blob(_b) => unimplemented!("jsonb support is not implemented yet"),
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(1)),
     }
@@ -782,7 +768,7 @@ mod tests {
         let result = get_json(&input, None);
         match result {
             Ok(_) => panic!("Expected error for malformed JSON"),
-            Err(e) => assert!(e.to_string().contains("malformed JSON")),
+            Err(e) => assert!(e.to_string().contains("malformed JSON"), "Error: {}", e),
         }
     }
 
@@ -810,11 +796,11 @@ mod tests {
 
     #[test]
     fn test_get_json_blob_valid_jsonb() {
-        let binary_json = b"\x40\0\0\x01\x10\0\0\x03\x10\0\0\x03\x61\x73\x64\x61\x64\x66".to_vec();
+        let binary_json = vec![0xcb, 0x03, 0x10, 0x11, 0x12];
         let input = OwnedValue::Blob(Rc::new(binary_json));
         let result = get_json(&input, None).unwrap();
         if let OwnedValue::Text(result_str) = result {
-            assert!(result_str.as_str().contains("\"asd\":\"adf\""));
+            assert!(result_str.as_str().contains("[null,true,false]"));
             assert_eq!(result_str.subtype, TextSubtype::Json);
         } else {
             panic!("Expected OwnedValue::Text");
@@ -823,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_get_json_blob_invalid_jsonb() {
-        let binary_json: Vec<u8> = vec![0xA2, 0x62, 0x6B, 0x31, 0x62, 0x76]; // Incomplete binary JSON
+        let binary_json: Vec<u8> = vec![0x13, b'a']; // invalid number
         let input = OwnedValue::Blob(Rc::new(binary_json));
         let result = get_json(&input, None);
         match result {
@@ -1087,13 +1073,6 @@ mod tests {
         let input = OwnedValue::Float(-5.5);
         let result = json_error_position(&input).unwrap();
         assert_eq!(result, OwnedValue::Integer(0));
-    }
-
-    #[test]
-    fn test_json_error_position_blob() {
-        let input = OwnedValue::Blob(Rc::new(r#"["a",55,"b",72,,]"#.as_bytes().to_owned()));
-        let result = json_error_position(&input).unwrap();
-        assert_eq!(result, OwnedValue::Integer(16));
     }
 
     #[test]
