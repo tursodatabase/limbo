@@ -93,7 +93,7 @@ struct WriteInfo {
     /// Scratch space used during balancing.
     scratch_cells: RefCell<Vec<Vec<u8>>>,
     /// Bookkeeping of the rightmost pointer so the PAGE_HEADER_OFFSET_RIGHTMOST_PTR can be updated.
-    rightmost_pointer: RefCell<Option<u32>>,
+    rightmost_pointer: RefCell<Option<*mut u8>>,
     /// Copy of the current page needed for buffer references.
     page_copy: RefCell<Option<PageContent>>,
     /// Divider cells of old pages
@@ -959,7 +959,9 @@ impl BTreeCursor {
                 // load sibling pages
                 // start loading right page first
                 let mut pgno: u32 = unsafe { right_pointer.cast::<u32>().read().swap_bytes() };
-                dbg!(pgno);
+                self.write_info
+                    .rightmost_pointer
+                    .replace(Some(right_pointer));
                 let mut current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
                     let page = self.pager.read_page(pgno as usize)?;
@@ -1329,10 +1331,11 @@ impl BTreeCursor {
                 }
 
                 // Write right pointer in parent page to point to new rightmost page
-                parent_contents.write_u32(
-                    PAGE_HEADER_OFFSET_RIGHTMOST_PTR,
-                    pages_to_balance_new.last().unwrap().get().id as u32,
-                );
+                let right_page_id = pages_to_balance_new.last().unwrap().get().id as u32;
+                let rightmost_pointer = self.write_info.rightmost_pointer.borrow_mut().unwrap();
+                let rightmost_pointer =
+                    unsafe { std::slice::from_raw_parts_mut(rightmost_pointer, 4) };
+                rightmost_pointer[0..4].copy_from_slice(&right_page_id.to_be_bytes());
 
                 // Ensure right-child pointer of the right-most new sibling pge points to the page
                 // that was originally on that place.
@@ -1373,6 +1376,8 @@ impl BTreeCursor {
                         // Leaf index
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
+                    // FIXME: defragment shouldn't be needed
+                    defragment_page(parent_contents, self.usable_space() as u16);
                     insert_into_cell(
                         parent_contents,
                         &new_divider_cell,
@@ -2134,7 +2139,6 @@ pub fn page_free_array(
             // TODO: remove pointer too
             let offset = (cell_pointer.start as usize - buf_range.start as usize) as u16;
             let len = (cell_pointer.end as usize - cell_pointer.start as usize) as u16;
-            println!("removing {}~{}", offset, len);
             free_cell_range(page, offset, len, usable_space);
             page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, page.cell_count() as u16 - 1);
             number_of_cells_removed += 1;
