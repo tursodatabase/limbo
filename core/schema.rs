@@ -48,6 +48,13 @@ impl Schema {
             .push(index.clone())
     }
 
+    pub fn get_indices(&self, table_name: &str) -> &[Rc<Index>] {
+        let name = normalize_ident(table_name);
+        self.indexes
+            .get(&name)
+            .map_or_else(|| &[] as &[Rc<Index>], |v| v.as_slice())
+    }
+
     pub fn remove_indices_for_table(&mut self, table_name: &str) {
         let name = normalize_ident(table_name);
         self.indexes.remove(&name);

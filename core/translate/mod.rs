@@ -631,7 +631,26 @@ fn translate_drop_table(
     program.resolve_label(end_metadata_label, program.offset());
     //  end of loop on schema table
 
-    //  2. Destroy the table structure
+    //  2. Destroy the indices within a loop
+    let indices = schema.get_indices(&tbl_name.name.0);
+    for index in indices {
+        program.emit_insn(Insn::Destroy {
+            root: index.root_page,
+            former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
+            is_temp: 0,
+        });
+        let null_reg_1 = program.alloc_register();
+        let null_reg_2 = program.alloc_register();
+        program.emit_null(null_reg_1, Some(null_reg_2));
+
+        //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
+        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+
+        //  4. TODO: Open a write cursor to the schema table and re-insert all triggers into the sqlite schema table from the ephemeral table and delete old trigger
+        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+    }
+
+    //  3. Destroy the table structure
     program.emit_insn(Insn::Destroy {
         root: table.root_page,
         former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
