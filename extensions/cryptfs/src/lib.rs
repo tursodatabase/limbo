@@ -42,8 +42,7 @@ struct CfsFile {
 impl VfsExtension for CryptFS {
     const NAME: &'static str = "cryptfs";
     type File = CfsFile;
-    /// open a file. Here we simply open a std::fs::File using OpenOptions,
-    /// then box it and return its raw pointer as *const c_void.
+
     fn open(&self, path: &str, flags: i32, _direct: bool) -> Option<Self::File> {
         let create = flags & 1 != 0;
         let file = OpenOptions::new()
@@ -80,7 +79,6 @@ impl VfsExtension for CryptFS {
         }
     }
 
-    /// Sync the file (flush data to disk).
     fn sync(&self, file: &Self::File) -> i32 {
         match file.file.sync_all() {
             Ok(_) => 0,
