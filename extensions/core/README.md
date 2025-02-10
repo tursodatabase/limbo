@@ -10,7 +10,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Scalar Functions**: Create scalar functions using the `scalar` macro.
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
- - [] **VFS Modules** 
+ - [ x ] **VFS Modules**: Create a `vfs` module to extend the I/O with `VfsDerive` and the `VfsExtension` trait
 ---
 
 ## Installation
@@ -54,6 +54,7 @@ register_extension!{
     scalars: { double }, // name of your function, if different from attribute name
     aggregates: { Percentile },
     vtabs: { CsvVTable },
+    vfs: { ExampleFS },
 }
 ```
 
@@ -270,6 +271,82 @@ impl VTabCursor for CsvCursor {
 
     fn rowid(&self) -> i64 {
         self.index as i64
+    }
+}
+```
+
+
+### VFS extension Example:
+
+```rust
+
+/// Your struct must also impl Default
+#[derive(VfsDerive)]
+struct ExampleFS;
+
+
+struct ExampleFile {
+    file: std::fs::File,
+}
+
+impl VfsExtension for ExampleFS {
+    /// The name of your vfs module
+    const NAME: &'static str = "example";
+
+    type File = ExampleFile;
+
+    fn open(&self, path: &str, flags: i32, _direct: bool) -> Option<Self::File> {
+        let create = flags & 1 != 0;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(create)
+            .open(path);
+        match file {
+            Ok(f) => Some(CfsFile { file: f }),
+            Err(_) => None,
+        }
+    }
+
+    fn close(&self, file: Self::File) -> ResultCode {
+        drop(file);
+        ResultCode::OK
+    }
+
+    fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64) -> i32 {
+        match file.file.read_at(buf, count, offset) {
+            Ok(n) => n as i32,
+            Err(_) => -1,
+        }
+    }
+
+    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> i32 {
+        match self.write_region(&mut file.file, offset as u64, &buf[..count]) {
+            Ok(n) => n as i32,
+            Err(_) => -1,
+        }
+    }
+
+    fn sync(&self, file: &Self::File) -> i32 {
+        match file.file.sync_all() {
+            Ok(_) => 0,
+            Err(_) => -1,
+        }
+    }
+
+    fn lock(&self, _file: &Self::File, _exclusive: bool) -> ResultCode {
+        ResultCode::OK
+    }
+
+    fn unlock(&self, _file: &Self::File) -> ResultCode {
+        ResultCode::OK
+    }
+
+    fn size(&self, file: &Self::File) -> i64 {
+        match file.file.metadata() {
+            Ok(meta) => meta.len() as i64,
+            Err(_) => -1,
+        }
     }
 }
 ```
