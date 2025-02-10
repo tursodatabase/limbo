@@ -69,11 +69,11 @@ impl File for VfsFile {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Rc<Completion>) -> Result<()> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<()> {
         if self.vfs.is_null() {
             return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
         }
-        let r = match &*c {
+        let r = match &c {
             Completion::Read(ref r) => r,
             _ => unreachable!(),
         };
@@ -92,7 +92,7 @@ impl File for VfsFile {
         }
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<Buffer>>, c: Rc<Completion>) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<Buffer>>, c: Completion) -> Result<()> {
         let buf = buffer.borrow();
         let count = buf.as_slice().len();
         if self.vfs.is_null() {
@@ -118,7 +118,7 @@ impl File for VfsFile {
         }
     }
 
-    fn sync(&self, c: Rc<Completion>) -> Result<()> {
+    fn sync(&self, c: Completion) -> Result<()> {
         if self.vfs.is_null() {
             return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
         }
