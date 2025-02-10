@@ -471,7 +471,29 @@ impl Connection {
     }
 
     pub fn list_vfs(&self) -> Vec<String> {
-        self.db.syms.borrow().vfs_modules.keys().cloned().collect()
+        let mut all_vfs = Vec::new();
+        #[cfg(feature = "fs")]
+        {
+            #[cfg(all(feature = "fs", target_family = "unix"))]
+            {
+                all_vfs.push("syscall".to_string());
+            }
+            #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
+            {
+                all_vfs.push("io_uring".to_string());
+            }
+            #[cfg(all(feature = "fs", target_os = "windows"))]
+            {
+                all_vfs.push("generic".to_string());
+            }
+        }
+        all_vfs.push("memory\n".to_string());
+        let ext: Vec<String> = self.db.syms.borrow().vfs_modules.keys().cloned().collect();
+        if !ext.is_empty() {
+            all_vfs.push("extensions: ".to_string());
+            all_vfs.extend(ext);
+        }
+        all_vfs
     }
 }
 
