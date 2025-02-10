@@ -1,0 +1,21 @@
+[package]
+name = "limbo_cryptfs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+static = ["limbo_ext/static"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+aes = "0.8.4"
+limbo_ext = { path = "../core", features = ["static"] }
+xts-mode = "0.5.1"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "*", default-features = false }
