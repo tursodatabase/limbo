@@ -7,6 +7,7 @@ use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
 };
+
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
 #[derive(Clone)]
@@ -74,6 +75,23 @@ unsafe extern "C" fn register_module(
     db.register_module_impl(&name_str, module, kind)
 }
 
+unsafe extern "C" fn register_vfs(
+    ctx: *mut c_void,
+    name: *const c_char,
+    vfs: *const VfsImpl,
+) -> ResultCode {
+    if ctx.is_null() || name.is_null() || vfs.is_null() {
+        return ResultCode::Error;
+    }
+    let c_str = unsafe { CStr::from_ptr(name) };
+    let name_str = match c_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return ResultCode::Error,
+    };
+    let db = unsafe { &mut *(ctx as *mut Database) };
+    db.register_vfs_impl(name_str, vfs)
+}
+
 impl Database {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
         self.syms.borrow_mut().functions.insert(
@@ -121,6 +139,12 @@ impl Database {
             register_aggregate_function,
             register_module,
         }
+    }
+
+    pub fn register_vfs_impl(&self, name: String, vfs: *const VfsImpl) -> ResultCode {
+        println!("Registering VFS: {}", name);
+        self.syms.borrow_mut().vfs_modules.insert(name, vfs);
+        ResultCode::OK
     }
 
     pub fn register_builtins(&self) -> Result<(), String> {

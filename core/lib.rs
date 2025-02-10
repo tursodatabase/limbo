@@ -97,7 +97,6 @@ impl Database {
     #[cfg(feature = "fs")]
     pub fn open_file(io: Arc<dyn IO>, path: &str) -> Result<Arc<Database>> {
         use storage::wal::WalFileShared;
-
         let file = io.open_file(path, OpenFlags::Create, true)?;
         maybe_init_database_file(&file, &io)?;
         let page_io = Rc::new(FileStorage::new(file));
@@ -183,6 +182,26 @@ impl Database {
             last_change: Cell::new(0),
             total_changes: Cell::new(0),
         })
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_new(
+        self: &Arc<Database>,
+        file: &str,
+        vfs_name: Option<&str>,
+    ) -> Result<Arc<Database>> {
+        if let Some(vfs_name) = vfs_name {
+            let Some(vfs) = self.syms.borrow_mut().resolve_vfs_module(vfs_name) else {
+                return Err(LimboError::ExtensionError(format!(
+                    "VFS module not found: {}",
+                    vfs_name
+                )));
+            };
+            let io: Arc<dyn IO> = Arc::new(vfs);
+            return Self::open_file(io, file);
+        }
+        let io = self.pager.io.clone();
+        Self::open_file(io, file)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -450,6 +469,10 @@ impl Connection {
     pub fn total_changes(&self) -> i64 {
         self.total_changes.get()
     }
+
+    pub fn list_vfs(&self) -> Vec<String> {
+        self.db.syms.borrow().vfs_modules.keys().cloned().collect()
+    }
 }
 
 pub struct Statement {
@@ -649,8 +672,9 @@ pub(crate) struct SymbolTable {
     pub functions: HashMap<String, Rc<function::ExternalFunc>>,
     #[cfg(not(target_family = "wasm"))]
     extensions: Vec<(Library, *const ExtensionApi)>,
-    pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
+    pub vtabs: HashMap<String, VirtualTable>,
+    pub vfs_modules: HashMap<String, *const VfsImpl>,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -696,6 +720,7 @@ impl SymbolTable {
             #[cfg(not(target_family = "wasm"))]
             extensions: Vec::new(),
             vtab_modules: HashMap::new(),
+            vfs_modules: HashMap::new(),
         }
     }
 
@@ -705,6 +730,10 @@ impl SymbolTable {
         _arg_count: usize,
     ) -> Option<Rc<function::ExternalFunc>> {
         self.functions.get(name).cloned()
+    }
+
+    pub fn resolve_vfs_module(&self, name: &str) -> Option<*const VfsImpl> {
+        self.vfs_modules.get(name).copied()
     }
 }
 
