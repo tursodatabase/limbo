@@ -85,6 +85,8 @@ pub enum Command {
     LoadExtension,
     /// Dump the current database as a list of SQL statements
     Dump,
+    /// List available VFS
+    ListVfs,
 }
 
 impl Command {
@@ -98,6 +100,7 @@ impl Command {
             | Self::ShowInfo
             | Self::Tables
             | Self::SetOutput
+            | Self::ListVfs
             | Self::Dump => 0,
             Self::Open
             | Self::OutputMode
@@ -127,6 +130,7 @@ impl Command {
             Self::LoadExtension => ".load",
             Self::Dump => ".dump",
             Self::Import => &IMPORT_HELP,
+            Self::ListVfs => ".vfslist",
         }
     }
 }
@@ -151,6 +155,7 @@ impl FromStr for Command {
             ".import" => Ok(Self::Import),
             ".load" => Ok(Self::LoadExtension),
             ".dump" => Ok(Self::Dump),
+            ".vfslist" => Ok(Self::ListVfs),
             _ => Err("Unknown command".to_string()),
         }
     }
@@ -405,6 +410,14 @@ impl<'a> Limbo<'a> {
         Ok(())
     }
 
+    fn list_vfs(&mut self) -> io::Result<()> {
+        let vfs_list = self.conn.list_vfs();
+        for vfs in vfs_list {
+            let _ = self.writeln(vfs);
+        }
+        Ok(())
+    }
+
     fn set_output_file(&mut self, path: &str) -> Result<(), String> {
         if path.is_empty() || path.trim().eq_ignore_ascii_case("stdout") {
             self.set_output_stdout();
@@ -635,6 +648,9 @@ impl<'a> Limbo<'a> {
                     if let Err(e) = self.dump_database() {
                         let _ = self.write_fmt(format_args!("/****** ERROR: {} ******/", e));
                     }
+                }
+                Command::ListVfs => {
+                    let _ = self.list_vfs();
                 }
             }
         } else {
