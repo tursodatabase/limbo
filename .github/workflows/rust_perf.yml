@@ -55,4 +55,3 @@ jobs:
           # Explicitly set this to null. We don't want threshold based alerts today.
           external-data-json-path: null
           gh-repository: null
-
