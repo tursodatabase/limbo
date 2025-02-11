@@ -186,26 +186,6 @@ impl Database {
         })
     }
 
-    #[allow(clippy::arc_with_non_send_sync)]
-    pub fn open_new(
-        self: &Arc<Database>,
-        file: &str,
-        vfs_name: Option<&str>,
-    ) -> Result<Arc<Database>> {
-        if let Some(vfs_name) = vfs_name {
-            let Some(vfs) = self.syms.borrow_mut().resolve_vfs_module(vfs_name) else {
-                return Err(LimboError::ExtensionError(format!(
-                    "VFS module not found: {}",
-                    vfs_name
-                )));
-            };
-            let io: Arc<dyn IO> = Arc::new(vfs);
-            return Self::open_file(io, file);
-        }
-        let io = self.pager.io.clone();
-        Self::open_file(io, file)
-    }
-
     #[cfg(not(target_family = "wasm"))]
     pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> Result<()> {
         let api = Box::new(self.build_limbo_ext());
@@ -438,6 +418,37 @@ impl Connection {
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
         let checkpoint_result = self.pager.clear_page_cache();
         Ok(checkpoint_result)
+    }
+
+    #[cfg(feature = "fs")]
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_new(
+        self: Rc<Connection>,
+        file: &str,
+        vfs_name: Option<&str>,
+    ) -> Result<Arc<Database>> {
+        if let Some(vfs_name) = vfs_name {
+            let Some(vfs) = self.db.syms.borrow_mut().resolve_vfs_module(vfs_name) else {
+                return Err(LimboError::ExtensionError(format!(
+                    "VFS module not found: {}",
+                    vfs_name
+                )));
+            };
+            let io: Arc<dyn IO> = Arc::new(vfs);
+            let db = Database::open_file(io, file)?;
+            return Ok(Database {
+                pager: db.pager.clone(),
+                schema: db.schema.clone(),
+                header: db.header.clone(),
+                syms: self.db.syms.clone(),
+                vtab_modules: self.db.vtab_modules.clone(),
+                _shared_page_cache: db._shared_page_cache.clone(),
+                _shared_wal: db._shared_wal.clone(),
+            }
+            .into());
+        }
+        let io = self.pager.io.clone();
+        Database::open_file(io, file)
     }
 
     #[cfg(not(target_family = "wasm"))]
