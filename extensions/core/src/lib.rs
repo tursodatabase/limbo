@@ -3,6 +3,8 @@ pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDe
 use std::ffi::{c_char, c_void};
 pub use types::{ResultCode, Value, ValueType};
 
+pub type Result<T> = std::result::Result<T, ResultCode>;
+
 #[repr(C)]
 pub struct ExtensionApi {
     pub ctx: *mut c_void,
@@ -44,14 +46,16 @@ pub struct ExtensionApi {
 pub trait VfsExtension: Default {
     const NAME: &'static str;
     type File;
-    fn open(&self, path: &str, flags: i32, direct: bool) -> Option<Self::File>;
-    fn close(&self, file: Self::File) -> ResultCode;
-    fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64) -> i32;
-    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> i32;
-    fn sync(&self, file: &Self::File) -> i32;
-    fn lock(&self, file: &Self::File, exclusive: bool) -> ResultCode;
-    fn unlock(&self, file: &Self::File) -> ResultCode;
+    fn open(&self, path: &str, flags: i32, direct: bool) -> Result<Self::File>;
+    fn close(&self, file: Self::File) -> Result<()>;
+    fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64)
+        -> Result<i32>;
+    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> Result<i32>;
+    fn sync(&self, file: &Self::File) -> Result<()>;
+    fn lock(&self, file: &Self::File, exclusive: bool) -> Result<()>;
+    fn unlock(&self, file: &Self::File) -> Result<()>;
     fn size(&self, file: &Self::File) -> i64;
+    fn run_once(&self) -> Result<()>;
 }
 
 #[repr(C)]
@@ -65,6 +69,7 @@ pub struct VfsImpl {
     pub lock: VfsLock,
     pub unlock: VfsUnlock,
     pub size: VfsSize,
+    pub run_once: VfsRunOnce,
 }
 
 pub type VfsOpen = unsafe extern "C" fn(
@@ -89,6 +94,8 @@ pub type VfsLock = unsafe extern "C" fn(file: *mut c_void, exclusive: bool) -> R
 pub type VfsUnlock = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
 
 pub type VfsSize = unsafe extern "C" fn(file: *mut c_void) -> i64;
+
+pub type VfsRunOnce = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
 
 #[repr(C)]
 pub struct VfsFile {
