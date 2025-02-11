@@ -27,7 +27,7 @@ use fallible_iterator::FallibleIterator;
 use libloading::{Library, Symbol};
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{ExtensionApi, ExtensionEntryPoint};
-use limbo_ext::{ResultCode, VTabModuleImpl, Value as ExtValue};
+use limbo_ext::{ResultCode, VTabModuleImpl, Value as ExtValue, VfsImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
