@@ -247,14 +247,12 @@ impl Pager {
             page_cache.insert(page_key, page.clone());
             return Ok(page);
         }
-
         sqlite3_ondisk::begin_read_page(
             self.page_io.clone(),
             self.buffer_pool.clone(),
             page.clone(),
             page_idx,
         )?;
-
         // TODO(pere) ensure page is inserted
         page_cache.insert(page_key, page.clone());
         Ok(page)
