@@ -263,8 +263,8 @@ impl BTreeCursor {
             let cell = contents.cell_get(
                 cell_idx,
                 self.pager.clone(),
-                self.payload_overflow_threshold_max(contents.page_type()),
-                self.payload_overflow_threshold_min(contents.page_type()),
+                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
+                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
             )?;
 
@@ -303,7 +303,7 @@ impl BTreeCursor {
             let mem_page_rc = self.stack.top();
             let cell_idx = self.stack.current_cell_index() as usize;
 
-            // debug!("current id={} cell={}", mem_page_rc.get().id, cell_idx);
+            debug!("current id={} cell={}", mem_page_rc.get().id, cell_idx);
             return_if_locked!(mem_page_rc);
             if !mem_page_rc.is_loaded() {
                 self.pager.load_page(mem_page_rc.clone())?;
@@ -353,8 +353,8 @@ impl BTreeCursor {
             let cell = contents.cell_get(
                 cell_idx,
                 self.pager.clone(),
-                self.payload_overflow_threshold_max(contents.page_type()),
-                self.payload_overflow_threshold_min(contents.page_type()),
+                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
+                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
             )?;
             match &cell {
@@ -474,8 +474,14 @@ impl BTreeCursor {
                 let cell = contents.cell_get(
                     cell_idx,
                     self.pager.clone(),
-                    self.payload_overflow_threshold_max(contents.page_type()),
-                    self.payload_overflow_threshold_min(contents.page_type()),
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
                     self.usable_space(),
                 )?;
                 match &cell {
@@ -632,8 +638,14 @@ impl BTreeCursor {
                 match &contents.cell_get(
                     cell_idx,
                     self.pager.clone(),
-                    self.payload_overflow_threshold_max(contents.page_type()),
-                    self.payload_overflow_threshold_min(contents.page_type()),
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
                     self.usable_space(),
                 )? {
                     BTreeCell::TableInteriorCell(TableInteriorCell {
@@ -758,7 +770,14 @@ impl BTreeCursor {
                     // insert cell
 
                     let mut cell_payload: Vec<u8> = Vec::new();
-                    self.fill_cell_payload(page_type, Some(int_key), &mut cell_payload, record);
+                    fill_cell_payload(
+                        page_type,
+                        Some(int_key),
+                        &mut cell_payload,
+                        record,
+                        self.usable_space() as u16,
+                        self.pager.clone(),
+                    );
 
                     // insert
                     let overflow = {
@@ -805,8 +824,8 @@ impl BTreeCursor {
     fn drop_cell(&self, page: &mut PageContent, cell_idx: usize) {
         let (cell_start, cell_len) = page.cell_get_raw_region(
             cell_idx,
-            self.payload_overflow_threshold_max(page.page_type()),
-            self.payload_overflow_threshold_min(page.page_type()),
+            payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
+            payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
             self.usable_space(),
         );
         free_cell_range(
@@ -976,8 +995,14 @@ impl BTreeCursor {
                     pgno = match parent_contents.cell_get(
                         next_cell_divider,
                         self.pager.clone(),
-                        self.payload_overflow_threshold_max(parent_contents.page_type()),
-                        self.payload_overflow_threshold_min(parent_contents.page_type()),
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
                         self.usable_space(),
                     )? {
                         BTreeCell::TableInteriorCell(table_interior_cell) => {
@@ -1041,8 +1066,14 @@ impl BTreeCursor {
                     let cell_idx = first_divider_cell + i - 1;
                     let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
                         cell_idx,
-                        self.payload_overflow_threshold_max(parent_contents.page_type()),
-                        self.payload_overflow_threshold_min(parent_contents.page_type()),
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
                         self.usable_space(),
                     );
                     let buf = parent_contents.as_ptr();
@@ -1084,8 +1115,14 @@ impl BTreeCursor {
                     for cell_idx in 0..old_page_contents.cell_count() {
                         let (cell_start, cell_len) = old_page_contents.cell_get_raw_region(
                             cell_idx,
-                            self.payload_overflow_threshold_max(old_page_contents.page_type()),
-                            self.payload_overflow_threshold_min(old_page_contents.page_type()),
+                            payload_overflow_threshold_max(
+                                old_page_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                old_page_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
                             self.usable_space(),
                         );
                         let buf = old_page_contents.as_ptr();
@@ -1328,6 +1365,7 @@ impl BTreeCursor {
                         page.get().id = new_id;
                         self.pager.put_loaded_page(new_id, page.clone());
                     }
+                    dbg!(page.get().id);
                 }
 
                 // Write right pointer in parent page to point to new rightmost page
@@ -1335,7 +1373,9 @@ impl BTreeCursor {
                 let rightmost_pointer = write_info.rightmost_pointer.borrow_mut().unwrap();
                 let rightmost_pointer =
                     unsafe { std::slice::from_raw_parts_mut(rightmost_pointer, 4) };
+                dbg!(&rightmost_pointer);
                 rightmost_pointer[0..4].copy_from_slice(&right_page_id.to_be_bytes());
+                dbg!(&rightmost_pointer);
 
                 // Ensure right-child pointer of the right-most new sibling pge points to the page
                 // that was originally on that place.
@@ -1376,8 +1416,45 @@ impl BTreeCursor {
                         // Leaf index
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
+                    dbg!(&new_divider_cell);
                     // FIXME: defragment shouldn't be needed
+                    println!("cells before fragment");
+                    for cell_idx in 0..parent_contents.cell_count() {
+                        let cell = parent_contents.cell_get(
+                            cell_idx,
+                            self.pager.clone(),
+                            payload_overflow_threshold_max(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )?;
+                        dbg!(cell);
+                    }
+                    println!("cells end");
                     defragment_page(parent_contents, self.usable_space() as u16);
+                    println!("cells");
+                    for cell_idx in 0..parent_contents.cell_count() {
+                        let cell = parent_contents.cell_get(
+                            cell_idx,
+                            self.pager.clone(),
+                            payload_overflow_threshold_max(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )?;
+                        dbg!(cell);
+                    }
+                    println!("cells end");
                     insert_into_cell(
                         parent_contents,
                         &new_divider_cell,
@@ -1385,6 +1462,24 @@ impl BTreeCursor {
                         self.usable_space() as u16,
                     );
                 }
+                println!("cells");
+                for cell_idx in 0..parent_contents.cell_count() {
+                    let cell = parent_contents.cell_get(
+                        cell_idx,
+                        self.pager.clone(),
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    )?;
+                    dbg!(cell);
+                }
+                println!("cells end");
                 // TODO: update pages
                 let mut done = vec![false; sibling_count_new];
                 for i in (1 as i64 - sibling_count_new as i64)..sibling_count_new as i64 {
@@ -1529,149 +1624,8 @@ impl BTreeCursor {
     /// This marks the page as dirty and writes the page header.
     fn allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
         let page = self.pager.allocate_page().unwrap();
-        btree_init_page(&page, page_type, &self.pager.db_header.borrow(), offset);
+        btree_init_page(&page, page_type, offset, self.usable_space() as u16);
         page
-    }
-
-    /// Allocate a new overflow page.
-    /// This is done when a cell overflows and new space is needed.
-    fn allocate_overflow_page(&self) -> PageRef {
-        let page = self.pager.allocate_page().unwrap();
-
-        // setup overflow page
-        let contents = page.get().contents.as_mut().unwrap();
-        let buf = contents.as_ptr();
-        buf.fill(0);
-
-        page
-    }
-
-    /// Fill in the cell payload with the record.
-    /// If the record is too large to fit in the cell, it will spill onto overflow pages.
-    fn fill_cell_payload(
-        &self,
-        page_type: PageType,
-        int_key: Option<u64>,
-        cell_payload: &mut Vec<u8>,
-        record: &OwnedRecord,
-    ) {
-        assert!(matches!(
-            page_type,
-            PageType::TableLeaf | PageType::IndexLeaf
-        ));
-        // TODO: make record raw from start, having to serialize is not good
-        let mut record_buf = Vec::new();
-        record.serialize(&mut record_buf);
-
-        // fill in header
-        if matches!(page_type, PageType::TableLeaf) {
-            let int_key = int_key.unwrap();
-            write_varint_to_vec(record_buf.len() as u64, cell_payload);
-            write_varint_to_vec(int_key, cell_payload);
-        } else {
-            write_varint_to_vec(record_buf.len() as u64, cell_payload);
-        }
-
-        let payload_overflow_threshold_max = self.payload_overflow_threshold_max(page_type.clone());
-        debug!(
-            "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
-            record_buf.len(),
-            payload_overflow_threshold_max
-        );
-        if record_buf.len() <= payload_overflow_threshold_max {
-            // enough allowed space to fit inside a btree page
-            cell_payload.extend_from_slice(record_buf.as_slice());
-            return;
-        }
-        debug!("fill_cell_payload(overflow)");
-
-        let payload_overflow_threshold_min = self.payload_overflow_threshold_min(page_type);
-        // see e.g. https://github.com/sqlite/sqlite/blob/9591d3fe93936533c8c3b0dc4d025ac999539e11/src/dbstat.c#L371
-        let mut space_left = payload_overflow_threshold_min
-            + (record_buf.len() - payload_overflow_threshold_min) % (self.usable_space() - 4);
-
-        if space_left > payload_overflow_threshold_max {
-            space_left = payload_overflow_threshold_min;
-        }
-
-        // cell_size must be equal to first value of space_left as this will be the bytes copied to non-overflow page.
-        let cell_size = space_left + cell_payload.len() + 4; // 4 is the number of bytes of pointer to first overflow page
-        let mut to_copy_buffer = record_buf.as_slice();
-
-        let prev_size = cell_payload.len();
-        cell_payload.resize(prev_size + space_left + 4, 0);
-        let mut pointer = unsafe { cell_payload.as_mut_ptr().add(prev_size) };
-        let mut pointer_to_next = unsafe { cell_payload.as_mut_ptr().add(prev_size + space_left) };
-        let mut overflow_pages = Vec::new();
-
-        loop {
-            let to_copy = space_left.min(to_copy_buffer.len());
-            unsafe { std::ptr::copy(to_copy_buffer.as_ptr(), pointer, to_copy) };
-
-            let left = to_copy_buffer.len() - to_copy;
-            if left == 0 {
-                break;
-            }
-
-            // we still have bytes to add, we will need to allocate new overflow page
-            let overflow_page = self.allocate_overflow_page();
-            overflow_pages.push(overflow_page.clone());
-            {
-                let id = overflow_page.get().id as u32;
-                let contents = overflow_page.get().contents.as_mut().unwrap();
-
-                // TODO: take into account offset here?
-                let buf = contents.as_ptr();
-                let as_bytes = id.to_be_bytes();
-                // update pointer to new overflow page
-                unsafe { std::ptr::copy(as_bytes.as_ptr(), pointer_to_next, 4) };
-
-                pointer = unsafe { buf.as_mut_ptr().add(4) };
-                pointer_to_next = buf.as_mut_ptr();
-                space_left = self.usable_space() - 4;
-            }
-
-            to_copy_buffer = &to_copy_buffer[to_copy..];
-        }
-
-        assert_eq!(cell_size, cell_payload.len());
-    }
-
-    /// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
-    ///
-    /// For table leaf pages: X = usable_size - 35
-    /// For index pages: X = ((usable_size - 12) * 64/255) - 23
-    ///
-    /// The usable size is the total page size less the reserved space at the end of each page.
-    /// These thresholds are designed to:
-    /// - Give a minimum fanout of 4 for index b-trees
-    /// - Ensure enough payload is on the b-tree page that the record header can usually be accessed
-    ///   without consulting an overflow page
-    fn payload_overflow_threshold_max(&self, page_type: PageType) -> usize {
-        let usable_size = self.usable_space();
-        match page_type {
-            PageType::IndexInterior | PageType::IndexLeaf => {
-                ((usable_size - 12) * 64 / 255) - 23 // Index page formula
-            }
-            PageType::TableInterior | PageType::TableLeaf => {
-                usable_size - 35 // Table leaf page formula
-            }
-        }
-    }
-
-    /// Returns the minimum payload size (M) that must be stored on the b-tree page before spilling to overflow pages is allowed.
-    ///
-    /// For all page types: M = ((usable_size - 12) * 32/255) - 23
-    ///
-    /// When payload size P exceeds max_local():
-    /// - If K = M + ((P-M) % (usable_size-4)) <= max_local(): store K bytes on page
-    /// - Otherwise: store M bytes on page
-    ///
-    /// The remaining bytes are stored on overflow pages in both cases.
-    fn payload_overflow_threshold_min(&self, _page_type: PageType) -> usize {
-        let usable_size = self.usable_space();
-        // Same formula for all page types
-        ((usable_size - 12) * 32 / 255) - 23
     }
 
     /// The "usable size" of a database page is the page size specified by the 2-byte integer at offset 16
@@ -1693,8 +1647,8 @@ impl BTreeCursor {
                 .cell_get(
                     cell_idx,
                     self.pager.clone(),
-                    self.payload_overflow_threshold_max(page.page_type()),
-                    self.payload_overflow_threshold_min(page.page_type()),
+                    payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
+                    payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
                     self.usable_space(),
                 )
                 .unwrap()
@@ -1847,8 +1801,8 @@ impl BTreeCursor {
             let equals = match &contents.cell_get(
                 cell_idx,
                 self.pager.clone(),
-                self.payload_overflow_threshold_max(contents.page_type()),
-                self.payload_overflow_threshold_min(contents.page_type()),
+                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
+                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
             )? {
                 BTreeCell::TableLeafCell(l) => l._rowid == int_key,
@@ -1877,11 +1831,11 @@ impl PageStack {
     /// Push a new page onto the stack.
     /// This effectively means traversing to a child page.
     fn push(&self, page: PageRef) {
-        // debug!(
-        //     "pagestack::push(current={}, new_page_id={})",
-        //     self.current_page.borrow(),
-        //     page.get().id
-        // );
+        debug!(
+            "pagestack::push(current={}, new_page_id={})",
+            self.current_page.borrow(),
+            page.get().id
+        );
         *self.current_page.borrow_mut() += 1;
         let current = *self.current_page.borrow();
         assert!(
@@ -1896,7 +1850,7 @@ impl PageStack {
     /// This effectively means traversing back up to a parent page.
     fn pop(&self) {
         let current = *self.current_page.borrow();
-        // debug!("pagestack::pop(current={})", current);
+        debug!("pagestack::pop(current={})", current);
         self.cell_indices.borrow_mut()[current as usize] = 0;
         self.stack.borrow_mut()[current as usize] = None;
         *self.current_page.borrow_mut() -= 1;
@@ -2006,12 +1960,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> u
     }
 }
 
-pub fn btree_init_page(
-    page: &PageRef,
-    page_type: PageType,
-    db_header: &DatabaseHeader,
-    offset: usize,
-) {
+pub fn btree_init_page(page: &PageRef, page_type: PageType, offset: usize, usable_space: u16) {
     // setup btree page
     let contents = page.get();
     debug!("btree_init_page(id={}, offset={})", contents.id, offset);
@@ -2022,12 +1971,7 @@ pub fn btree_init_page(
     contents.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
     contents.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, 0);
 
-    let cell_content_area_start = db_header.page_size - db_header.reserved_space as u16;
-
-    contents.write_u16(
-        PAGE_HEADER_OFFSET_CELL_CONTENT_AREA,
-        cell_content_area_start,
-    );
+    contents.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, usable_space);
 
     contents.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
     contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, 0);
@@ -2231,6 +2175,7 @@ fn free_cell_range(page: &mut PageContent, offset: u16, len: u16, usable_space: 
 
 /// Defragment a page. This means packing all the cells to the end of the page.
 fn defragment_page(page: &PageContent, usable_space: u16) {
+    // TODO: test this
     log::debug!("defragment_page");
     let cloned_page = page.clone();
     // TODO(pere): usable space should include offset probably
@@ -2491,4 +2436,249 @@ fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -
 
     assert!(top + amount <= usable_space as usize);
     top as u16
+}
+
+/// Fill in the cell payload with the record.
+/// If the record is too large to fit in the cell, it will spill onto overflow pages.
+fn fill_cell_payload(
+    page_type: PageType,
+    int_key: Option<u64>,
+    cell_payload: &mut Vec<u8>,
+    record: &OwnedRecord,
+    usable_space: u16,
+    pager: Rc<Pager>,
+) {
+    assert!(matches!(
+        page_type,
+        PageType::TableLeaf | PageType::IndexLeaf
+    ));
+    // TODO: make record raw from start, having to serialize is not good
+    let mut record_buf = Vec::new();
+    record.serialize(&mut record_buf);
+
+    // fill in header
+    if matches!(page_type, PageType::TableLeaf) {
+        let int_key = int_key.unwrap();
+        write_varint_to_vec(record_buf.len() as u64, cell_payload);
+        write_varint_to_vec(int_key, cell_payload);
+    } else {
+        write_varint_to_vec(record_buf.len() as u64, cell_payload);
+    }
+
+    let payload_overflow_threshold_max =
+        payload_overflow_threshold_max(page_type.clone(), usable_space);
+    debug!(
+        "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
+        record_buf.len(),
+        payload_overflow_threshold_max
+    );
+    if record_buf.len() <= payload_overflow_threshold_max {
+        // enough allowed space to fit inside a btree page
+        cell_payload.extend_from_slice(record_buf.as_slice());
+        return;
+    }
+    debug!("fill_cell_payload(overflow)");
+
+    let payload_overflow_threshold_min = payload_overflow_threshold_min(page_type, usable_space);
+    // see e.g. https://github.com/sqlite/sqlite/blob/9591d3fe93936533c8c3b0dc4d025ac999539e11/src/dbstat.c#L371
+    let mut space_left = payload_overflow_threshold_min
+        + (record_buf.len() - payload_overflow_threshold_min) % (usable_space as usize - 4);
+
+    if space_left > payload_overflow_threshold_max {
+        space_left = payload_overflow_threshold_min;
+    }
+
+    // cell_size must be equal to first value of space_left as this will be the bytes copied to non-overflow page.
+    let cell_size = space_left + cell_payload.len() + 4; // 4 is the number of bytes of pointer to first overflow page
+    let mut to_copy_buffer = record_buf.as_slice();
+
+    let prev_size = cell_payload.len();
+    cell_payload.resize(prev_size + space_left + 4, 0);
+    let mut pointer = unsafe { cell_payload.as_mut_ptr().add(prev_size) };
+    let mut pointer_to_next = unsafe { cell_payload.as_mut_ptr().add(prev_size + space_left) };
+    let mut overflow_pages = Vec::new();
+
+    loop {
+        let to_copy = space_left.min(to_copy_buffer.len());
+        unsafe { std::ptr::copy(to_copy_buffer.as_ptr(), pointer, to_copy) };
+
+        let left = to_copy_buffer.len() - to_copy;
+        if left == 0 {
+            break;
+        }
+
+        // we still have bytes to add, we will need to allocate new overflow page
+        let overflow_page = allocate_overflow_page(pager.clone());
+        overflow_pages.push(overflow_page.clone());
+        {
+            let id = overflow_page.get().id as u32;
+            let contents = overflow_page.get().contents.as_mut().unwrap();
+
+            // TODO: take into account offset here?
+            let buf = contents.as_ptr();
+            let as_bytes = id.to_be_bytes();
+            // update pointer to new overflow page
+            unsafe { std::ptr::copy(as_bytes.as_ptr(), pointer_to_next, 4) };
+
+            pointer = unsafe { buf.as_mut_ptr().add(4) };
+            pointer_to_next = buf.as_mut_ptr();
+            space_left = usable_space as usize - 4;
+        }
+
+        to_copy_buffer = &to_copy_buffer[to_copy..];
+    }
+
+    assert_eq!(cell_size, cell_payload.len());
+}
+
+/// Allocate a new overflow page.
+/// This is done when a cell overflows and new space is needed.
+fn allocate_overflow_page(pager: Rc<Pager>) -> PageRef {
+    let page = pager.allocate_page().unwrap();
+
+    // setup overflow page
+    let contents = page.get().contents.as_mut().unwrap();
+    let buf = contents.as_ptr();
+    buf.fill(0);
+
+    page
+}
+
+/// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
+///
+/// For table leaf pages: X = usable_size - 35
+/// For index pages: X = ((usable_size - 12) * 64/255) - 23
+///
+/// The usable size is the total page size less the reserved space at the end of each page.
+/// These thresholds are designed to:
+/// - Give a minimum fanout of 4 for index b-trees
+/// - Ensure enough payload is on the b-tree page that the record header can usually be accessed
+///   without consulting an overflow page
+fn payload_overflow_threshold_max(page_type: PageType, usable_space: u16) -> usize {
+    match page_type {
+        PageType::IndexInterior | PageType::IndexLeaf => {
+            ((usable_space as usize - 12) * 64 / 255) - 23 // Index page formula
+        }
+        PageType::TableInterior | PageType::TableLeaf => {
+            usable_space as usize - 35 // Table leaf page formula
+        }
+    }
+}
+
+/// Returns the minimum payload size (M) that must be stored on the b-tree page before spilling to overflow pages is allowed.
+///
+/// For all page types: M = ((usable_size - 12) * 32/255) - 23
+///
+/// When payload size P exceeds max_local():
+/// - If K = M + ((P-M) % (usable_size-4)) <= max_local(): store K bytes on page
+/// - Otherwise: store M bytes on page
+///
+/// The remaining bytes are stored on overflow pages in both cases.
+fn payload_overflow_threshold_min(_page_type: PageType, usable_space: u16) -> usize {
+    // Same formula for all page types
+    ((usable_space as usize - 12) * 32 / 255) - 23
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+    use tempfile::TempDir;
+
+    use crate::{
+        io::BufferData,
+        storage::{
+            btree::{
+                compute_free_space, fill_cell_payload, payload_overflow_threshold_max,
+                payload_overflow_threshold_min,
+            },
+            database::FileStorage,
+            pager::PageRef,
+            sqlite3_ondisk::{BTreeCell, PageContent, PageType},
+        },
+        types::{OwnedRecord, OwnedValue, Record},
+        Buffer, Database, Page, Pager, PlatformIO, Value, DATABASE_VERSION, IO,
+    };
+
+    use super::{btree_init_page, insert_into_cell};
+
+    fn get_page(id: usize) -> PageRef {
+        let page = Arc::new(Page::new(2));
+
+        let drop_fn = Rc::new(|_| {});
+        let inner = PageContent {
+            offset: 0,
+            buffer: Rc::new(RefCell::new(Buffer::new(
+                BufferData::new(vec![0; 4096]),
+                drop_fn,
+            ))),
+            overflow_cells: Vec::new(),
+        };
+        page.get().contents.replace(inner);
+
+        btree_init_page(&page, PageType::TableLeaf, 0, 4096);
+        page
+    }
+
+    fn get_database() -> Arc<Database> {
+        let mut path = TempDir::new().unwrap().into_path();
+        path.push("test.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "journal_mode", "wal")
+                .unwrap();
+        }
+        let io: Arc<dyn IO> = Arc::new(PlatformIO::new().unwrap());
+        let db = Database::open_file(io.clone(), path.to_str().unwrap()).unwrap();
+
+        db
+    }
+
+    #[test]
+    fn test_insert_cell() {
+        let db = get_database();
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+        let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
+        let mut payload: Vec<u8> = Vec::new();
+        fill_cell_payload(
+            page.page_type(),
+            Some(1),
+            &mut payload,
+            &record,
+            4096,
+            db.pager.clone(),
+        );
+        insert_into_cell(page, &payload, 0, 4096);
+        assert_eq!(page.cell_count(), 1);
+        let free = compute_free_space(page, 4096);
+        assert_eq!(free, 4096 - payload.len() as u16 - 2 - header_size);
+
+        let cell = page.cell_get_raw_region(
+            0,
+            payload_overflow_threshold_max(page.page_type(), 4096),
+            payload_overflow_threshold_min(page.page_type(), 4096),
+            4096,
+        );
+        let buf = &page.as_ptr()[cell.0..cell.0 + cell.1];
+        assert_eq!(buf.len(), payload.len());
+        assert_eq!(buf, &payload);
+    }
+
+    #[test]
+    fn test_multiple_insert_cell() {
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+        let mut payload = Vec::new();
+        for i in 0..16 {
+            payload.push(i);
+        }
+        insert_into_cell(page, &payload, 0, 4096);
+        assert_eq!(page.cell_count(), 1);
+        let free = compute_free_space(page, 4096);
+        assert_eq!(free, 4096 - payload.len() as u16 - 2 - header_size);
+    }
 }
