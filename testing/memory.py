@@ -6,12 +6,6 @@ import select
 
 sqlite_exec = "./target/debug/limbo"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
-ci = os.getenv("CI")
-initial_pages = 16
-if ci:
-    initial_pages = 5
-curr_env = os.environ.copy()
-curr_env["INITIAL_PAGES"] = str(initial_pages)
 
 
 def init_limbo():
@@ -21,7 +15,6 @@ def init_limbo():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
-        env=curr_env,
     )
     return pipe
 
