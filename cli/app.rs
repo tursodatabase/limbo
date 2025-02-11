@@ -395,16 +395,21 @@ impl<'a> Limbo<'a> {
         }
     }
 
-    fn open_db(&mut self, path: &str) -> anyhow::Result<()> {
+    fn open_db(&mut self, path: &str, vfs_name: Option<&str>) -> anyhow::Result<()> {
         self.conn.close()?;
-        let io = {
-            match path {
-                ":memory:" => get_io(DbLocation::Memory, self.opts.io)?,
-                _path => get_io(DbLocation::Path, self.opts.io)?,
-            }
+        let db = if vfs_name.is_some() {
+            let conn = self.conn.clone();
+            conn.open_new(path, vfs_name)?
+        } else {
+            let io = {
+                match path {
+                    ":memory:" => get_io(DbLocation::Memory, self.opts.io)?,
+                    _path => get_io(DbLocation::Path, self.opts.io)?,
+                }
+            };
+            self.io = Arc::clone(&io);
+            Database::open_file(self.io.clone(), path)?
         };
-        self.io = Arc::clone(&io);
-        let db = Database::open_file(self.io.clone(), path)?;
         self.conn = db.connect();
         self.opts.db_file = path.to_string();
         Ok(())
@@ -567,7 +572,8 @@ impl<'a> Limbo<'a> {
                     std::process::exit(0)
                 }
                 Command::Open => {
-                    if self.open_db(args[1]).is_err() {
+                    let vfs = args.get(2).map(|s| &**s);
+                    if self.open_db(args[1], vfs).is_err() {
                         let _ = self.writeln("Error: Unable to open database file.");
                     }
                 }

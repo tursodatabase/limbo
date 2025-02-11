@@ -12,23 +12,11 @@ pub struct ExtensionApi {
     pub register_scalar_function: RegisterScalarFn,
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
-    pub declare_vtab: unsafe extern "C" fn(
+    pub register_vfs: unsafe extern "C" fn(
         ctx: *mut c_void,
         name: *const c_char,
-        sql: *const c_char,
+        vfs: *const VfsImpl,
     ) -> ResultCode,
-}
-
-impl ExtensionApi {
-    pub fn declare_virtual_table(&self, name: &str, sql: &str) -> ResultCode {
-        let Ok(name) = std::ffi::CString::new(name) else {
-            return ResultCode::Error;
-        };
-        let Ok(sql) = std::ffi::CString::new(sql) else {
-            return ResultCode::Error;
-        };
-        unsafe { (self.declare_vtab)(self.ctx, name.as_ptr(), sql.as_ptr()) }
-    }
 }
 
 pub trait VfsExtension: Default {

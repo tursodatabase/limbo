@@ -28,7 +28,7 @@ use fallible_iterator::FallibleIterator;
 use libloading::{Library, Symbol};
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{ExtensionApi, ExtensionEntryPoint};
-use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl, Value as ExtValue};
+use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl, Value as ExtValue, VfsImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
@@ -182,26 +182,6 @@ impl Database {
             last_change: Cell::new(0),
             total_changes: Cell::new(0),
         })
-    }
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    pub fn open_new(
-        self: &Arc<Database>,
-        file: &str,
-        vfs_name: Option<&str>,
-    ) -> Result<Arc<Database>> {
-        if let Some(vfs_name) = vfs_name {
-            let Some(vfs) = self.syms.borrow_mut().resolve_vfs_module(vfs_name) else {
-                return Err(LimboError::ExtensionError(format!(
-                    "VFS module not found: {}",
-                    vfs_name
-                )));
-            };
-            let io: Arc<dyn IO> = Arc::new(vfs);
-            return Self::open_file(io, file);
-        }
-        let io = self.pager.io.clone();
-        Self::open_file(io, file)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -430,6 +410,36 @@ impl Connection {
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
         let checkpoint_result = self.pager.clear_page_cache();
         Ok(checkpoint_result)
+    }
+
+    #[cfg(feature = "fs")]
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_new(
+        self: Rc<Connection>,
+        file: &str,
+        vfs_name: Option<&str>,
+    ) -> Result<Arc<Database>> {
+        if let Some(vfs_name) = vfs_name {
+            let Some(vfs) = self.db.syms.borrow_mut().resolve_vfs_module(vfs_name) else {
+                return Err(LimboError::ExtensionError(format!(
+                    "VFS module not found: {}",
+                    vfs_name
+                )));
+            };
+            let io: Arc<dyn IO> = Arc::new(vfs);
+            let db = Database::open_file(io, file)?;
+            return Ok(Database {
+                pager: db.pager.clone(),
+                schema: db.schema.clone(),
+                header: db.header.clone(),
+                syms: self.db.syms.clone(),
+                _shared_page_cache: db._shared_page_cache.clone(),
+                _shared_wal: db._shared_wal.clone(),
+            }
+            .into());
+        }
+        let io = self.pager.io.clone();
+        Database::open_file(io, file)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -695,7 +705,7 @@ pub(crate) struct SymbolTable {
     #[cfg(not(target_family = "wasm"))]
     extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
-    pub vtabs: HashMap<String, VirtualTable>,
+    pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vfs_modules: HashMap<String, *const VfsImpl>,
 }
 

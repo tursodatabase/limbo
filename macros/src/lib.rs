@@ -644,7 +644,8 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 sync: #sync_fn_name,
                 size: #size_fn_name,
             };
-            (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), &vfs_mod)
+            let vfs_mod_ptr = ::std::boxed::Box::leak(std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
+            (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), vfs_mod_ptr)
         }
 
         #[no_mangle]
@@ -663,7 +664,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let file_handle = boxed as *mut ::std::ffi::c_void;
             let vfs_ptr = ctx as *const #struct_name;
             let vfs_file = ::limbo_ext::VfsFile::new(file_handle, vfs_ptr as *const ::limbo_ext::VfsImpl);
-            ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_file)) as *mut ::limbo_ext::VfsFile
+            ::std::boxed::Box::leak(::std::boxed::Box::new(vfs_file)) as *mut ::limbo_ext::VfsFile
         }
 
         #[no_mangle]
@@ -676,7 +677,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
 
             // this time we need to own it so we can drop it
             let file: Box<<#struct_name as ::limbo_ext::VfsExtension>::File> =
-             Box::from_raw(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
+             ::std::boxed::Box::from_raw(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
             <#struct_name as ::limbo_ext::VfsExtension>::close(vfs_instance, *file)
         }
 
@@ -857,7 +858,6 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
             #[cfg(feature = "static")]
             pub unsafe extern "C" fn register_extension_static(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
-                let api = unsafe { &*api };
                 #(#static_scalars)*
 
                 #(#static_aggregates)*
@@ -872,7 +872,6 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
             #[cfg(not(feature = "static"))]
             #[no_mangle]
             pub unsafe extern "C" fn register_extension(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
-                let api = unsafe { &*api };
                 #(#scalar_calls)*
 
                 #(#aggregate_calls)*

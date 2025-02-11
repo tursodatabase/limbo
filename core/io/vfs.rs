@@ -10,23 +10,21 @@ impl IO for *const VfsImpl {
         if self.is_null() {
             return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
         }
+        let c_path = std::ffi::CString::new(path).map_err(|_| {
+            crate::LimboError::ExtensionError("Failed to convert path to CString".to_string())
+        })?;
+        let ctx = (*self) as *mut ::std::ffi::c_void;
         let vfs = unsafe { &**self };
-        let path = std::ffi::CString::new(path).unwrap();
-        let ctx = { *self as *mut std::ffi::c_void };
-        let file = unsafe {
-            (vfs.open)(
-                ctx,
-                path.as_ptr() as *const std::ffi::c_char,
-                flags.bits(),
-                direct,
-            )
-        };
+        let file = unsafe { (vfs.open)(ctx, c_path.as_ptr(), flags.bits(), direct) };
         if file.is_null() {
             return Err(crate::LimboError::ExtensionError(
                 "File not found".to_string(),
             ));
         }
-        Ok(Rc::new(VfsFile::new(file as *mut std::ffi::c_void, vfs)))
+        Ok(Rc::new(::limbo_ext::VfsFile::new(
+            file as *mut ::std::ffi::c_void,
+            vfs,
+        )))
     }
 
     fn run_once(&self) -> Result<()> {
@@ -77,11 +75,12 @@ impl File for VfsFile {
             Completion::Read(ref r) => r,
             _ => unreachable!(),
         };
-        let mut buf = r.buf_mut();
-        let count = buf.len();
-        let vfs = unsafe { &*self.vfs };
-        let result = unsafe { (vfs.read)(self.file, buf.as_mut_ptr(), count, pos as i64) };
-
+        let result = {
+            let mut buf = r.buf_mut();
+            let count = buf.len();
+            let vfs = unsafe { &*self.vfs };
+            unsafe { (vfs.read)(self.file, buf.as_mut_ptr(), count, pos as i64) }
+        };
         if result < 0 {
             Err(crate::LimboError::ExtensionError(
                 "pread failed".to_string(),

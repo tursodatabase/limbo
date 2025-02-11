@@ -281,7 +281,7 @@ impl VTabCursor for CsvCursor {
 ```rust
 
 /// Your struct must also impl Default
-#[derive(VfsDerive)]
+#[derive(VfsDerive, Default)]
 struct ExampleFS;
 
 
@@ -296,16 +296,13 @@ impl VfsExtension for ExampleFS {
     type File = ExampleFile;
 
     fn open(&self, path: &str, flags: i32, _direct: bool) -> Option<Self::File> {
-        let create = flags & 1 != 0;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .create(create)
-            .open(path);
-        match file {
-            Ok(f) => Some(CfsFile { file: f }),
-            Err(_) => None,
-        }
+            .create(flags & 1 != 0)
+            .open(path)
+            .ok()?;
+        Some(TestFile { file })
     }
 
     fn close(&self, file: Self::File) -> ResultCode {
@@ -314,24 +311,29 @@ impl VfsExtension for ExampleFS {
     }
 
     fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64) -> i32 {
-        match file.file.read_at(buf, count, offset) {
+        match file.file.seek(SeekFrom::Start(offset as u64)) {
+            Ok(_) => {}
+            Err(_) => return -1,
+        }
+        match file.file.read(&mut buf[..count]) {
             Ok(n) => n as i32,
             Err(_) => -1,
         }
     }
 
     fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> i32 {
-        match self.write_region(&mut file.file, offset as u64, &buf[..count]) {
+        match file.file.seek(SeekFrom::Start(offset as u64)) {
+            Ok(_) => {}
+            Err(_) => return -1,
+        }
+        match file.file.write(&buf[..count]) {
             Ok(n) => n as i32,
             Err(_) => -1,
         }
     }
 
     fn sync(&self, file: &Self::File) -> i32 {
-        match file.file.sync_all() {
-            Ok(_) => 0,
-            Err(_) => -1,
-        }
+        file.file.sync_all().map(|_| 0).unwrap_or(-1)
     }
 
     fn lock(&self, _file: &Self::File, _exclusive: bool) -> ResultCode {
@@ -343,10 +345,6 @@ impl VfsExtension for ExampleFS {
     }
 
     fn size(&self, file: &Self::File) -> i64 {
-        match file.file.metadata() {
-            Ok(meta) => meta.len() as i64,
-            Err(_) => -1,
-        }
+        file.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
     }
 }
-```
