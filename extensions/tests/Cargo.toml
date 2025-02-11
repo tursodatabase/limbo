@@ -1,5 +1,5 @@
 [package]
-name = "limbo_cryptfs"
+name = "limbo_testfs"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -13,9 +13,7 @@ static = ["limbo_ext/static"]
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-aes = "0.8.4"
 limbo_ext = { path = "../core", features = ["static"] }
-xts-mode = "0.5.1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "*", default-features = false }
