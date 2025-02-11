@@ -2635,13 +2635,19 @@ mod tests {
         db
     }
 
-    #[test]
-    fn test_insert_cell() {
-        let db = get_database();
-        let page = get_page(2);
-        let page = page.get_contents();
-        let header_size = 8;
-        let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
+    fn ensure_cell(page: &mut PageContent, cell_idx: usize, payload: &Vec<u8>) {
+        let cell = page.cell_get_raw_region(
+            cell_idx,
+            payload_overflow_threshold_max(page.page_type(), 4096),
+            payload_overflow_threshold_min(page.page_type(), 4096),
+            4096,
+        );
+        let buf = &page.as_ptr()[cell.0..cell.0 + cell.1];
+        assert_eq!(buf.len(), payload.len());
+        assert_eq!(buf, payload);
+    }
+
+    fn add_record(page: &mut PageContent, record: OwnedRecord, db: &Arc<Database>) -> Vec<u8> {
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
             page.page_type(),
@@ -2652,33 +2658,46 @@ mod tests {
             db.pager.clone(),
         );
         insert_into_cell(page, &payload, 0, 4096);
+        payload
+    }
+
+    #[test]
+    fn test_insert_cell() {
+        let db = get_database();
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+        let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
+        let payload = add_record(page, record, &db);
         assert_eq!(page.cell_count(), 1);
         let free = compute_free_space(page, 4096);
         assert_eq!(free, 4096 - payload.len() as u16 - 2 - header_size);
 
-        let cell = page.cell_get_raw_region(
-            0,
-            payload_overflow_threshold_max(page.page_type(), 4096),
-            payload_overflow_threshold_min(page.page_type(), 4096),
-            4096,
-        );
-        let buf = &page.as_ptr()[cell.0..cell.0 + cell.1];
-        assert_eq!(buf.len(), payload.len());
-        assert_eq!(buf, &payload);
+        let cell_idx = 0;
+        ensure_cell(page, cell_idx, &payload);
     }
 
     #[test]
     fn test_multiple_insert_cell() {
+        let db = get_database();
         let page = get_page(2);
         let page = page.get_contents();
         let header_size = 8;
-        let mut payload = Vec::new();
-        for i in 0..16 {
-            payload.push(i);
+
+        let mut total_size = 0;
+        let mut payloads = Vec::new();
+        for i in 0..10 {
+            let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
+            let payload = add_record(page, record, &db);
+            assert_eq!(page.cell_count(), i + 1);
+            let free = compute_free_space(page, 4096);
+            total_size += payload.len() as u16 + 2;
+            assert_eq!(free, 4096 - total_size - header_size);
+            payloads.push(payload);
         }
-        insert_into_cell(page, &payload, 0, 4096);
-        assert_eq!(page.cell_count(), 1);
-        let free = compute_free_space(page, 4096);
-        assert_eq!(free, 4096 - payload.len() as u16 - 2 - header_size);
+
+        for (i, payload) in payloads.iter().enumerate() {
+            ensure_cell(page, i, payload);
+        }
     }
 }
