@@ -21,7 +21,7 @@ members = [
     "extensions/time",
     "extensions/crypto",
     "extensions/series",
-	"extensions/cryptfs",
+	"extensions/tests",
 ]
 exclude = ["perf/latency/limbo"]
 
