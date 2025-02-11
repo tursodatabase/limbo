@@ -2647,17 +2647,23 @@ mod tests {
         assert_eq!(buf, payload);
     }
 
-    fn add_record(page: &mut PageContent, record: OwnedRecord, db: &Arc<Database>) -> Vec<u8> {
+    fn add_record(
+        id: usize,
+        pos: usize,
+        page: &mut PageContent,
+        record: OwnedRecord,
+        db: &Arc<Database>,
+    ) -> Vec<u8> {
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
             page.page_type(),
-            Some(1),
+            Some(id as u64),
             &mut payload,
             &record,
             4096,
             db.pager.clone(),
         );
-        insert_into_cell(page, &payload, 0, 4096);
+        insert_into_cell(page, &payload, pos, 4096);
         payload
     }
 
@@ -2668,7 +2674,7 @@ mod tests {
         let page = page.get_contents();
         let header_size = 8;
         let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
-        let payload = add_record(page, record, &db);
+        let payload = add_record(1, 0, page, record, &db);
         assert_eq!(page.cell_count(), 1);
         let free = compute_free_space(page, 4096);
         assert_eq!(free, 4096 - payload.len() as u16 - 2 - header_size);
@@ -2687,8 +2693,8 @@ mod tests {
         let mut total_size = 0;
         let mut payloads = Vec::new();
         for i in 0..10 {
-            let record = OwnedRecord::new([OwnedValue::Integer(1)].to_vec());
-            let payload = add_record(page, record, &db);
+            let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
+            let payload = add_record(i, i, page, record, &db);
             assert_eq!(page.cell_count(), i + 1);
             let free = compute_free_space(page, 4096);
             total_size += payload.len() as u16 + 2;
