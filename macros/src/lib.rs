@@ -628,6 +628,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     let unlock_fn_name = format_ident!("{}_unlock", struct_name);
     let sync_fn_name = format_ident!("{}_sync", struct_name);
     let size_fn_name = format_ident!("{}_size", struct_name);
+    let run_once_fn_name = format_ident!("{}_run_once", struct_name);
     let expanded = quote! {
         #[no_mangle]
         pub unsafe extern "C" fn #register_fn_name(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
@@ -643,6 +644,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 unlock: #unlock_fn_name,
                 sync: #sync_fn_name,
                 size: #size_fn_name,
+                run_once: #run_once_fn_name,
             };
             let vfs_mod_ptr = ::std::boxed::Box::leak(std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
             (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), vfs_mod_ptr)
@@ -657,7 +659,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
         ) -> *mut ::limbo_ext::VfsFile {
             let ctx = &mut *(ctx as *mut #struct_name);
             let path_str = ::std::ffi::CStr::from_ptr(path).to_str().unwrap();
-            let Some(file_handle) = <#struct_name as ::limbo_ext::VfsExtension>::open(ctx, path_str, flags, direct) else {
+            let Ok(file_handle) = <#struct_name as ::limbo_ext::VfsExtension>::open(ctx, path_str, flags, direct) else {
                 return ::std::ptr::null_mut();
             };
             let boxed = ::std::boxed::Box::into_raw(::std::boxed::Box::new(file_handle));
@@ -678,7 +680,10 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             // this time we need to own it so we can drop it
             let file: Box<<#struct_name as ::limbo_ext::VfsExtension>::File> =
              ::std::boxed::Box::from_raw(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::close(vfs_instance, *file)
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::close(vfs_instance, *file) {
+                return e;
+            }
+            ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
@@ -690,7 +695,22 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::read(vfs_instance, file, ::std::slice::from_raw_parts_mut(buf, count), count, offset)
+            match <#struct_name as ::limbo_ext::VfsExtension>::read(vfs_instance, file, ::std::slice::from_raw_parts_mut(buf, count), count, offset) {
+                Ok(n) => n,
+                Err(_) => -1,
+            }
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn #run_once_fn_name(ctx: *mut ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
+            if ctx.is_null() {
+                return ::limbo_ext::ResultCode::Error;
+            }
+            let ctx = &mut *(ctx as *mut #struct_name);
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::run_once(ctx) {
+                return e;
+            }
+            ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
@@ -702,7 +722,10 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::write(vfs_instance, file, ::std::slice::from_raw_parts(buf, count), count, offset)
+            match <#struct_name as ::limbo_ext::VfsExtension>::write(vfs_instance, file, ::std::slice::from_raw_parts(buf, count), count, offset) {
+                Ok(n) => n,
+                Err(_) => -1,
+            }
         }
 
         #[no_mangle]
@@ -714,7 +737,10 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::lock(vfs_instance, file, exclusive)
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::lock(vfs_instance, file, exclusive) {
+                return e;
+            }
+            ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
@@ -726,7 +752,10 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::unlock(vfs_instance, file)
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::unlock(vfs_instance, file) {
+                return e;
+            }
+            ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
@@ -738,7 +767,10 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::sync(vfs_instance, file)
+            if <#struct_name as ::limbo_ext::VfsExtension>::sync(vfs_instance, file).is_err() {
+                return -1;
+            }
+            0
         }
 
         #[no_mangle]

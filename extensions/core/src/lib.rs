@@ -22,14 +22,22 @@ pub struct ExtensionApi {
 pub trait VfsExtension: Default {
     const NAME: &'static str;
     type File;
-    fn open(&self, path: &str, flags: i32, direct: bool) -> Option<Self::File>;
-    fn close(&self, file: Self::File) -> ResultCode;
-    fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64) -> i32;
-    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> i32;
-    fn sync(&self, file: &Self::File) -> i32;
-    fn lock(&self, file: &Self::File, exclusive: bool) -> ResultCode;
-    fn unlock(&self, file: &Self::File) -> ResultCode;
+    fn open(&self, path: &str, flags: i32, direct: bool) -> ExtResult<Self::File>;
+    fn close(&self, file: Self::File) -> ExtResult<()>;
+    fn read(
+        &self,
+        file: &mut Self::File,
+        buf: &mut [u8],
+        count: usize,
+        offset: i64,
+    ) -> ExtResult<i32>;
+    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64)
+        -> ExtResult<i32>;
+    fn sync(&self, file: &Self::File) -> ExtResult<()>;
+    fn lock(&self, file: &Self::File, exclusive: bool) -> ExtResult<()>;
+    fn unlock(&self, file: &Self::File) -> ExtResult<()>;
     fn size(&self, file: &Self::File) -> i64;
+    fn run_once(&self) -> ExtResult<()>;
 }
 
 #[repr(C)]
@@ -43,6 +51,7 @@ pub struct VfsImpl {
     pub lock: VfsLock,
     pub unlock: VfsUnlock,
     pub size: VfsSize,
+    pub run_once: VfsRunOnce,
 }
 
 pub type VfsOpen = unsafe extern "C" fn(
@@ -67,6 +76,8 @@ pub type VfsLock = unsafe extern "C" fn(file: *mut c_void, exclusive: bool) -> R
 pub type VfsUnlock = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
 
 pub type VfsSize = unsafe extern "C" fn(file: *mut c_void) -> i64;
+
+pub type VfsRunOnce = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
 
 #[repr(C)]
 pub struct VfsFile {
