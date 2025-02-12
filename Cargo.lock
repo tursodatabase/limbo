@@ -1629,6 +1629,7 @@ dependencies = [
  "limbo_time",
  "limbo_uuid",
  "log",
+ "memmap2",
  "miette",
  "mimalloc",
  "parking_lot",

@@ -73,6 +73,7 @@ parking_lot = "0.12.3"
 tracing = "0.1.41"
 crossbeam-skiplist = "0.1.3"
 ryu = "1.0.19"
+memmap2 = "0.9.5"
 
 [build-dependencies]
 chrono = "0.4.38"

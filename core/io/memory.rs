@@ -2,44 +2,107 @@ use super::{Buffer, Completion, File, OpenFlags, IO};
 use crate::Result;
 
 use log::debug;
+#[cfg(target_os = "linux")]
+use memmap2::RemapOptions;
+
+use memmap2::MmapMut;
 use std::{
-    cell::{Cell, RefCell, UnsafeCell},
-    collections::BTreeMap,
+    cell::{Cell, OnceCell, RefCell, UnsafeCell},
     rc::Rc,
     sync::Arc,
 };
 
 pub struct MemoryIO {
-    pages: UnsafeCell<BTreeMap<usize, MemPage>>,
     size: Cell<usize>,
+    pages: UnsafeCell<MmapMut>,
 }
 
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
-type MemPage = Box<[u8; PAGE_SIZE]>;
+type MemPage = [u8];
+const INITIAL_PAGES: OnceCell<usize> = OnceCell::new();
+const DEFAULT_INITIAL_PAGES: usize = 16;
 
 impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
+        // INITIAL PAGES changes in CI to test for resizing of memory pages
+        let initial_pages = INITIAL_PAGES
+            .get_or_init(|| {
+                std::env::var("INITIAL_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
+                    let initial_pages = str_num.parse::<usize>().unwrap_or(DEFAULT_INITIAL_PAGES);
+                    if initial_pages == 0 {
+                        panic!("INITIAL_PAGES flag cannot be zero")
+                    }
+                    initial_pages
+                })
+            })
+            .clone();
+
         Ok(Arc::new(Self {
-            pages: BTreeMap::new().into(),
             size: 0.into(),
+            // Initial default size of 4kb * 16 pages = 64kb
+            pages: MmapMut::map_anon(PAGE_SIZE * initial_pages)?.into(),
         }))
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_allocate_page(&self, page_no: usize) -> &mut MemPage {
-        unsafe {
-            let pages = &mut *self.pages.get();
-            pages
-                .entry(page_no)
-                .or_insert_with(|| Box::new([0; PAGE_SIZE]))
+    fn get_or_allocate_page(&self, page_no: usize) -> Result<&mut MemPage> {
+        let start = page_no * PAGE_SIZE;
+        let end = start + PAGE_SIZE;
+        let len_pages = unsafe {
+            let page = &mut *self.pages.get();
+            page.len()
+        };
+
+        if end > len_pages {
+            let cap_pages = len_pages / PAGE_SIZE;
+            self.resize(cap_pages * 2)?;
         }
+
+        let page = unsafe {
+            let page = &mut *self.pages.get();
+            &mut page[start..end]
+        };
+        Ok(page)
     }
 
     fn get_page(&self, page_no: usize) -> Option<&MemPage> {
-        unsafe { (*self.pages.get()).get(&page_no) }
+        let start = page_no * PAGE_SIZE;
+        let end = start + PAGE_SIZE;
+        let pages = unsafe { &mut *self.pages.get() };
+
+        // Make sure that we are accessing into a valid memory page
+        assert!(end <= pages.len());
+
+        let page = &pages[start..end];
+        if page.is_empty() {
+            None
+        } else {
+            Some(page)
+        }
+    }
+
+    fn resize(&self, capacity: usize) -> Result<()> {
+        let pages = unsafe { &mut *self.pages.get() };
+        let new_cap = PAGE_SIZE * capacity;
+        #[cfg(target_os = "linux")]
+        {
+            unsafe {
+                pages.remap(new_cap, RemapOptions::new().may_move(true))?;
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut new_pages = MmapMut::map_anon(new_cap)?;
+            new_pages[..pages.len()].clone_from_slice(pages);
+
+            *pages = new_pages;
+        }
+
+        Ok(())
     }
 }
 
@@ -106,6 +169,7 @@ impl File for MemoryFile {
                 let page_no = offset / PAGE_SIZE;
                 let page_offset = offset % PAGE_SIZE;
                 let bytes_to_read = remaining.min(PAGE_SIZE - page_offset);
+
                 if let Some(page) = self.io.get_page(page_no) {
                     read_buf.as_mut_slice()[buf_offset..buf_offset + bytes_to_read]
                         .copy_from_slice(&page[page_offset..page_offset + bytes_to_read]);
@@ -141,7 +205,7 @@ impl File for MemoryFile {
             let bytes_to_write = remaining.min(PAGE_SIZE - page_offset);
 
             {
-                let page = self.io.get_or_allocate_page(page_no);
+                let page = self.io.get_or_allocate_page(page_no)?;
                 page[page_offset..page_offset + bytes_to_write]
                     .copy_from_slice(&data[buf_offset..buf_offset + bytes_to_write]);
             }
@@ -173,5 +237,9 @@ impl File for MemoryFile {
 impl Drop for MemoryFile {
     fn drop(&mut self) {
         // no-op
+        // TODO ideally we could have some flags
+        // in Memory File, that when this is dropped
+        // if the persist flag is true we could flush the mmap to disk
+        // We would also have to store the file name here in this case
     }
 }
