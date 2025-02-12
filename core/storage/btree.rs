@@ -819,24 +819,6 @@ impl BTreeCursor {
         return ret;
     }
 
-    /// Drop a cell from a page.
-    /// This is done by freeing the range of bytes that the cell occupies.
-    fn drop_cell(&self, page: &mut PageContent, cell_idx: usize) {
-        let (cell_start, cell_len) = page.cell_get_raw_region(
-            cell_idx,
-            payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
-            payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
-            self.usable_space(),
-        );
-        free_cell_range(
-            page,
-            cell_start as u16,
-            cell_len as u16,
-            self.usable_space() as u16,
-        );
-        page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, page.cell_count() as u16 - 1);
-    }
-
     /// Balance a leaf page.
     /// Balancing is done when a page overflows.
     /// see e.g. https://en.wikipedia.org/wiki/B-tree
@@ -1084,7 +1066,7 @@ impl BTreeCursor {
                         .divider_cells
                         .borrow_mut()
                         .push(cell_buf.to_vec());
-                    self.drop_cell(parent_contents, cell_idx);
+                    drop_cell(parent_contents, cell_idx, self.usable_space() as u16);
                 }
                 assert_eq!(
                     write_info.divider_cells.borrow().len(),
@@ -2579,9 +2561,38 @@ fn payload_overflow_threshold_min(_page_type: PageType, usable_space: u16) -> us
     ((usable_space as usize - 12) * 32 / 255) - 23
 }
 
+/// Drop a cell from a page.
+/// This is done by freeing the range of bytes that the cell occupies.
+fn drop_cell(page: &mut PageContent, cell_idx: usize, usable_space: u16) {
+    let (cell_start, cell_len) = page.cell_get_raw_region(
+        cell_idx,
+        payload_overflow_threshold_max(page.page_type(), usable_space),
+        payload_overflow_threshold_min(page.page_type(), usable_space),
+        usable_space as usize,
+    );
+    free_cell_range(page, cell_start as u16, cell_len as u16, usable_space);
+    if page.cell_count() > 0 {
+        shift_pointers_left(page, cell_idx);
+    }
+    page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, page.cell_count() as u16 - 1);
+}
+
+/// Shift pointers to the left once starting from a cell position
+/// This is useful when we remove a cell and we want to move left the cells from the right to fill
+/// the empty space that's not needed
+fn shift_pointers_left(page: &mut PageContent, cell_idx: usize) {
+    assert!(page.cell_count() > 0);
+    let buf = page.as_ptr();
+    let (start, _) = page.cell_pointer_array_offset_and_size();
+    let start = start + (cell_idx * 2) + 2;
+    let right_cells = page.cell_count() - cell_idx - 1;
+    let amount_to_shift = right_cells * 2;
+    buf.copy_within(start..start + amount_to_shift, start - 2);
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc, sync::Arc};
+    use std::{cell::RefCell, panic, rc::Rc, sync::Arc};
 
     use tempfile::TempDir;
 
@@ -2592,7 +2603,6 @@ mod tests {
                 compute_free_space, fill_cell_payload, payload_overflow_threshold_max,
                 payload_overflow_threshold_min,
             },
-            database::FileStorage,
             pager::PageRef,
             sqlite3_ondisk::{BTreeCell, PageContent, PageType},
         },
@@ -2600,7 +2610,7 @@ mod tests {
         Buffer, Database, Page, Pager, PlatformIO, Value, DATABASE_VERSION, IO,
     };
 
-    use super::{btree_init_page, insert_into_cell};
+    use super::{btree_init_page, defragment_page, drop_cell, insert_into_cell};
 
     fn get_page(id: usize) -> PageRef {
         let page = Arc::new(Page::new(2));
@@ -2642,6 +2652,7 @@ mod tests {
             payload_overflow_threshold_min(page.page_type(), 4096),
             4096,
         );
+        log::trace!("cell idx={} start={} len={}", cell_idx, cell.0, cell.1);
         let buf = &page.as_ptr()[cell.0..cell.0 + cell.1];
         assert_eq!(buf.len(), payload.len());
         assert_eq!(buf, payload);
@@ -2683,27 +2694,135 @@ mod tests {
         ensure_cell(page, cell_idx, &payload);
     }
 
+    struct Cell {
+        pos: usize,
+        payload: Vec<u8>,
+    }
+
     #[test]
-    fn test_multiple_insert_cell() {
+    fn test_drop_1() {
+        set_breakpoint_panic();
         let db = get_database();
+
         let page = get_page(2);
         let page = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
-        let mut payloads = Vec::new();
-        for i in 0..10 {
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        for i in 0..3 {
             let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
             let payload = add_record(i, i, page, record, &db);
             assert_eq!(page.cell_count(), i + 1);
-            let free = compute_free_space(page, 4096);
+            let free = compute_free_space(page, usable_space);
             total_size += payload.len() as u16 + 2;
             assert_eq!(free, 4096 - total_size - header_size);
-            payloads.push(payload);
+            cells.push(Cell { pos: i, payload });
         }
 
-        for (i, payload) in payloads.iter().enumerate() {
-            ensure_cell(page, i, payload);
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
         }
+        cells.remove(1);
+        drop_cell(page, 1, usable_space);
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+    }
+
+    #[test]
+    fn test_drop_odd() {
+        set_breakpoint_panic();
+        let db = get_database();
+
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+
+        let mut total_size = 0;
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        let total_cells = 10;
+        for i in 0..total_cells {
+            let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
+            let payload = add_record(i, i, page, record, &db);
+            assert_eq!(page.cell_count(), i + 1);
+            let free = compute_free_space(page, usable_space);
+            total_size += payload.len() as u16 + 2;
+            assert_eq!(free, 4096 - total_size - header_size);
+            cells.push(Cell { pos: i, payload });
+        }
+
+        let mut removed = 0;
+        let mut new_cells = Vec::new();
+        for cell in cells {
+            if cell.pos % 2 == 1 {
+                drop_cell(page, cell.pos - removed, usable_space);
+                removed += 1;
+            } else {
+                new_cells.push(cell);
+            }
+        }
+        let cells = new_cells;
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+    }
+
+    #[test]
+    fn test_defragment() {
+        set_breakpoint_panic();
+        let db = get_database();
+
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+
+        let mut total_size = 0;
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        for i in 0..3 {
+            let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
+            let payload = add_record(i, i, page, record, &db);
+            assert_eq!(page.cell_count(), i + 1);
+            let free = compute_free_space(page, usable_space);
+            total_size += payload.len() as u16 + 2;
+            assert_eq!(free, 4096 - total_size - header_size);
+            cells.push(Cell { pos: i, payload });
+        }
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+        cells.remove(1);
+        drop_cell(page, 1, usable_space);
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+
+        defragment_page(page, usable_space);
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+    }
+
+    fn set_breakpoint_panic() {
+        // Set custom panic hook at start of program
+        panic::set_hook(Box::new(|panic_info| {
+            unsafe {
+                std::arch::asm!("brk #0");
+            }
+
+            // Optionally print the panic info
+            eprintln!("Panic occurred: {:?}", panic_info);
+        }));
     }
 }

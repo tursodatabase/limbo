@@ -578,7 +578,7 @@ impl PageContent {
         (self.offset + header_size, self.cell_pointer_array_size())
     }
 
-    /* Get region of a cell's payload */
+    /// Get region of a cell's payload
     pub fn cell_get_raw_region(
         &self,
         idx: usize,
@@ -892,6 +892,7 @@ fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8
             assert!(left_to_read > 0);
             let page;
             loop {
+                // FIXME(pere): this looks terrible, what did i do lmao
                 let page_ref = pager.read_page(next_overflow as usize);
                 if let Ok(p) = page_ref {
                     page = p;
