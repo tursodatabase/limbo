@@ -30,10 +30,10 @@ impl MemoryIO {
         // INITIAL PAGES changes in CI to test for resizing of memory pages
         let initial_pages = INITIAL_PAGES
             .get_or_init(|| {
-                std::env::var("INITIAL_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
+                std::env::var("INITIAL_MEM_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
                     let initial_pages = str_num.parse::<usize>().unwrap_or(DEFAULT_INITIAL_PAGES);
                     if initial_pages == 0 {
-                        panic!("INITIAL_PAGES flag cannot be zero")
+                        panic!("INITIAL_MEM_PAGES flag cannot be zero")
                     }
                     initial_pages
                 })
