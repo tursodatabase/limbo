@@ -2593,6 +2593,8 @@ fn shift_pointers_left(page: &mut PageContent, cell_idx: usize) {
 mod tests {
     use std::{cell::RefCell, panic, rc::Rc, sync::Arc};
 
+    use rand::{thread_rng, Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
     use tempfile::TempDir;
 
     use crate::{
@@ -2855,6 +2857,66 @@ mod tests {
 
         for (i, cell) in cells.iter().enumerate() {
             ensure_cell(page, i, &cell.payload);
+        }
+    }
+
+    #[test]
+    fn test_fuzz_drop_defragment_insert() {
+        set_breakpoint_panic();
+        let db = get_database();
+
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+
+        let mut total_size = 0;
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        let total_cells = 10;
+        let mut ticks = 0;
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        while ticks > 0 {
+            ticks -= 1;
+        }
+        let mut total_size = 0;
+        for i in 0..total_cells {
+            match rng.gen_range(0..3) {
+                0 => {
+                    // allow appends with extra place to insert
+                    let cell_idx = rng.gen_range(0..=page.cell_count());
+                    let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
+                    let payload = add_record(i, cell_idx, page, record, &db);
+                    let free = compute_free_space(page, usable_space);
+                    if (free as usize) < payload.len() - 2 {
+                        // do not try to insert overflow pages because they require balancing
+                        continue;
+                    }
+                    assert!(page.overflow_cells.is_empty());
+                    total_size += payload.len() as u16 + 2;
+                    cells.push(Cell { pos: i, payload });
+                }
+                1 => {
+                    if page.cell_count() == 0 {
+                        continue;
+                    }
+                    let cell_idx = rng.gen_range(0..page.cell_count());
+                    let (_, len) = page.cell_get_raw_region(
+                        cell_idx,
+                        payload_overflow_threshold_max(page.page_type(), 4096),
+                        payload_overflow_threshold_min(page.page_type(), 4096),
+                        usable_space as usize,
+                    );
+                    drop_cell(page, cell_idx, usable_space);
+                    total_size -= len as u16 + 2;
+                    cells.remove(cell_idx);
+                }
+                2 => {
+                    defragment_page(page, usable_space);
+                }
+                _ => unreachable!(),
+            }
+            let free = compute_free_space(page, usable_space);
+            assert_eq!(free, 4096 - total_size - header_size);
         }
     }
 
