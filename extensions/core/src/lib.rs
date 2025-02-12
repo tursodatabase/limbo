@@ -128,10 +128,6 @@ pub type InitAggFunction = unsafe extern "C" fn() -> *mut AggCtx;
 pub type StepFunction = unsafe extern "C" fn(ctx: *mut AggCtx, argc: i32, argv: *const Value);
 pub type FinalizeFunction = unsafe extern "C" fn(ctx: *mut AggCtx) -> Value;
 
-pub trait Scalar {
-    fn call(&self, args: &[Value]) -> Value;
-}
-
 #[repr(C)]
 pub struct AggCtx {
     pub state: *mut c_void,
