@@ -2232,7 +2232,6 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
     //   return SQLITE_CORRUPT_PAGE(pPage);
     // }
     assert!(cbrk >= first_cell);
-    dbg!(cbrk, first_cell);
     let write_buf = page.as_ptr();
 
     // set new first byte of cell content
@@ -2803,6 +2802,51 @@ mod tests {
         cells.remove(1);
         drop_cell(page, 1, usable_space);
 
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+
+        defragment_page(page, usable_space);
+
+        for (i, cell) in cells.iter().enumerate() {
+            ensure_cell(page, i, &cell.payload);
+        }
+    }
+
+    #[test]
+    fn test_drop_odd_with_defragment() {
+        set_breakpoint_panic();
+        let db = get_database();
+
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+
+        let mut total_size = 0;
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        let total_cells = 10;
+        for i in 0..total_cells {
+            let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
+            let payload = add_record(i, i, page, record, &db);
+            assert_eq!(page.cell_count(), i + 1);
+            let free = compute_free_space(page, usable_space);
+            total_size += payload.len() as u16 + 2;
+            assert_eq!(free, 4096 - total_size - header_size);
+            cells.push(Cell { pos: i, payload });
+        }
+
+        let mut removed = 0;
+        let mut new_cells = Vec::new();
+        for cell in cells {
+            if cell.pos % 2 == 1 {
+                drop_cell(page, cell.pos - removed, usable_space);
+                removed += 1;
+            } else {
+                new_cells.push(cell);
+            }
+        }
+        let cells = new_cells;
         for (i, cell) in cells.iter().enumerate() {
             ensure_cell(page, i, &cell.payload);
         }
