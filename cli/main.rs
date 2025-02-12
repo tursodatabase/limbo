@@ -4,11 +4,13 @@ mod import;
 mod opcodes_dictionary;
 
 use rustyline::{error::ReadlineError, DefaultEditor};
+use std::io::IsTerminal;
 use std::sync::atomic::Ordering;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let mut app = app::Limbo::new()?;
+    let interactive = std::io::stdin().is_terminal();
+    let mut app = app::Limbo::new(interactive)?;
     let mut rl = DefaultEditor::new()?;
     let home = dirs::home_dir().expect("Could not determine home directory");
     let history_file = home.join(".limbo_history");

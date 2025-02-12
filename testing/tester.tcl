@@ -3,8 +3,9 @@ set test_dbs [list "testing/testing.db" "testing/testing_norowidalias.db"]
 set test_small_dbs [list "testing/testing_small.db" ]
 
 proc evaluate_sql {sqlite_exec db_name sql} {
-    set command [list $sqlite_exec $db_name $sql]
-    set output [exec {*}$command]
+    set command [list $sqlite_exec $db_name]
+    set sql_with_mode ".mode list\n$sql"
+    set output [exec {*}$command << $sql_with_mode]
     return $output
 }
 
