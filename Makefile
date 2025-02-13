@@ -71,7 +71,7 @@ test-extensions: limbo
 .PHONY: test-extensions
 
 test-shell: limbo 
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/shelltests.py
+	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/cli_test_cases.py
 .PHONY: test-shell
 
 test-compat:
