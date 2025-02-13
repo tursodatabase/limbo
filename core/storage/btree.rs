@@ -864,6 +864,10 @@ impl BTreeCursor {
                 let write_info = self.state.mut_write_info().unwrap();
                 write_info.state = WriteState::BalanceNonRoot;
                 self.stack.pop();
+                dbg!(self.stack.current_cell_index());
+                // We always advance page on traversal so we need to point to correct page again
+                self.stack.retreat();
+                dbg!(self.stack.current_cell_index());
                 self.balance_non_root()
             }
             WriteState::BalanceNonRoot | WriteState::BalanceNonRootWaitLoadPages => {
@@ -918,6 +922,11 @@ impl BTreeCursor {
                 let number_of_cells_in_parent =
                     parent_contents.cell_count() + parent_contents.overflow_cells.len();
 
+                assert!(
+                    parent_contents.overflow_cells.is_empty(),
+                    "balancing child page with overflowed parent not yet implemented"
+                );
+                assert!(page_to_balance_idx <= parent_contents.cell_count());
                 // As there will be at maximum 3 pages used to balance:
                 // sibling_pointer is the index represeneting one of those 3 pages, and we initialize it to the last possible page.
                 // next_divider is the first divider that contains the first page of the 3 pages.
@@ -944,17 +953,50 @@ impl BTreeCursor {
                 write_info.sibling_count.replace(sibling_pointer + 1);
                 write_info.first_divider_cell.replace(first_cell_divider);
 
+                dbg!(page_to_balance_idx);
+                for p in 0..parent_contents.cell_count() {
+                    let cell = parent_contents
+                        .cell_get(
+                            p,
+                            self.pager.clone(),
+                            payload_overflow_threshold_max(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )
+                        .unwrap();
+                    dbg!(cell);
+                }
                 let last_sibling_is_right_pointer = sibling_pointer + first_cell_divider
                     - parent_contents.overflow_cells.len()
                     == parent_contents.cell_count();
                 // Get the right page pointer that we will need to update later
+                dbg!(last_sibling_is_right_pointer);
+                dbg!(sibling_pointer, first_cell_divider);
+                dbg!(parent_contents.rightmost_pointer());
+                dbg!(number_of_cells_in_parent, page_to_balance_idx);
                 let right_pointer = if last_sibling_is_right_pointer {
                     parent_contents.rightmost_pointer_raw().unwrap()
                 } else {
-                    let pointer_area = parent_contents.cell_pointer_array_offset_and_size();
+                    let (start_of_cell, _) = parent_contents.cell_get_raw_region(
+                        first_cell_divider + sibling_pointer,
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    );
                     let buf = parent_contents.as_ptr().as_mut_ptr();
-                    let last_divider_offset = (first_cell_divider + sibling_pointer) * 2;
-                    unsafe { buf.add(pointer_area.0 + last_divider_offset) }
+                    unsafe { buf.add(start_of_cell) }
                 };
 
                 // load sibling pages
@@ -963,6 +1005,7 @@ impl BTreeCursor {
                 write_info.rightmost_pointer.replace(Some(right_pointer));
                 let mut current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
+                    dbg!(pgno);
                     let page = self.pager.read_page(pgno as usize)?;
                     write_info.pages_to_balance.borrow_mut().push(page);
                     assert_eq!(
@@ -1583,6 +1626,8 @@ impl BTreeCursor {
             self.root_page = root_id;
             self.stack.clear();
             self.stack.push(root.clone());
+            // advance in order to maintain semantics
+            self.stack.advance();
             self.stack.push(child.clone());
 
             self.pager.put_loaded_page(root_id, root);
@@ -1870,6 +1915,7 @@ impl PageStack {
     }
 
     /// Advance the current cell index of the current page to the next cell.
+    /// We usually advance after going traversing a new page
     fn advance(&self) {
         let current = self.current();
         self.cell_indices.borrow_mut()[current] += 1;
@@ -2025,11 +2071,18 @@ pub fn edit_page(
         let overflow_cell = &page.overflow_cells[i];
         // cell index in context of new list of cells that should be in the page
         let cell_idx = start_old_cells + overflow_cell.index - start_new_cells;
-        if cell_idx >= 0 && cell_idx < start_new_cells {
+        dbg!(
+            cell_idx,
+            start_old_cells,
+            start_new_cells,
+            overflow_cell.index,
+            number_new_cells
+        );
+        if cell_idx >= 0 && cell_idx < number_new_cells {
             count_cells += 1;
             page_insert_array(
                 page,
-                cell_idx + start_new_cells,
+                start_new_cells + cell_idx,
                 1,
                 cell_array,
                 cell_idx,
@@ -2037,6 +2090,7 @@ pub fn edit_page(
             );
         }
     }
+    dbg!(number_new_cells, count_cells);
     // TODO: append cells to end
     page_insert_array(
         page,
@@ -2261,6 +2315,12 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
 /// and the overflow cell count is used to determine if the page overflows,
 /// i.e. whether we need to balance the btree after the insert.
 fn insert_into_cell(page: &mut PageContent, payload: &[u8], cell_idx: usize, usable_space: u16) {
+    assert!(
+        cell_idx <= page.cell_count(),
+        "attempting to add cell to an incorrect place cell_idx={} cell_count={}",
+        cell_idx,
+        page.cell_count()
+    );
     let free = compute_free_space(page, usable_space);
     const CELL_POINTER_SIZE_BYTES: usize = 2;
     let enough_space = payload.len() + CELL_POINTER_SIZE_BYTES <= free as usize;
@@ -2285,6 +2345,7 @@ fn insert_into_cell(page: &mut PageContent, payload: &[u8], cell_idx: usize, usa
     let cell_pointer_cur_idx = cell_pointer_array_start + (CELL_POINTER_SIZE_BYTES * cell_idx);
 
     // move existing pointers forward by CELL_POINTER_SIZE_BYTES...
+    dbg!(page.cell_count(), cell_idx);
     let n_cells_forward = page.cell_count() - cell_idx;
     let n_bytes_forward = CELL_POINTER_SIZE_BYTES * n_cells_forward;
     if n_bytes_forward > 0 {
