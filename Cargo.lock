@@ -1580,6 +1580,7 @@ dependencies = [
  "polling",
  "pprof",
  "rand",
+ "rand_chacha",
  "regex",
  "regex-syntax",
  "rstest",
