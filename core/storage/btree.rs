@@ -2201,7 +2201,7 @@ fn free_cell_range(page: &mut PageContent, mut offset: u16, len: u16, usable_spa
         pc
     };
 
-    if offset < page.cell_content_area() {
+    if offset <= page.cell_content_area() {
         page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, pc);
         page.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, offset + len);
     } else {
