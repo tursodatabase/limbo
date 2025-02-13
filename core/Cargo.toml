@@ -85,6 +85,8 @@ mockall = "0.13.0"
 rstest = "0.18.2"
 rusqlite = "0.29.0"
 tempfile = "3.8.0"
+rand_chacha = "0.3.1"
+
 
 [[bench]]
 name = "benchmark"
