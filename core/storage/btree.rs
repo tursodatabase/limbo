@@ -2118,16 +2118,14 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
     log::debug!("defragment_page");
     let cloned_page = page.clone();
     // TODO(pere): usable space should include offset probably
-    let usable_space = usable_space as u64;
     let mut cbrk = usable_space;
 
     // TODO: implement fast algorithm
 
     let last_cell = usable_space - 4;
-    let first_cell = cloned_page.unallocated_region_start() as u64;
+    let first_cell = cloned_page.unallocated_region_start() as u16;
 
     if cloned_page.cell_count() > 0 {
-        let page_type = page.page_type();
         let read_buf = cloned_page.as_ptr();
         let write_buf = page.as_ptr();
 
@@ -2135,49 +2133,27 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
             let (cell_offset, _) = page.cell_pointer_array_offset_and_size();
             let cell_idx = cell_offset + (i * 2);
 
-            let pc = cloned_page.read_u16_no_offset(cell_idx) as u64;
+            let pc = cloned_page.read_u16_no_offset(cell_idx);
             if pc > last_cell {
                 unimplemented!("corrupted page");
             }
 
             assert!(pc <= last_cell);
 
-            let size = match page_type {
-                PageType::TableInterior => {
-                    let (_, nr_key) = match read_varint(&read_buf[pc as usize ..]) {
-                            Ok(v) => v,
-                            Err(_) => todo!(
-                                "error while parsing varint from cell, probably treat this as corruption?"
-                            ),
-                        };
-                    4 + nr_key as u64
-                }
-                PageType::TableLeaf => {
-                    let (payload_size, nr_payload) = match read_varint(&read_buf[pc as usize..]) {
-                            Ok(v) => v,
-                            Err(_) => todo!(
-                                "error while parsing varint from cell, probably treat this as corruption?"
-                            ),
-                        };
-                    let (_, nr_key) = match read_varint(&read_buf[pc as usize + nr_payload..]) {
-                            Ok(v) => v,
-                            Err(_) => todo!(
-                                "error while parsing varint from cell, probably treat this as corruption?"
-                            ),
-                        };
-                    // TODO: add overflow page calculation
-                    payload_size + nr_payload as u64 + nr_key as u64
-                }
-                PageType::IndexInterior => todo!(),
-                PageType::IndexLeaf => todo!(),
-            };
+            let (_, size) = cloned_page.cell_get_raw_region(
+                i,
+                payload_overflow_threshold_max(page.page_type(), usable_space),
+                payload_overflow_threshold_min(page.page_type(), usable_space),
+                usable_space as usize,
+            );
+            let size = size as u16;
             cbrk -= size;
             if cbrk < first_cell || pc + size > usable_space {
                 todo!("corrupt");
             }
             assert!(cbrk + size <= usable_space && cbrk >= first_cell);
             // set new pointer
-            page.write_u16_no_offset(cell_idx, cbrk as u16);
+            page.write_u16_no_offset(cell_idx, cbrk);
             // copy payload
             write_buf[cbrk as usize..cbrk as usize + size as usize]
                 .copy_from_slice(&read_buf[pc as usize..pc as usize + size as usize]);
