@@ -468,6 +468,29 @@ def test_series(pipe):
     )
 
 
+def test_vfs(pipe):
+    ext_path = "./target/debug/liblimbo_testfs"
+    run_test(pipe, ".vfslist", lambda res: "testfs" not in res, "testfs not loaded")
+    write_to_pipe(pipe, f".load {ext_path}")
+    write_to_pipe(pipe, ".open testing/vfs_extension.db testfs")
+    run_test(pipe, ".vfslist", lambda res: "testfs" in res, "testfs extension loaded")
+    write_to_pipe(pipe, test_data)
+    run_test(
+        pipe,
+        "SELECT * FROM numbers;",
+        lambda res: res == "1|1.0\n2|2.0\n3|3.0\n4|4.0\n5|5.0\n6|6.0\n7|7.0",
+        "testfs extension works",
+    )
+    run_test(
+        pipe,
+        "SELECT * FROM test where value = 20.0;",
+        lambda res: "20.0|25" in res,
+        "testfs extension works",
+    )
+    write_to_pipe(pipe, "insert into test values (randomblob(1024*1024));")
+    print("Tested large write to testfs")
+
+
 def main():
     pipe = init_limbo()
     try:
@@ -476,6 +499,7 @@ def main():
         test_aggregates(pipe)
         test_crypto(pipe)
         test_series(pipe)
+        test_vfs(pipe)
 
     except Exception as e:
         print(f"Test FAILED: {e}")

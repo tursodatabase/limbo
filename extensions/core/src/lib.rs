@@ -1,7 +1,9 @@
 mod types;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
-use std::os::raw::{c_char, c_void};
+pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive, VfsDerive};
+use std::ffi::{c_char, c_void};
 pub use types::{ResultCode, Value, ValueType};
+
+pub type Result<T> = std::result::Result<T, ResultCode>;
 
 #[repr(C)]
 pub struct ExtensionApi {
@@ -33,6 +35,78 @@ pub struct ExtensionApi {
         name: *const c_char,
         sql: *const c_char,
     ) -> ResultCode,
+
+    pub register_vfs: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        name: *const c_char,
+        vfs: *const VfsImpl,
+    ) -> ResultCode,
+}
+
+pub trait VfsExtension: Default {
+    const NAME: &'static str;
+    type File;
+    fn open(&self, path: &str, flags: i32, direct: bool) -> Result<Self::File>;
+    fn close(&self, file: Self::File) -> Result<()>;
+    fn read(&self, file: &mut Self::File, buf: &mut [u8], count: usize, offset: i64)
+        -> Result<i32>;
+    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> Result<i32>;
+    fn sync(&self, file: &Self::File) -> Result<()>;
+    fn lock(&self, file: &Self::File, exclusive: bool) -> Result<()>;
+    fn unlock(&self, file: &Self::File) -> Result<()>;
+    fn size(&self, file: &Self::File) -> i64;
+    fn run_once(&self) -> Result<()>;
+}
+
+#[repr(C)]
+pub struct VfsImpl {
+    pub vfs: *const c_void,
+    pub open: VfsOpen,
+    pub close: VfsClose,
+    pub read: VfsRead,
+    pub write: VfsWrite,
+    pub sync: VfsSync,
+    pub lock: VfsLock,
+    pub unlock: VfsUnlock,
+    pub size: VfsSize,
+    pub run_once: VfsRunOnce,
+}
+
+pub type VfsOpen = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    path: *const c_char,
+    flags: i32,
+    direct: bool,
+) -> *mut VfsFile;
+
+pub type VfsClose = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+
+pub type VfsRead =
+    unsafe extern "C" fn(file: *mut c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
+
+pub type VfsWrite =
+    unsafe extern "C" fn(file: *mut c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
+
+pub type VfsSync = unsafe extern "C" fn(file: *mut c_void) -> i32;
+
+pub type VfsLock = unsafe extern "C" fn(file: *mut c_void, exclusive: bool) -> ResultCode;
+
+pub type VfsUnlock = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+
+pub type VfsSize = unsafe extern "C" fn(file: *mut c_void) -> i64;
+
+pub type VfsRunOnce = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+
+#[repr(C)]
+pub struct VfsFile {
+    pub file: *mut c_void,
+    pub vfs: *const VfsImpl,
+}
+
+impl VfsFile {
+    pub fn new(file: *mut c_void, vfs: *const VfsImpl) -> Self {
+        Self { file, vfs }
+    }
 }
 
 impl ExtensionApi {
@@ -53,10 +127,6 @@ pub type ScalarFunction = unsafe extern "C" fn(argc: i32, *const Value) -> Value
 pub type InitAggFunction = unsafe extern "C" fn() -> *mut AggCtx;
 pub type StepFunction = unsafe extern "C" fn(ctx: *mut AggCtx, argc: i32, argv: *const Value);
 pub type FinalizeFunction = unsafe extern "C" fn(ctx: *mut AggCtx) -> Value;
-
-pub trait Scalar {
-    fn call(&self, args: &[Value]) -> Value;
-}
 
 #[repr(C)]
 pub struct AggCtx {

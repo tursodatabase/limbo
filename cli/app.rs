@@ -133,6 +133,8 @@ pub enum Command {
     Import,
     /// Loads an extension library
     LoadExtension,
+    /// List available VFS
+    ListVfs,
 }
 
 impl Command {
@@ -145,6 +147,7 @@ impl Command {
             | Self::Opcodes
             | Self::ShowInfo
             | Self::Tables
+            | Self::ListVfs
             | Self::SetOutput => 0,
             Self::Open
             | Self::OutputMode
@@ -173,6 +176,7 @@ impl Command {
             Self::Tables => ".tables",
             Self::LoadExtension => ".load",
             Self::Import => &IMPORT_HELP,
+            Self::ListVfs => ".vfslist",
         }
     }
 }
@@ -196,6 +200,7 @@ impl FromStr for Command {
             ".echo" => Ok(Self::Echo),
             ".import" => Ok(Self::Import),
             ".load" => Ok(Self::LoadExtension),
+            ".vfslist" => Ok(Self::ListVfs),
             _ => Err("Unknown command".to_string()),
         }
     }
@@ -366,18 +371,31 @@ impl Limbo {
         }
     }
 
-    fn open_db(&mut self, path: &str) -> anyhow::Result<()> {
+    fn open_db(&mut self, path: &str, vfs_name: Option<&str>) -> anyhow::Result<()> {
         self.conn.close()?;
-        let io = {
-            match path {
-                ":memory:" => get_io(DbLocation::Memory, self.opts.io)?,
-                _path => get_io(DbLocation::Path, self.opts.io)?,
-            }
+        let db = if vfs_name.is_some() {
+            let conn = self.conn.clone();
+            conn.open_new(path, vfs_name)?
+        } else {
+            let io = {
+                match path {
+                    ":memory:" => get_io(DbLocation::Memory, self.opts.io)?,
+                    _path => get_io(DbLocation::Path, self.opts.io)?,
+                }
+            };
+            self.io = Arc::clone(&io);
+            Database::open_file(self.io.clone(), path)?
         };
-        self.io = Arc::clone(&io);
-        let db = Database::open_file(self.io.clone(), path)?;
         self.conn = db.connect();
         self.opts.db_file = path.to_string();
+        Ok(())
+    }
+
+    fn list_vfs(&mut self) -> io::Result<()> {
+        let vfs_list = self.conn.list_vfs();
+        for vfs in vfs_list {
+            let _ = self.writeln(vfs);
+        }
         Ok(())
     }
 
@@ -522,7 +540,8 @@ impl Limbo {
                     std::process::exit(0)
                 }
                 Command::Open => {
-                    if self.open_db(args[1]).is_err() {
+                    let vfs = args.get(2).map(|s| &**s);
+                    if self.open_db(args[1], vfs).is_err() {
                         let _ = self.writeln("Error: Unable to open database file.");
                     }
                 }
@@ -598,6 +617,9 @@ impl Limbo {
                     if let Err(e) = self.handle_load_extension(args[1]) {
                         let _ = self.writeln(&e);
                     }
+                }
+                Command::ListVfs => {
+                    let _ = self.list_vfs();
                 }
             }
         } else {
