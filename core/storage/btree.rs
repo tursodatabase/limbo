@@ -2231,10 +2231,10 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
         let write_buf = page.as_ptr();
 
         for i in 0..cloned_page.cell_count() {
-            let cell_offset = page.offset + 8;
-            let cell_idx = cell_offset + i * 2;
+            let (cell_offset, _) = page.cell_pointer_array_offset_and_size();
+            let cell_idx = cell_offset + (i * 2);
 
-            let pc = u16::from_be_bytes([read_buf[cell_idx], read_buf[cell_idx + 1]]) as u64;
+            let pc = cloned_page.read_u16_no_offset(cell_idx) as u64;
             if pc > last_cell {
                 unimplemented!("corrupted page");
             }
@@ -2276,7 +2276,7 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
             }
             assert!(cbrk + size <= usable_space && cbrk >= first_cell);
             // set new pointer
-            write_buf[cell_idx..cell_idx + 2].copy_from_slice(&(cbrk as u16).to_be_bytes());
+            page.write_u16_no_offset(cell_idx, cbrk as u16);
             // copy payload
             write_buf[cbrk as usize..cbrk as usize + size as usize]
                 .copy_from_slice(&read_buf[pc as usize..pc as usize + size as usize]);
@@ -2288,16 +2288,12 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
     //   return SQLITE_CORRUPT_PAGE(pPage);
     // }
     assert!(cbrk >= first_cell);
-    let write_buf = page.as_ptr();
 
     // set new first byte of cell content
     page.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, cbrk as u16);
     // set free block to 0, unused spaced can be retrieved from gap between cell pointer end and content start
     page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
-    page.write_u16(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
-    // set unused space to 0
-    dbg!(cbrk, first_cell);
-    write_buf[first_cell as usize..cbrk as usize].fill(0);
+    page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
 }
 
 /// Insert a record into a cell.

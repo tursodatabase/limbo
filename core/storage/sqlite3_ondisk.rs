@@ -599,10 +599,10 @@ impl PageContent {
     ) -> (usize, usize) {
         let buf = self.as_ptr();
         let ncells = self.cell_count();
-        let cell_pointer_array_start = self.header_size();
+        let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
         assert!(idx < ncells, "cell_get: idx out of bounds");
         let cell_pointer = cell_pointer_array_start + (idx * 2); // pointers are 2 bytes each
-        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
         let start = cell_pointer;
         let len = match self.page_type() {
             PageType::IndexInterior => {
