@@ -438,6 +438,11 @@ impl PageContent {
         u16::from_be_bytes([buf[self.offset + pos], buf[self.offset + pos + 1]])
     }
 
+    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
+        let buf = self.as_ptr();
+        u16::from_be_bytes([buf[pos], buf[pos + 1]])
+    }
+
     pub fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
         read_u32(buf, self.offset + pos)
@@ -453,6 +458,12 @@ impl PageContent {
         log::debug!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
+    }
+
+    pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
+        log::debug!("write_u16(pos={}, value={})", pos, value);
+        let buf = self.as_ptr();
+        buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u32(&self, pos: usize, value: u32) {
