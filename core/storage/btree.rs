@@ -1519,9 +1519,9 @@ impl BTreeCursor {
                     let (cell_pointer_offset, _) = contents.cell_pointer_array_offset_and_size();
                     // change cell pointers
                     for cell_idx in 0..contents.cell_count() {
-                        let cell_pointer_offset = cell_pointer_offset + (2 * cell_idx) - offset;
-                        let pc = contents.read_u16(cell_pointer_offset);
-                        contents.write_u16(cell_pointer_offset, pc - offset as u16);
+                        let cell_pointer_offset = cell_pointer_offset + (2 * cell_idx);
+                        let pc = contents.read_u16_no_offset(cell_pointer_offset);
+                        contents.write_u16_no_offset(cell_pointer_offset, pc as u16);
                     }
 
                     contents.offset = 0;
