@@ -1,6 +1,4 @@
-use limbo_ext::{
-    register_extension, ExtensionApi, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value,
-};
+use limbo_ext::{register_extension, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value};
 
 register_extension! {
     vtabs: { GenerateSeriesVTab }
@@ -21,26 +19,27 @@ struct GenerateSeriesVTab;
 
 impl VTabModule for GenerateSeriesVTab {
     type VCursor = GenerateSeriesCursor;
+    type Error = ResultCode;
+
     const NAME: &'static str = "generate_series";
 
-    fn connect(api: &ExtensionApi) -> ResultCode {
+    fn init_sql() -> &'static str {
         // Create table schema
-        let sql = "CREATE TABLE generate_series(
+        "CREATE TABLE generate_series(
             value INTEGER,
             start INTEGER HIDDEN,
             stop INTEGER HIDDEN,
             step INTEGER HIDDEN
-        )";
-        api.declare_virtual_table(Self::NAME, sql)
+        )"
     }
 
-    fn open() -> Self::VCursor {
-        GenerateSeriesCursor {
+    fn open() -> Result<Self::VCursor, Self::Error> {
+        Ok(GenerateSeriesCursor {
             start: 0,
             stop: 0,
             step: 0,
             current: 0,
-        }
+        })
     }
 
     fn filter(cursor: &mut Self::VCursor, arg_count: i32, args: &[Value]) -> ResultCode {
@@ -78,7 +77,7 @@ impl VTabModule for GenerateSeriesVTab {
         ResultCode::OK
     }
 
-    fn column(cursor: &Self::VCursor, idx: u32) -> Value {
+    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
         cursor.column(idx)
     }
 
@@ -163,14 +162,14 @@ impl VTabCursor for GenerateSeriesCursor {
         false
     }
 
-    fn column(&self, idx: u32) -> Value {
-        match idx {
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        Ok(match idx {
             0 => Value::from_integer(self.current),
             1 => Value::from_integer(self.start),
             2 => Value::from_integer(self.stop),
             3 => Value::from_integer(self.step),
             _ => Value::null(),
-        }
+        })
     }
 
     fn rowid(&self) -> i64 {
@@ -227,7 +226,7 @@ mod tests {
     }
     // Helper function to collect all values from a cursor, returns Result with error code
     fn collect_series(series: Series) -> Result<Vec<i64>, ResultCode> {
-        let mut cursor = GenerateSeriesVTab::open();
+        let mut cursor = GenerateSeriesVTab::open()?;
 
         // Create args array for filter
         let args = vec![
@@ -245,7 +244,7 @@ mod tests {
 
         let mut values = Vec::new();
         loop {
-            values.push(cursor.column(0).to_integer().unwrap());
+            values.push(cursor.column(0)?.to_integer().unwrap());
             if values.len() > 1000 {
                 panic!(
                     "Generated more than 1000 values, expected this many: {:?}",
@@ -544,7 +543,7 @@ mod tests {
         let stop = series.stop;
         let step = series.step;
 
-        let mut cursor = GenerateSeriesVTab::open();
+        let mut cursor = GenerateSeriesVTab::open().unwrap();
 
         let args = vec![
             Value::from_integer(start),
