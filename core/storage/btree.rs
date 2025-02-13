@@ -864,10 +864,8 @@ impl BTreeCursor {
                 let write_info = self.state.mut_write_info().unwrap();
                 write_info.state = WriteState::BalanceNonRoot;
                 self.stack.pop();
-                dbg!(self.stack.current_cell_index());
                 // We always advance page on traversal so we need to point to correct page again
                 self.stack.retreat();
-                dbg!(self.stack.current_cell_index());
                 self.balance_non_root()
             }
             WriteState::BalanceNonRoot | WriteState::BalanceNonRootWaitLoadPages => {
@@ -953,33 +951,10 @@ impl BTreeCursor {
                 write_info.sibling_count.replace(sibling_pointer + 1);
                 write_info.first_divider_cell.replace(first_cell_divider);
 
-                dbg!(page_to_balance_idx);
-                for p in 0..parent_contents.cell_count() {
-                    let cell = parent_contents
-                        .cell_get(
-                            p,
-                            self.pager.clone(),
-                            payload_overflow_threshold_max(
-                                parent_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            payload_overflow_threshold_min(
-                                parent_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            self.usable_space(),
-                        )
-                        .unwrap();
-                    dbg!(cell);
-                }
                 let last_sibling_is_right_pointer = sibling_pointer + first_cell_divider
                     - parent_contents.overflow_cells.len()
                     == parent_contents.cell_count();
                 // Get the right page pointer that we will need to update later
-                dbg!(last_sibling_is_right_pointer);
-                dbg!(sibling_pointer, first_cell_divider);
-                dbg!(parent_contents.rightmost_pointer());
-                dbg!(number_of_cells_in_parent, page_to_balance_idx);
                 let right_pointer = if last_sibling_is_right_pointer {
                     parent_contents.rightmost_pointer_raw().unwrap()
                 } else {
@@ -1005,7 +980,6 @@ impl BTreeCursor {
                 write_info.rightmost_pointer.replace(Some(right_pointer));
                 let mut current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
-                    dbg!(pgno);
                     let page = self.pager.read_page(pgno as usize)?;
                     write_info.pages_to_balance.borrow_mut().push(page);
                     assert_eq!(
@@ -1227,23 +1201,15 @@ impl BTreeCursor {
                     k += 1;
                 }
 
-                for n in cell_array.number_of_cells_per_page.iter().enumerate() {
-                    println!("init count page={}, n={}", n.0, n.1);
-                }
                 // Try to pack as many cells to the left
                 let mut sibling_count_new = sibling_count;
                 let mut i = 0;
                 while i < sibling_count_new {
-                    for n in cell_array.number_of_cells_per_page.iter().enumerate() {
-                        println!("start count i={} page={}, n={}", i, n.0, n.1);
-                    }
                     // First try to move cells to the right if they do not fit
                     while new_page_sizes[i] > usable_space as u16 {
-                        println!("moving right {}", i);
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
                             sibling_count_new += 1;
-                            println!("adding new page");
                             new_page_sizes.push(0);
                             cell_array
                                 .number_of_cells_per_page
@@ -1303,16 +1269,12 @@ impl BTreeCursor {
                     let we_still_need_another_page =
                         cell_array.number_of_cells_per_page[i] >= cell_array.cells.len() as u16;
                     if we_still_need_another_page {
-                        dbg!("we need");
                         sibling_count_new = i + 1;
                     }
                     i += 1;
                     if i >= sibling_count_new {
                         break;
                     }
-                }
-                for n in cell_array.number_of_cells_per_page.iter().enumerate() {
-                    println!("start count page={}, n={}", n.0, n.1);
                 }
 
                 // Comment borrowed from SQLite src/btree.c
@@ -1332,7 +1294,6 @@ impl BTreeCursor {
                     // if leaf_data means we don't have divider, so the one we move from left is
                     // the same we add to right (we don't add divider to right).
                     let mut cell_right = cell_left + 1 - leaf_data as u16;
-                    log::trace!("start cell_left={}", cell_left);
                     loop {
                         let cell_left_size = cell_array.cell_size(cell_left as usize);
                         let cell_right_size = cell_array.cell_size(cell_right as usize);
@@ -1355,13 +1316,9 @@ impl BTreeCursor {
                         cell_left -= 1;
                         cell_right -= 1;
                     }
-                    log::trace!("end cell_left={}", cell_left);
 
                     new_page_sizes[i] = size_right_page;
                     new_page_sizes[i - 1] = size_left_page;
-                    for n in cell_array.number_of_cells_per_page.iter().enumerate() {
-                        println!("new count page={}, n={}", n.0, n.1);
-                    }
                     assert!(
                         cell_array.number_of_cells_per_page[i - 1]
                             > if i > 1 {
@@ -1370,9 +1327,6 @@ impl BTreeCursor {
                                 0
                             }
                     );
-                }
-                for n in cell_array.number_of_cells_per_page.iter().enumerate() {
-                    println!("end count page={}, n={}", n.0, n.1);
                 }
 
                 // Allocate pages or set dirty if not needed
@@ -1397,7 +1351,6 @@ impl BTreeCursor {
                         page.get().id = new_id;
                         self.pager.put_loaded_page(new_id, page.clone());
                     }
-                    dbg!(page.get().id);
                 }
 
                 // Write right pointer in parent page to point to new rightmost page
@@ -1405,9 +1358,7 @@ impl BTreeCursor {
                 let rightmost_pointer = write_info.rightmost_pointer.borrow_mut().unwrap();
                 let rightmost_pointer =
                     unsafe { std::slice::from_raw_parts_mut(rightmost_pointer, 4) };
-                dbg!(&rightmost_pointer);
                 rightmost_pointer[0..4].copy_from_slice(&right_page_id.to_be_bytes());
-                dbg!(&rightmost_pointer);
 
                 // Ensure right-child pointer of the right-most new sibling pge points to the page
                 // that was originally on that place.
@@ -1448,26 +1399,7 @@ impl BTreeCursor {
                         // Leaf index
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
-                    dbg!(&new_divider_cell);
                     // FIXME: defragment shouldn't be needed
-                    println!("cells before fragment");
-                    for cell_idx in 0..parent_contents.cell_count() {
-                        let cell = parent_contents.cell_get(
-                            cell_idx,
-                            self.pager.clone(),
-                            payload_overflow_threshold_max(
-                                parent_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            payload_overflow_threshold_min(
-                                parent_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            self.usable_space(),
-                        )?;
-                        dbg!(cell);
-                    }
-                    println!("cells end");
                     insert_into_cell(
                         parent_contents,
                         &new_divider_cell,
@@ -1475,24 +1407,6 @@ impl BTreeCursor {
                         self.usable_space() as u16,
                     );
                 }
-                println!("cells");
-                for cell_idx in 0..parent_contents.cell_count() {
-                    let cell = parent_contents.cell_get(
-                        cell_idx,
-                        self.pager.clone(),
-                        payload_overflow_threshold_max(
-                            parent_contents.page_type(),
-                            self.usable_space() as u16,
-                        ),
-                        payload_overflow_threshold_min(
-                            parent_contents.page_type(),
-                            self.usable_space() as u16,
-                        ),
-                        self.usable_space(),
-                    )?;
-                    dbg!(cell);
-                }
-                println!("cells end");
                 // TODO: update pages
                 let mut done = vec![false; sibling_count_new];
                 for i in (1 as i64 - sibling_count_new as i64)..sibling_count_new as i64 {
@@ -1780,7 +1694,6 @@ impl BTreeCursor {
     }
 
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
-        println!("rowid: {:?}", self.rowid.borrow());
         Ok(CursorResult::Ok(()))
     }
 
@@ -1964,7 +1877,6 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> u
     while pc <= maxpc {
         let next = u16::from_be_bytes(buf[pc..pc + 2].try_into().unwrap());
         let size = u16::from_be_bytes(buf[pc + 2..pc + 4].try_into().unwrap());
-        dbg!(next, size);
         if amount <= size as usize {
             if amount == size as usize {
                 // delete whole thing
@@ -2072,13 +1984,6 @@ pub fn edit_page(
         let overflow_cell = &page.overflow_cells[i];
         // cell index in context of new list of cells that should be in the page
         let cell_idx = start_old_cells + overflow_cell.index - start_new_cells;
-        dbg!(
-            cell_idx,
-            start_old_cells,
-            start_new_cells,
-            overflow_cell.index,
-            number_new_cells
-        );
         if cell_idx >= 0 && cell_idx < number_new_cells {
             count_cells += 1;
             page_insert_array(
@@ -2091,7 +1996,6 @@ pub fn edit_page(
             );
         }
     }
-    dbg!(number_new_cells, count_cells);
     // TODO: append cells to end
     page_insert_array(
         page,
@@ -2144,7 +2048,6 @@ pub fn page_insert_array(
     mut start_insert: usize,
     usable_space: u16,
 ) {
-    dbg!(count);
     // TODO: implement faster algorithm, this is doing extra work that's not needed.
     // See pageInsertArray to understand faster way.
     for i in first..first + count {
@@ -2173,12 +2076,10 @@ fn free_cell_range(page: &mut PageContent, mut offset: u16, len: u16, usable_spa
 
         let mut pc = first_block;
 
-        dbg!(pc, pointer_to_pc, offset);
         while pc <= maxpc && pc < offset && pc != 0 {
             let next = page.read_u16_no_offset(pc as usize);
             pointer_to_pc = pc;
             pc = next;
-            dbg!(pc, pointer_to_pc);
         }
         let mut removed_fragmentation = 0;
         if pc > 0 && offset + len + 3 >= pc {
@@ -2332,7 +2233,6 @@ fn insert_into_cell(page: &mut PageContent, payload: &[u8], cell_idx: usize, usa
     let cell_pointer_cur_idx = cell_pointer_array_start + (CELL_POINTER_SIZE_BYTES * cell_idx);
 
     // move existing pointers forward by CELL_POINTER_SIZE_BYTES...
-    dbg!(page.cell_count(), cell_idx);
     let n_cells_forward = page.cell_count() - cell_idx;
     let n_bytes_forward = CELL_POINTER_SIZE_BYTES * n_cells_forward;
     if n_bytes_forward > 0 {
@@ -2403,7 +2303,6 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
             next = page.read_u16_no_offset(cur_freeblock_ptr) as usize; // first 2 bytes in freeblock = next freeblock pointer
             size = page.read_u16_no_offset(cur_freeblock_ptr + 2) as usize; // next 2 bytes in freeblock = size of current freeblock
             free_space_bytes += size;
-            dbg!(cur_freeblock_ptr, next, size);
             // Freeblocks are in order from left to right on the page,
             // so next pointer should > current pointer + its size, or 0 if no next block exists.
             if next <= cur_freeblock_ptr + size + 3 {
@@ -2444,7 +2343,6 @@ fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -
     let gap = cell_offset + 2 * page_ref.cell_count();
     let mut top = page_ref.cell_content_area() as usize;
 
-    dbg!("allocate_cell_space");
     // there are free blocks and enough space
     if page_ref.first_freeblock() != 0 && gap + 2 <= top {
         // find slot
@@ -2935,7 +2833,6 @@ mod tests {
                 0 => {
                     // allow appends with extra place to insert
                     let cell_idx = rng.gen_range(0..=page.cell_count());
-                    println!("insert {}", cell_idx);
                     let record = OwnedRecord::new([OwnedValue::Integer(i as i64)].to_vec());
                     let payload = add_record(i, cell_idx, page, record, &db);
                     let free = compute_free_space(page, usable_space);
@@ -2948,12 +2845,10 @@ mod tests {
                     cells.push(Cell { pos: i, payload });
                 }
                 1 => {
-                    dbg!("drop");
                     if page.cell_count() == 0 {
                         continue;
                     }
                     let cell_idx = rng.gen_range(0..page.cell_count());
-                    println!("drop {}", cell_idx);
                     let (_, len) = page.cell_get_raw_region(
                         cell_idx,
                         payload_overflow_threshold_max(page.page_type(), 4096),
@@ -2965,12 +2860,10 @@ mod tests {
                     cells.remove(cell_idx);
                 }
                 2 => {
-                    println!("defragment_page");
                     defragment_page(page, usable_space);
                 }
                 _ => unreachable!(),
             }
-            dbg!("compute free");
             let free = compute_free_space(page, usable_space);
             assert_eq!(free, 4096 - total_size - header_size);
         }
