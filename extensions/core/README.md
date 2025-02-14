@@ -95,6 +95,9 @@ impl AggFunc for Percentile {
     /// The state to track during the steps
     type State = (Vec<f64>, Option<f64>, Option<String>); // Tracks the values, Percentile, and errors
 
+    /// Define your error type, must impl Display
+    type Error = String;
+
     /// Define the name you wish to call your function by. 
     /// e.g. SELECT percentile(value, 40);
      const NAME: &str = "percentile";
@@ -129,15 +132,15 @@ impl AggFunc for Percentile {
     }
     /// A function to finalize the state into a value to be returned as a result
     /// or an error (if you chose to track an error state as well)
-    fn finalize(state: Self::State) -> Value {
+    fn finalize(state: Self::State) -> Result<Value, Self::Error> {
         let (mut values, p_value, error) = state;
 
         if let Some(error) = error {
-            return Value::custom_error(error);
+            return Err(error);
         }
 
         if values.is_empty() {
-            return Value::null();
+            return Ok(Value::null());
         }
 
         values.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -145,7 +148,7 @@ impl AggFunc for Percentile {
         let p = p_value.unwrap();
         let index = (p * (n - 1.0) / 100.0).floor() as usize;
 
-        Value::from_float(values[index])
+        Ok(Value::from_float(values[index]))
     }
 }
 ```
@@ -161,21 +164,21 @@ struct CsvVTable;
 
 impl VTabModule for CsvVTable {
     type VCursor = CsvCursor;
+    /// Define your error type. Must impl Display and match VCursor::Error
+    type Error = &'static str;
     /// Declare the name for your virtual table
     const NAME: &'static str = "csv_data";
 
-    /// Declare the table schema and call `api.declare_virtual_table` with the schema sql.
-    fn connect(api: &ExtensionApi) -> ResultCode {
-        let sql = "CREATE TABLE csv_data(
+    fn init_sql() -> &'static str {
+        "CREATE TABLE csv_data(
             name TEXT,
             age TEXT,
             city TEXT
-        )";
-        api.declare_virtual_table(Self::NAME, sql)
+        )"
     }
 
     /// Open to return a new cursor: In this simple example, the CSV file is read completely into memory on connect.
-    fn open() -> Self::VCursor {
+    fn open() -> Result<Self::VCursor, Self::Error> {
         // Read CSV file contents from "data.csv"
         let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
         // For simplicity, we'll ignore the header row.
@@ -188,7 +191,7 @@ impl VTabModule for CsvVTable {
                     .collect()
             })
             .collect();
-        CsvCursor { rows, index: 0 }
+        Ok(CsvCursor { rows, index: 0 })
     }
 
     /// Filter through result columns. (not used in this simple example)
@@ -197,7 +200,7 @@ impl VTabModule for CsvVTable {
     }
 
     /// Return the value for the column at the given index in the current row.
-    fn column(cursor: &Self::VCursor, idx: u32) -> Value {
+    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
         cursor.column(idx)
     }
 
@@ -226,6 +229,8 @@ struct CsvCursor {
 
 /// Implement the VTabCursor trait for your cursor type
 impl VTabCursor for CsvCursor {
+    type Error = &'static str;
+
     fn next(&mut self) -> ResultCode {
         CsvCursor::next(self)
     }
@@ -234,12 +239,12 @@ impl VTabCursor for CsvCursor {
         self.index >= self.rows.len()
     }
 
-    fn column(&self, idx: u32) -> Value {
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
         let row = &self.rows[self.index];
         if (idx as usize) < row.len() {
-            Value::from_text(&row[idx as usize])
+            Ok(Value::from_text(&row[idx as usize]))
         } else {
-            Value::null()
+            Ok(Value::null())
         }
     }
 
