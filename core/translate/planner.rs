@@ -135,7 +135,7 @@ pub fn bind_column_references(
                 for result_column in result_columns.iter() {
                     if result_column
                         .name(referenced_tables)
-                        .map_or(false, |name| name == &normalized_id)
+                        .map_or(false, |name| name.eq_ignore_ascii_case(&normalized_id))
                     {
                         *expr = result_column.expr.clone();
                         return Ok(());
