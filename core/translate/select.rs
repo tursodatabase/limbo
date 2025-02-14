@@ -300,6 +300,7 @@ pub fn prepare_select_plan<'a>(
 
             if let Some(mut group_by) = group_by {
                 for expr in group_by.exprs.iter_mut() {
+                    replace_column_number_with_copy_of_column_expr(expr, &plan.result_columns)?;
                     bind_column_references(
                         expr,
                         &plan.table_references,
@@ -343,35 +344,21 @@ pub fn prepare_select_plan<'a>(
             if let Some(order_by) = select.order_by {
                 let mut key = Vec::new();
 
-                for o in order_by {
-                    // if the ORDER BY expression is a number, interpret it as an 1-indexed column number
-                    // otherwise, interpret it normally as an expression
-                    let mut expr = if let ast::Expr::Literal(ast::Literal::Numeric(num)) = &o.expr {
-                        let column_number = num.parse::<usize>()?;
-                        if column_number == 0 {
-                            crate::bail_parse_error!("invalid column index: {}", column_number);
-                        }
-                        let maybe_result_column = columns.get(column_number - 1);
-                        match maybe_result_column {
-                            Some(ResultColumn::Expr(e, _)) => e.clone(),
-                            None => {
-                                crate::bail_parse_error!("invalid column index: {}", column_number)
-                            }
-                            _ => todo!(),
-                        }
-                    } else {
-                        o.expr
-                    };
+                for mut o in order_by {
+                    replace_column_number_with_copy_of_column_expr(
+                        &mut o.expr,
+                        &plan.result_columns,
+                    )?;
 
                     bind_column_references(
-                        &mut expr,
+                        &mut o.expr,
                         &plan.table_references,
                         Some(&plan.result_columns),
                     )?;
-                    resolve_aggregates(&expr, &mut plan.aggregates);
+                    resolve_aggregates(&o.expr, &mut plan.aggregates);
 
                     key.push((
-                        expr,
+                        o.expr,
                         o.order.map_or(Direction::Ascending, |o| match o {
                             ast::SortOrder::Asc => Direction::Ascending,
                             ast::SortOrder::Desc => Direction::Descending,
@@ -390,6 +377,31 @@ pub fn prepare_select_plan<'a>(
         }
         _ => todo!(),
     }
+}
+
+/// Replaces a column number in an ORDER BY or GROUP BY expression with a copy of the column expression.
+/// For example, in SELECT u.first_name, count(1) FROM users u GROUP BY 1 ORDER BY 2,
+/// the column number 1 is replaced with u.first_name and the column number 2 is replaced with count(1).
+fn replace_column_number_with_copy_of_column_expr(
+    order_by_or_group_by_expr: &mut ast::Expr,
+    columns: &[ResultSetColumn],
+) -> Result<()> {
+    if let ast::Expr::Literal(ast::Literal::Numeric(num)) = order_by_or_group_by_expr {
+        let column_number = num.parse::<usize>()?;
+        if column_number == 0 {
+            crate::bail_parse_error!("invalid column index: {}", column_number);
+        }
+        let maybe_result_column = columns.get(column_number - 1);
+        match maybe_result_column {
+            Some(ResultSetColumn { expr, .. }) => {
+                *order_by_or_group_by_expr = expr.clone();
+            }
+            None => {
+                crate::bail_parse_error!("invalid column index: {}", column_number)
+            }
+        };
+    }
+    Ok(())
 }
 
 fn count_plan_required_cursors(plan: &SelectPlan) -> usize {
