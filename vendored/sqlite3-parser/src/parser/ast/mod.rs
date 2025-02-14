@@ -1618,6 +1618,8 @@ pub enum PragmaName {
     CacheSize,
     /// `journal_mode` pragma
     JournalMode,
+    /// Noop as per SQLite docs
+    LegacyFileFormat,
     /// Return the total number of pages in the database file.
     PageCount,
     /// returns information about the columns of a table

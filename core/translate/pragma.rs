@@ -140,6 +140,7 @@ fn update_pragma(
             query_pragma(PragmaName::JournalMode, schema, None, header, program)?;
             Ok(())
         }
+        PragmaName::LegacyFileFormat => Ok(()),
         PragmaName::WalCheckpoint => {
             query_pragma(PragmaName::WalCheckpoint, schema, None, header, program)?;
             Ok(())
@@ -181,6 +182,7 @@ fn query_pragma(
             program.emit_string8("wal".into(), register);
             program.emit_result_row(register, 1);
         }
+        PragmaName::LegacyFileFormat => {}
         PragmaName::WalCheckpoint => {
             // Checkpoint uses 3 registers: P1, P2, P3. Ref Insn::Checkpoint for more info.
             // Allocate two more here as one was allocated at the top.

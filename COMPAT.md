@@ -139,7 +139,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA journal_mode              | Yes        |                                              |
 | PRAGMA journal_size_limit        | No         |                                              |
 | PRAGMA legacy_alter_table        | No         |                                              |
-| PRAGMA legacy_file_format        | No         |                                              |
+| PRAGMA legacy_file_format        | Yes        |                                              |
 | PRAGMA locking_mode              | No         |                                              |
 | PRAGMA max_page_count            | No         |                                              |
 | PRAGMA mmap_size                 | No         |                                              |
