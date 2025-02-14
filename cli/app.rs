@@ -1,11 +1,13 @@
 use crate::{
     import::{ImportFile, IMPORT_HELP},
+    input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings, HELP_MSG},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use limbo_core::{Database, LimboError, Statement, StepResult, Value};
 
 use clap::{Parser, ValueEnum};
+use rustyline::DefaultEditor;
 use std::{
     io::{self, Write},
     path::PathBuf,
@@ -47,58 +49,6 @@ pub struct Opts {
         \t'io-uring' when built for Linux with feature 'io_uring'\n"
     )]
     pub io: Io,
-}
-
-#[derive(Copy, Clone)]
-pub enum DbLocation {
-    Memory,
-    Path,
-}
-
-#[derive(Copy, Clone, ValueEnum)]
-pub enum Io {
-    Syscall,
-    #[cfg(all(target_os = "linux", feature = "io_uring"))]
-    IoUring,
-}
-
-impl Default for Io {
-    /// Custom Default impl with cfg! macro, to provide compile-time default to Clap based on platform
-    /// The cfg! could be elided, but Clippy complains
-    /// The default value can still be overridden with the Clap argument
-    fn default() -> Self {
-        match cfg!(all(target_os = "linux", feature = "io_uring")) {
-            true => {
-                #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                {
-                    Io::IoUring
-                }
-                #[cfg(any(
-                    not(target_os = "linux"),
-                    all(target_os = "linux", not(feature = "io_uring"))
-                ))]
-                {
-                    Io::Syscall
-                }
-            }
-            false => Io::Syscall,
-        }
-    }
-}
-
-#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
-pub enum OutputMode {
-    Raw,
-    Pretty,
-}
-
-impl std::fmt::Display for OutputMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.to_possible_value()
-            .expect("no values are skipped")
-            .get_name()
-            .fmt(f)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +103,7 @@ impl Command {
             | Self::NullValue
             | Self::LoadExtension => 1,
             Self::Import => 2,
-        } // argv0
+        }
     }
 
     fn usage(&self) -> &str {
@@ -203,7 +153,7 @@ impl FromStr for Command {
 
 const PROMPT: &str = "limbo> ";
 
-pub struct Limbo {
+pub struct Limbo<'a> {
     pub prompt: String,
     io: Arc<dyn limbo_core::IO>,
     writer: Box<dyn Write>,
@@ -211,58 +161,11 @@ pub struct Limbo {
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
     opts: Settings,
+    pub rl: &'a mut DefaultEditor,
 }
 
-pub struct Settings {
-    output_filename: String,
-    db_file: String,
-    null_value: String,
-    output_mode: OutputMode,
-    echo: bool,
-    is_stdout: bool,
-    io: Io,
-}
-
-impl From<&Opts> for Settings {
-    fn from(opts: &Opts) -> Self {
-        Self {
-            null_value: String::new(),
-            output_mode: opts.output_mode,
-            echo: false,
-            is_stdout: opts.output.is_empty(),
-            output_filename: opts.output.clone(),
-            db_file: opts
-                .database
-                .as_ref()
-                .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
-            io: opts.io,
-        }
-    }
-}
-
-impl std::fmt::Display for Settings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Settings:\nOutput mode: {}\nDB: {}\nOutput: {}\nNull value: {}\nCWD: {}\nEcho: {}",
-            self.output_mode,
-            self.db_file,
-            match self.is_stdout {
-                true => "STDOUT",
-                false => &self.output_filename,
-            },
-            self.null_value,
-            std::env::current_dir().unwrap().display(),
-            match self.echo {
-                true => "on",
-                false => "off",
-            }
-        )
-    }
-}
-
-impl Limbo {
-    pub fn new() -> anyhow::Result<Self> {
+impl<'a> Limbo<'a> {
+    pub fn new(rl: &'a mut rustyline::DefaultEditor) -> anyhow::Result<Self> {
         let opts = Opts::parse();
         let db_file = opts
             .database
@@ -294,6 +197,7 @@ impl Limbo {
             interrupt_count,
             input_buff: String::new(),
             opts: Settings::from(&opts),
+            rl,
         };
         if opts.sql.is_some() {
             app.handle_first_input(opts.sql.as_ref().unwrap());
@@ -443,19 +347,20 @@ impl Limbo {
         self.reset_input();
     }
 
-    pub fn handle_input_line(
-        &mut self,
-        line: &str,
-        rl: &mut rustyline::DefaultEditor,
-    ) -> anyhow::Result<()> {
+    fn reset_line(&mut self, line: &str) -> rustyline::Result<()> {
+        self.rl.add_history_entry(line.to_owned())?;
+        self.interrupt_count.store(0, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub fn handle_input_line(&mut self, line: &str) -> anyhow::Result<()> {
         if self.input_buff.is_empty() {
             if line.is_empty() {
                 return Ok(());
             }
             if line.starts_with('.') {
                 self.handle_dot_command(line);
-                rl.add_history_entry(line.to_owned())?;
-                self.interrupt_count.store(0, Ordering::SeqCst);
+                let _ = self.reset_line(line);
                 return Ok(());
             }
         }
@@ -463,16 +368,25 @@ impl Limbo {
             if let Some(remaining) = line.split_once('\n') {
                 let after_comment = remaining.1.trim();
                 if !after_comment.is_empty() {
-                    rl.add_history_entry(after_comment.to_owned())?;
-                    self.buffer_input(after_comment);
-
                     if after_comment.ends_with(';') {
                         self.run_query(after_comment);
+                        if self.opts.echo {
+                            let _ = self.writeln(after_comment);
+                        }
+                        let conn = self.conn.clone();
+                        let runner = conn.query_runner(after_comment.as_bytes());
+                        for output in runner {
+                            if let Err(e) = self.print_query_result(after_comment, output) {
+                                let _ = self.writeln(e.to_string());
+                            }
+                        }
+                        self.reset_input();
+                        return self.handle_input_line(after_comment);
                     } else {
                         self.set_multiline_prompt();
+                        let _ = self.reset_line(line);
+                        return Ok(());
                     }
-                    self.interrupt_count.store(0, Ordering::SeqCst);
-                    return Ok(());
                 }
             }
             return Ok(());
@@ -481,10 +395,9 @@ impl Limbo {
         if let Some(comment_pos) = line.find("--") {
             let before_comment = line[..comment_pos].trim();
             if !before_comment.is_empty() {
-                return self.handle_input_line(before_comment, rl);
+                return self.handle_input_line(before_comment);
             }
         }
-
         if line.ends_with(';') {
             self.buffer_input(line);
             let buff = self.input_buff.clone();
@@ -493,8 +406,7 @@ impl Limbo {
             self.buffer_input(format!("{}\n", line).as_str());
             self.set_multiline_prompt();
         }
-        rl.add_history_entry(line.to_owned())?;
-        self.interrupt_count.store(0, Ordering::SeqCst);
+        self.reset_line(line)?;
         Ok(())
     }
 
@@ -874,99 +786,3 @@ impl Limbo {
         self.reset_input();
     }
 }
-
-fn get_writer(output: &str) -> Box<dyn Write> {
-    match output {
-        "" => Box::new(io::stdout()),
-        _ => match std::fs::File::create(output) {
-            Ok(file) => Box::new(file),
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                Box::new(io::stdout())
-            }
-        },
-    }
-}
-
-fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
-    Ok(match db_location {
-        DbLocation::Memory => Arc::new(limbo_core::MemoryIO::new()?),
-        DbLocation::Path => {
-            match io_choice {
-                Io::Syscall => {
-                    // We are building for Linux/macOS and syscall backend has been selected
-                    #[cfg(target_family = "unix")]
-                    {
-                        Arc::new(limbo_core::UnixIO::new()?)
-                    }
-                    // We are not building for Linux/macOS and syscall backend has been selected
-                    #[cfg(not(target_family = "unix"))]
-                    {
-                        Arc::new(limbo_core::PlatformIO::new()?)
-                    }
-                }
-                // We are building for Linux and io_uring backend has been selected
-                #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                Io::IoUring => Arc::new(limbo_core::UringIO::new()?),
-            }
-        }
-    })
-}
-
-const HELP_MSG: &str = r#"
-Limbo SQL Shell Help
-==============
-Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
-In addition to standard SQL commands, the following special commands are available:
-
-Special Commands:
------------------
-.exit ?<CODE>              Exit this program with return-code CODE
-.quit                      Stop interpreting input stream and exit.
-.show                      Display current settings.
-.open <database_file>      Open and connect to a database file.
-.output <mode>             Change the output mode. Available modes are 'raw' and 'pretty'.
-.schema <table_name>       Show the schema of the specified table.
-.tables <pattern>          List names of tables matching LIKE pattern TABLE
-.opcodes                   Display all the opcodes defined by the virtual machine
-.cd <directory>            Change the current working directory.
-.nullvalue <string>        Set the value to be displayed for null values.
-.echo on|off               Toggle echo mode to repeat commands before execution.
-.import --csv FILE TABLE   Import csv data from FILE into TABLE
-.help                      Display this help message.
-
-Usage Examples:
----------------
-1. To quit the Limbo SQL Shell:
-   .quit
-
-2. To open a database file at path './employees.db':
-   .open employees.db
-
-3. To view the schema of a table named 'employees':
-   .schema employees
-
-4. To list all tables:
-   .tables
-
-5. To list all available SQL opcodes:
-   .opcodes
-
-6. To change the current output mode to 'pretty':
-   .mode pretty
-
-7. Send output to STDOUT if no file is specified:
-   .output
-
-8. To change the current working directory to '/tmp':
-   .cd /tmp
-
-9. Show the current values of settings:
-   .show
-
-10. To import csv file 'sample.csv' into 'csv_table' table:
-   .import --csv sample.csv csv_table
-
-Note:
-- All SQL commands must end with a semicolon (;).
-- Special commands do not require a semicolon."#;
