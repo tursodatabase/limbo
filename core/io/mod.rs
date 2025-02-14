@@ -23,6 +23,15 @@ pub enum OpenFlags {
     Create,
 }
 
+impl OpenFlags {
+    pub fn bits(&self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Create => 1,
+        }
+    }
+}
+
 pub trait IO {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Rc<dyn File>>;
 
@@ -200,7 +209,7 @@ cfg_block! {
         pub use generic::GenericIO as PlatformIO;
     }
 }
-
 mod memory;
+mod vfs;
 pub use memory::MemoryIO;
 mod common;

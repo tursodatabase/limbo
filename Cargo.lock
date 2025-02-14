@@ -1750,6 +1750,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "limbo_testfs"
+version = "0.0.14"
+dependencies = [
+ "limbo_ext",
+ "mimalloc",
+]
+
+[[package]]
 name = "limbo_time"
 version = "0.0.14"
 dependencies = [
