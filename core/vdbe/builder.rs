@@ -138,11 +138,8 @@ impl ProgramBuilder {
         });
     }
 
-    pub fn emit_null(&mut self, dest: usize) {
-        self.emit_insn(Insn::Null {
-            dest,
-            dest_end: None,
-        });
+    pub fn emit_null(&mut self, dest: usize, dest_end: Option<usize>) {
+        self.emit_insn(Insn::Null { dest, dest_end });
     }
 
     pub fn emit_result_row(&mut self, start_reg: usize, count: usize) {
