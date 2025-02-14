@@ -11,7 +11,7 @@ use crate::{
     schema::{Schema, Table},
     util::{exprs_are_equivalent, normalize_ident},
     vdbe::BranchOffset,
-    Result, VirtualTable,
+    Result,
 };
 use limbo_sqlite3_parser::ast::{
     self, Expr, FromClause, JoinType, Limit, Materialized, UnaryOperator, With,
@@ -303,7 +303,7 @@ fn parse_from_clause_table<'a>(
                 return Ok(());
             };
             // Check if our top level schema has this table.
-            if let Some(table) = schema.get_table(&normalized_qualified_name) {
+            if let Some(table) = schema.get_btree_table(&normalized_qualified_name) {
                 let alias = maybe_alias
                     .map(|a| match a {
                         ast::As::As(id) => id,
@@ -369,9 +369,16 @@ fn parse_from_clause_table<'a>(
         }
         ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
             let normalized_name = &normalize_ident(qualified_name.name.0.as_str());
-            let Some(vtab) = syms.vtabs.get(normalized_name) else {
-                crate::bail_parse_error!("Virtual table {} not found", normalized_name);
-            };
+            let vtab = crate::VirtualTable::from_args(
+                None,
+                normalized_name,
+                &maybe_args
+                    .as_ref()
+                    .map(|a| a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                syms,
+                limbo_ext::VTabKind::TableValuedFunction,
+            )?;
             let alias = maybe_alias
                 .as_ref()
                 .map(|a| match a {
@@ -383,18 +390,10 @@ fn parse_from_clause_table<'a>(
             scope.tables.push(TableReference {
                 op: Operation::Scan { iter_dir: None },
                 join_info: None,
-                table: Table::Virtual(
-                    VirtualTable {
-                        name: normalized_name.clone(),
-                        args: maybe_args,
-                        implementation: vtab.implementation.clone(),
-                        columns: vtab.columns.clone(),
-                    }
-                    .into(),
-                )
-                .into(),
-                identifier: alias.clone(),
+                table: Table::Virtual(vtab),
+                identifier: alias,
             });
+
             Ok(())
         }
         _ => todo!(),
@@ -611,7 +610,7 @@ fn parse_join<'a>(
         constraint,
     } = join;
 
-    parse_from_clause_table(schema, table, scope, syms)?;
+    parse_from_clause_table(schema, table, scope, &syms)?;
 
     let (outer, natural) = match join_operator {
         ast::JoinOperator::TypedJoin(Some(join_type)) => {

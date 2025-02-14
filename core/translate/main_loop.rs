@@ -293,10 +293,32 @@ pub fn open_loop(
                         };
                         let start_reg = program.alloc_registers(args.len());
                         let mut cur_reg = start_reg;
-                        for arg in args {
+
+                        for arg_str in args {
                             let reg = cur_reg;
                             cur_reg += 1;
-                            translate_expr(program, Some(tables), &arg, reg, &t_ctx.resolver)?;
+
+                            if let Ok(i) = arg_str.parse::<i64>() {
+                                program.emit_insn(Insn::Integer {
+                                    value: i,
+                                    dest: reg,
+                                });
+                            } else if let Ok(f) = arg_str.parse::<f64>() {
+                                program.emit_insn(Insn::Real {
+                                    value: f,
+                                    dest: reg,
+                                });
+                            } else if arg_str.starts_with('"') && arg_str.ends_with('"') {
+                                program.emit_insn(Insn::String8 {
+                                    value: arg_str.trim_matches('"').to_string(),
+                                    dest: reg,
+                                });
+                            } else {
+                                program.emit_insn(Insn::String8 {
+                                    value: arg_str.clone(),
+                                    dest: reg,
+                                });
+                            }
                         }
                         program.emit_insn(Insn::VFilter {
                             cursor_id,

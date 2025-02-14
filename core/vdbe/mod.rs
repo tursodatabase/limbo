@@ -873,6 +873,46 @@ impl Program {
                         .insert(*cursor_id, Some(Cursor::Virtual(cursor)));
                     state.pc += 1;
                 }
+                Insn::VCreate {
+                    module_name,
+                    table_name,
+                    args_reg,
+                } => {
+                    let module_name = state.registers[*module_name].to_string();
+                    let table_name = state.registers[*table_name].to_string();
+                    let args = if let Some(args_reg) = args_reg {
+                        if let OwnedValue::Record(rec) = &state.registers[*args_reg] {
+                            rec.get_values().iter().map(|v| v.to_string()).collect()
+                        } else {
+                            return Err(LimboError::InternalError(
+                                "VCreate: args_reg is not a record".to_string(),
+                            ));
+                        }
+                    } else {
+                        vec![]
+                    };
+                    let Some(conn) = self.connection.upgrade() else {
+                        return Err(crate::LimboError::ExtensionError(
+                            "Failed to upgrade Connection".to_string(),
+                        ));
+                    };
+                    let table = crate::VirtualTable::from_args(
+                        Some(&table_name),
+                        &module_name,
+                        &args,
+                        &conn.db.syms.borrow(),
+                        limbo_ext::VTabKind::VirtualTable,
+                    )?;
+                    {
+                        conn.db
+                            .syms
+                            .as_ref()
+                            .borrow_mut()
+                            .vtabs
+                            .insert(table_name, table.clone());
+                    }
+                    state.pc += 1;
+                }
                 Insn::VOpenAwait => {
                     state.pc += 1;
                 }
@@ -912,6 +952,68 @@ impl Program {
                     let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
                     state.registers[*dest] = virtual_table.column(cursor, *column)?;
                     state.pc += 1;
+                }
+                Insn::VUpdate {
+                    cursor_id,
+                    arg_count,
+                    start_reg,
+                    conflict_action,
+                    ..
+                } => {
+                    let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                    let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                        panic!("VUpdate on non-virtual table cursor");
+                    };
+
+                    if *arg_count < 2 {
+                        return Err(LimboError::InternalError(
+                            "VUpdate: arg_count must be at least 2 (rowid and insert_rowid)"
+                                .to_string(),
+                        ));
+                    }
+
+                    let mut argv = Vec::with_capacity(*arg_count);
+                    for i in 0..*arg_count {
+                        if let Some(value) = state.registers.get(*start_reg + i) {
+                            argv.push(value.clone());
+                        } else {
+                            return Err(LimboError::InternalError(format!(
+                                "VUpdate: register out of bounds at {}",
+                                *start_reg + i
+                            )));
+                        }
+                    }
+
+                    let current_rowid = match argv.first() {
+                        Some(OwnedValue::Integer(rowid)) => Some(*rowid),
+                        _ => None,
+                    };
+                    let insert_rowid = match argv.get(1) {
+                        Some(OwnedValue::Integer(rowid)) => Some(*rowid),
+                        _ => None,
+                    };
+
+                    let result = virtual_table.update(&argv, insert_rowid);
+
+                    match result {
+                        Ok(Some(new_rowid)) => {
+                            if *conflict_action == 5 {
+                                if let Some(conn) = self.connection.upgrade() {
+                                    conn.update_last_rowid(new_rowid as u64);
+                                }
+                            }
+                            state.pc += 1;
+                        }
+                        Ok(None) => {
+                            state.pc += 1;
+                        }
+                        Err(e) => {
+                            return Err(LimboError::ExtensionError(format!(
+                                "Virtual table update failed: {}",
+                                e
+                            )));
+                        }
+                    }
                 }
                 Insn::VNext {
                     cursor_id,
@@ -2724,8 +2826,13 @@ impl Program {
                         where_clause
                     ))?;
                     let mut schema = RefCell::borrow_mut(&conn.schema);
-                    // TODO: This function below is synchronous, make it not async
-                    parse_schema_rows(Some(stmt), &mut schema, conn.pager.io.clone())?;
+                    // TODO: This function below is synchronous, make it async
+                    parse_schema_rows(
+                        Some(stmt),
+                        &mut schema,
+                        conn.pager.io.clone(),
+                        &conn.db.syms.borrow(),
+                    )?;
                     state.pc += 1;
                 }
                 Insn::ReadCookie { db, dest, cookie } => {

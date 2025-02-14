@@ -21,6 +21,8 @@ pub enum ResultCode {
     Unavailable = 13,
     CustomError = 14,
     EOF = 15,
+    ReadOnly = 16,
+    RowID = 17,
 }
 
 impl ResultCode {
@@ -52,6 +54,8 @@ impl Display for ResultCode {
             ResultCode::Unavailable => write!(f, "Unavailable"),
             ResultCode::CustomError => write!(f, "Error "),
             ResultCode::EOF => write!(f, "EOF"),
+            ResultCode::ReadOnly => write!(f, "Read Only"),
+            ResultCode::RowID => write!(f, "RowID"),
         }
     }
 }

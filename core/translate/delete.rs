@@ -42,7 +42,10 @@ pub fn prepare_delete_plan(
         Some(table) => table,
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", tbl_name),
     };
-
+    //if let Some(table) = table.virtual_table() {
+    //    // TODO: emit VUpdate
+    //}
+    let table = table.btree().unwrap();
     let table_references = vec![TableReference {
         table: Table::BTree(table.clone()),
         identifier: table.name.clone(),

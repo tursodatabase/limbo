@@ -1,4 +1,6 @@
-use limbo_ext::{register_extension, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value};
+use limbo_ext::{
+    register_extension, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
+};
 
 register_extension! {
     vtabs: { GenerateSeriesVTab }
@@ -14,16 +16,16 @@ macro_rules! try_option {
 }
 
 /// A virtual table that generates a sequence of integers
-#[derive(Debug, VTabModuleDerive)]
+#[derive(Debug, VTabModuleDerive, Default)]
 struct GenerateSeriesVTab;
 
 impl VTabModule for GenerateSeriesVTab {
     type VCursor = GenerateSeriesCursor;
     type Error = ResultCode;
-
     const NAME: &'static str = "generate_series";
+    const VTAB_KIND: VTabKind = VTabKind::TableValuedFunction;
 
-    fn init_sql() -> &'static str {
+    fn create_schema(_args: &[String]) -> String {
         // Create table schema
         "CREATE TABLE generate_series(
             value INTEGER,
@@ -31,9 +33,10 @@ impl VTabModule for GenerateSeriesVTab {
             stop INTEGER HIDDEN,
             step INTEGER HIDDEN
         )"
+        .into()
     }
 
-    fn open() -> Result<Self::VCursor, Self::Error> {
+    fn open(_args: &[String]) -> Result<Self::VCursor, Self::Error> {
         Ok(GenerateSeriesCursor {
             start: 0,
             stop: 0,
@@ -87,6 +90,10 @@ impl VTabModule for GenerateSeriesVTab {
 
     fn eof(cursor: &Self::VCursor) -> bool {
         cursor.eof()
+    }
+
+    fn update(&mut self, _args: &[Value], _rowid: Option<i64>) -> Result<Option<i64>, Self::Error> {
+        Ok(None)
     }
 }
 

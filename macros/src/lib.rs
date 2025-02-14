@@ -341,7 +341,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///    const NAME: &'static str = "csv_data";
 ///
 ///    /// Declare the schema for your virtual table
-///    fn init_sql() -> &'static str {
+///    fn create_schema(args: &[&str]) -> &'static str {
 ///        let sql = "CREATE TABLE csv_data(
 ///            name TEXT,
 ///            age TEXT,
@@ -382,6 +382,12 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///  fn eof(cursor: &Self::VCursor) -> bool {
 ///      cursor.index >= cursor.rows.len()
 ///  }
+///
+/// /// Update the row with the provided values, return the new rowid if provided
+///  fn update(&mut self, args: &[Value], rowid: Option<i64>) -> Result<Option<i64>, Self::Error> {
+///      Ok(None)// return Ok(None) for read-only
+///  }
+///
 ///  #[derive(Debug)]
 /// struct CsvCursor {
 ///   rows: Vec<Vec<String>>,
@@ -389,7 +395,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///
 /// impl CsvCursor {
 ///   /// Returns the value for a given column index.
-///   fn column(&self, idx: u32) -> Value {
+///   fn column(&self, idx: u32) -> Result<Value, Self::Error> {
 ///       let row = &self.rows[self.index];
 ///       if (idx as usize) < row.len() {
 ///           Value::from_text(&row[idx as usize])
@@ -418,31 +424,45 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let struct_name = &ast.ident;
 
     let register_fn_name = format_ident!("register_{}", struct_name);
-    let connect_fn_name = format_ident!("connect_{}", struct_name);
+    let create_schema_fn_name = format_ident!("create_schema_{}", struct_name);
     let open_fn_name = format_ident!("open_{}", struct_name);
     let filter_fn_name = format_ident!("filter_{}", struct_name);
     let column_fn_name = format_ident!("column_{}", struct_name);
     let next_fn_name = format_ident!("next_{}", struct_name);
     let eof_fn_name = format_ident!("eof_{}", struct_name);
+    let update_fn_name = format_ident!("update_{}", struct_name);
 
     let expanded = quote! {
         impl #struct_name {
             #[no_mangle]
-            unsafe extern "C" fn #connect_fn_name(
-                db: *const ::std::ffi::c_void
-            ) -> ::limbo_ext::ResultCode {
-                let api = &*(db as *const ::limbo_ext::ExtensionApi);
-                let sql = <#struct_name as ::limbo_ext::VTabModule>::init_sql();
-                api.declare_virtual_table(<#struct_name as ::limbo_ext::VTabModule>::NAME, sql)
+            unsafe extern "C" fn #create_schema_fn_name(
+                argv: *const *mut ::std::ffi::c_char, argc: i32
+            ) -> *mut ::std::ffi::c_char {
+                let args = if argv.is_null() {
+                    Vec::new()
+                } else {
+                    ::std::slice::from_raw_parts(argv, argc as usize).iter().map(|s| {
+                        ::std::ffi::CStr::from_ptr(*s).to_string_lossy().to_string()
+                    }).collect::<Vec<String>>()
+                };
+                let sql = <#struct_name as ::limbo_ext::VTabModule>::create_schema(&args);
+                ::std::ffi::CString::new(sql).unwrap().into_raw()
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(
-            ) -> *mut ::std::ffi::c_void {
-                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open() {
-                ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *mut ::std::ffi::c_void
+            unsafe extern "C" fn #open_fn_name(argv: *const *mut ::std::ffi::c_char, argc: i32) -> *mut ::std::ffi::c_void {
+                let args = if argv.is_null() {
+                    Vec::new()
                 } else {
-                    ::std::ptr::null_mut()
+                    ::std::slice::from_raw_parts(argv, argc as usize).iter().map(|s| {
+                        ::std::ffi::CStr::from_ptr(*s).to_string_lossy().to_string()
+                    }).collect::<Vec<String>>()
+                };
+                let schema = <#struct_name as ::limbo_ext::VTabModule>::create_schema(&args);
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(&args) {
+                return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *mut ::std::ffi::c_void;
+                } else {
+                    return ::std::ptr::null_mut();
                 }
             }
 
@@ -498,6 +518,37 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
+            unsafe extern "C" fn #update_fn_name(
+                vtab: *mut ::std::ffi::c_void,
+                argc: i32,
+                argv: *const ::limbo_ext::Value,
+                rowid: i64,
+                p_out_rowid: *mut i64,
+                ) -> ::limbo_ext::ResultCode {
+                if vtab.is_null() {
+                    return ::limbo_ext::ResultCode::Error;
+                }
+                let vtab = &mut *(vtab as *mut #struct_name);
+                let args = ::std::slice::from_raw_parts(argv, argc as usize);
+                let rowid = if rowid == -1 {
+                    None
+                } else {
+                    Some(rowid as i64)
+                };
+                let result = <#struct_name as ::limbo_ext::VTabModule>::update(vtab, args, rowid);
+                match result {
+                    Ok(Some(rowid)) => {
+                        // set the output rowid if it was provided
+                        *p_out_rowid = rowid;
+                        ::limbo_ext::ResultCode::RowID
+                    }
+                    Ok(None) => ::limbo_ext::ResultCode::OK,
+                    Err(_) => ::limbo_ext::ResultCode::Error,
+                }
+            }
+
+
+            #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
                 api: *const ::limbo_ext::ExtensionApi
             ) -> ::limbo_ext::ResultCode {
@@ -506,20 +557,20 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 }
                 let api = &*api;
                 let name = <#struct_name as ::limbo_ext::VTabModule>::NAME;
-                // name needs to be a c str FFI compatible, NOT CString
                 let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
-
+                let table_instance = ::std::boxed::Box::into_raw(::std::boxed::Box::new(#struct_name::default()));
                 let module = ::limbo_ext::VTabModuleImpl {
+                    ctx: table_instance as *mut ::std::ffi::c_void,
                     name: name_c,
-                    connect: Self::#connect_fn_name,
+                    create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
                     filter: Self::#filter_fn_name,
                     column: Self::#column_fn_name,
                     next: Self::#next_fn_name,
                     eof: Self::#eof_fn_name,
+                    update: Self::#update_fn_name,
                 };
-
-                (api.register_module)(api.ctx, name_c, module)
+                (api.register_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }
         }
     };
@@ -594,16 +645,11 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
     });
     let vtab_calls = vtabs.iter().map(|vtab_ident| {
         let register_fn = syn::Ident::new(&format!("register_{}", vtab_ident), vtab_ident.span());
-        let connect_fn = syn::Ident::new(&format!("connect_{}", vtab_ident), vtab_ident.span());
         quote! {
             {
                 let result = unsafe{ #vtab_ident::#register_fn(api)};
-                if result == ::limbo_ext::ResultCode::OK {
-                    let api = api as *const _ as *const ::std::ffi::c_void;
-                    let result = #vtab_ident::#connect_fn(api);
-                    if !result.is_ok() {
-                        return result;
-                     }
+                if !result.is_ok() {
+                    return result;
                 }
             }
         }
