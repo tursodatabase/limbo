@@ -62,7 +62,7 @@ limbo-wasm:
 	cargo build --package limbo-wasm --target wasm32-wasi
 .PHONY: limbo-wasm
 
-test: limbo test-extensions test-memory test-compat test-vector test-sqlite3  test-shell
+test: limbo test-compat test-vector test-sqlite3 test-shell test-extensions test-memory
 .PHONY: test
 
 test-extensions: limbo
