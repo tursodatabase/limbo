@@ -16,8 +16,7 @@ use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
-    payload_overflows, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
-    DATABASE_HEADER_SIZE,
+    write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
 };
 
 /*
@@ -82,11 +81,7 @@ enum DestroyState {
     Start,
     LoadPage,
     ProcessPage,
-    ClearOverflowPages {
-        cell_idx: i32,
-        overflow_chain: Vec<u32>,
-        next_to_free: usize,
-    },
+    ClearOverflowPages { cell_idx: i32 },
     FreePage,
 }
 
@@ -170,6 +165,12 @@ impl CursorState {
     }
 }
 
+enum OverflowState {
+    Start,
+    ProcessPage { next_page: u32 },
+    Done,
+}
+
 pub struct BTreeCursor {
     pager: Rc<Pager>,
     /// Page id of the root page used to go back up fast.
@@ -184,6 +185,9 @@ pub struct BTreeCursor {
     going_upwards: bool,
     /// Information maintained across execution attempts when an operation yields due to I/O.
     state: CursorState,
+    /// Information maintained while freeing overflow pages. Maintained separately from cursor state since
+    /// any method could require freeing overflow pages
+    overflow_state: Option<OverflowState>,
     /// Page stack used to traverse the btree.
     /// Each cursor has a stack because each cursor traverses the btree independently.
     stack: PageStack,
@@ -217,6 +221,7 @@ impl BTreeCursor {
             null_flag: false,
             going_upwards: false,
             state: CursorState::None,
+            overflow_state: None,
             stack: PageStack {
                 current_page: RefCell::new(-1),
                 cell_indices: RefCell::new([0; BTCURSOR_MAX_DEPTH + 1]),
@@ -2183,106 +2188,71 @@ impl BTreeCursor {
         id as u32
     }
 
-    fn clear_overflow_pages(&self, cell: &BTreeCell) -> Result<CursorResult<()>> {
-        // Get overflow info based on cell type
-        let (first_overflow_page, n_overflow) = match cell {
-            BTreeCell::TableLeafCell(leaf_cell) => {
-                match self.calculate_overflow_info(leaf_cell._payload.len(), PageType::TableLeaf)? {
-                    Some(n_overflow) => (leaf_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+    fn clear_overflow_pages(&mut self, cell: &BTreeCell) -> Result<CursorResult<()>> {
+        loop {
+            let state = self.overflow_state.take().unwrap_or(OverflowState::Start);
+
+            match state {
+                OverflowState::Start => {
+                    let first_overflow_page = match cell {
+                        BTreeCell::TableLeafCell(leaf_cell) => leaf_cell.first_overflow_page,
+                        BTreeCell::IndexLeafCell(leaf_cell) => leaf_cell.first_overflow_page,
+                        BTreeCell::IndexInteriorCell(interior_cell) => {
+                            interior_cell.first_overflow_page
+                        }
+                        BTreeCell::TableInteriorCell(_) => return Ok(CursorResult::Ok(())), // No overflow pages
+                    };
+
+                    if let Some(page) = first_overflow_page {
+                        self.overflow_state = Some(OverflowState::ProcessPage { next_page: page });
+                        continue;
+                    } else {
+                        self.overflow_state = Some(OverflowState::Done);
+                    }
                 }
-            }
-            BTreeCell::IndexLeafCell(leaf_cell) => {
-                match self.calculate_overflow_info(leaf_cell.payload.len(), PageType::IndexLeaf)? {
-                    Some(n_overflow) => (leaf_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+                OverflowState::ProcessPage { next_page } => {
+                    if next_page < 2
+                        || next_page as usize > self.pager.db_header.borrow().database_size as usize
+                    {
+                        self.overflow_state = None;
+                        return Err(LimboError::Corrupt("Invalid overflow page number".into()));
+                    }
+                    let page = self.pager.read_page(next_page as usize)?;
+                    return_if_locked!(page);
+
+                    let contents = page.get().contents.as_ref().unwrap();
+                    let next = contents.read_u32(0);
+
+                    self.pager.free_page(Some(page), next_page as usize)?;
+
+                    if next != 0 {
+                        self.overflow_state = Some(OverflowState::ProcessPage { next_page: next });
+                    } else {
+                        self.overflow_state = Some(OverflowState::Done);
+                    }
                 }
-            }
-            BTreeCell::IndexInteriorCell(interior_cell) => {
-                match self
-                    .calculate_overflow_info(interior_cell.payload.len(), PageType::IndexInterior)?
-                {
-                    Some(n_overflow) => (interior_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+                OverflowState::Done => {
+                    self.overflow_state = None;
+                    return Ok(CursorResult::Ok(()));
                 }
-            }
-            BTreeCell::TableInteriorCell(_) => return Ok(CursorResult::Ok(())), // No overflow pages
-        };
-
-        let Some(first_page) = first_overflow_page else {
-            return Ok(CursorResult::Ok(()));
-        };
-        let page_count = self.pager.db_header.borrow().database_size as usize;
-        let mut pages_left = n_overflow;
-        let mut current_page = first_page;
-        // Clear overflow pages
-        while pages_left > 0 {
-            pages_left -= 1;
-
-            // Validate overflow page number
-            if current_page < 2 || current_page as usize > page_count {
-                return Err(LimboError::Corrupt("Invalid overflow page number".into()));
-            }
-
-            let page = self.pager.read_page(current_page as usize)?;
-            return_if_locked!(page);
-            let contents = page.get().contents.as_ref().unwrap();
-
-            let next_page = if pages_left > 0 {
-                contents.read_u32(0)
-            } else {
-                0
             };
-
-            // Free the current page
-            self.pager.free_page(Some(page), current_page as usize)?;
-
-            current_page = next_page;
         }
-        Ok(CursorResult::Ok(()))
-    }
-
-    fn calculate_overflow_info(
-        &self,
-        payload_len: usize,
-        page_type: PageType,
-    ) -> Result<Option<usize>> {
-        let max_local = self.payload_overflow_threshold_max(page_type.clone());
-        let min_local = self.payload_overflow_threshold_min(page_type.clone());
-        let usable_size = self.usable_space();
-
-        let (_, local_size) = payload_overflows(payload_len, max_local, min_local, usable_size);
-
-        assert!(
-            local_size != payload_len,
-            "Trying to clear overflow pages when there are no overflow pages"
-        );
-
-        // Calculate expected overflow pages
-        let overflow_page_size = self.usable_space() - 4;
-        let n_overflow =
-            (payload_len - local_size + overflow_page_size).div_ceil(overflow_page_size);
-        if n_overflow == 0 {
-            return Err(LimboError::Corrupt("Invalid overflow calculation".into()));
-        }
-
-        Ok(Some(n_overflow))
     }
 
     /// Destroys a B-tree by freeing all its pages in an iterative depth-first order.
     /// This ensures child pages are freed before their parents
     ///
     /// # Example
-    /// For a B-tree with this structure:
+    /// For a B-tree with this structure (where 4' is an overflow page):
     /// ```text
     ///            1 (root)
     ///           /        \
     ///          2          3
     ///        /   \      /   \
-    ///       4     5    6     7
+    /// 4' <- 4     5    6     7
     /// ```
     ///
-    /// The destruction order would be: [4,5,2,6,7,3,1]
+    /// The destruction order would be: [4',4,5,2,6,7,3,1]
     pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
         if let CursorState::None = &self.state {
             self.move_to_root();
@@ -2295,7 +2265,7 @@ impl BTreeCursor {
             let destroy_state = {
                 let destroy_info = self
                     .state
-                    .mut_destroy_info()
+                    .destroy_info()
                     .expect("unable to get a mut reference to destroy state in cursor");
                 destroy_info.state.clone()
             };
@@ -2313,7 +2283,7 @@ impl BTreeCursor {
                     return_if_locked!(page);
 
                     if !page.is_loaded() {
-                        self.pager.load_page(Arc::clone(&page));
+                        self.pager.load_page(Arc::clone(&page))?;
                         return Ok(CursorResult::IO);
                     }
 
@@ -2394,12 +2364,10 @@ impl BTreeCursor {
                             .expect("unable to get a mut reference to destroy state in cursor");
                         destroy_info.state = DestroyState::ClearOverflowPages {
                             cell_idx: self.stack.current_cell_index(),
-                            overflow_chain: Vec::new(),
-                            next_to_free: 0,
                         };
                     }
                 }
-                DestroyState::ClearOverflowPages { cell_idx, .. } => {
+                DestroyState::ClearOverflowPages { cell_idx } => {
                     let page = self.stack.top();
                     let contents = page.get().contents.as_ref().unwrap();
                     let cell = contents.cell_get(
@@ -2442,73 +2410,6 @@ impl BTreeCursor {
                 }
             }
         }
-        // self.move_to_root();
-
-        // loop {
-        //     let page = self.stack.top();
-        //     return_if_locked!(page);
-
-        //     if !page.is_loaded() {
-        //         self.pager.load_page(Arc::clone(&page))?;
-        //         return Ok(CursorResult::IO);
-        //     }
-
-        //     let contents = page.get().contents.as_ref().unwrap();
-        //     let current_page_id = page.get().id;
-
-        //     //  if this node is an interior cell, process all it's children first
-        //     if !contents.is_leaf() {
-        //         let cell_idx = self.stack.current_cell_index();
-        //         //  process interior nodes first
-        //         if cell_idx < contents.cell_count() as i32 {
-        //             let cell = contents.cell_get(
-        //                 cell_idx as usize,
-        //                 Rc::clone(&self.pager),
-        //                 self.payload_overflow_threshold_max(contents.page_type()),
-        //                 self.payload_overflow_threshold_min(contents.page_type()),
-        //                 self.usable_space(),
-        //             )?;
-        //             //  load the actual page this cell points to
-        //             if let BTreeCell::TableInteriorCell(interior) = cell {
-        //                 let child_page =
-        //                     self.pager.read_page(interior._left_child_page as usize)?;
-        //                 self.stack.advance();
-        //                 self.stack.push(child_page);
-        //                 continue;
-        //             }
-        //         //  process the right child
-        //         } else if cell_idx == contents.cell_count() as i32 {
-        //             if let Some(rightmost) = contents.rightmost_pointer() {
-        //                 let rightmost_page = self.pager.read_page(rightmost as usize)?;
-        //                 self.stack.advance();
-        //                 self.stack.push(rightmost_page);
-        //                 continue;
-        //             }
-        //         }
-        //     } else {
-        //         //  if the node is a leaf node, clear overflow pages
-        //         let cell_idx = self.stack.current_cell_index();
-        //         for i in cell_idx..contents.cell_count() as i32 {
-        //             let cell = contents.cell_get(
-        //                 i as usize,
-        //                 Rc::clone(&self.pager),
-        //                 self.payload_overflow_threshold_max(contents.page_type()),
-        //                 self.payload_overflow_threshold_min(contents.page_type()),
-        //                 self.usable_space(),
-        //             )?;
-        //             return_if_io!(self.clear_overflow_pages(&cell));
-        //             self.stack.advance();
-        //         }
-        //     }
-
-        //     self.pager.free_page(Some(page), current_page_id)?;
-        //     if self.stack.has_parent() {
-        //         self.stack.pop();
-        //     } else {
-        //         break;
-        //     }
-        // }
-        // Ok(CursorResult::Ok(()))
     }
 }
 
@@ -3021,7 +2922,7 @@ mod tests {
     #[test]
     fn test_clear_overflow_pages() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
-        let cursor = BTreeCursor::new(pager.clone(), 1);
+        let mut cursor = BTreeCursor::new(pager.clone(), 1);
 
         let max_local = cursor.payload_overflow_threshold_max(PageType::TableLeaf);
         let usable_size = cursor.usable_space();
@@ -3118,7 +3019,7 @@ mod tests {
     #[test]
     fn test_clear_overflow_pages_no_overflow() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
-        let cursor = BTreeCursor::new(pager.clone(), 1);
+        let mut cursor = BTreeCursor::new(pager.clone(), 1);
 
         let small_payload = vec![b'A'; 10];
 
