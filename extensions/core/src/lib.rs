@@ -21,23 +21,21 @@ pub struct ExtensionApi {
 
 pub trait VfsExtension: Default {
     const NAME: &'static str;
-    type File;
-    fn open(&self, path: &str, flags: i32, direct: bool) -> ExtResult<Self::File>;
+    type File: VfsFile;
+    fn open_file(&self, path: &str, flags: i32, direct: bool) -> ExtResult<Self::File>;
     fn close(&self, file: Self::File) -> ExtResult<()>;
-    fn read(
-        &self,
-        file: &mut Self::File,
-        buf: &mut [u8],
-        count: usize,
-        offset: i64,
-    ) -> ExtResult<i32>;
-    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64)
-        -> ExtResult<i32>;
-    fn sync(&self, file: &Self::File) -> ExtResult<()>;
-    fn lock(&self, file: &Self::File, exclusive: bool) -> ExtResult<()>;
-    fn unlock(&self, file: &Self::File) -> ExtResult<()>;
-    fn size(&self, file: &Self::File) -> i64;
     fn run_once(&self) -> ExtResult<()>;
+    fn generate_random_number(&self) -> i64;
+    fn get_current_time(&self) -> String;
+}
+
+pub trait VfsFile: Sized {
+    fn lock(&mut self, exclusive: bool) -> ExtResult<()>;
+    fn unlock(&self) -> ExtResult<()>;
+    fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> ExtResult<i32>;
+    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> ExtResult<i32>;
+    fn sync(&self) -> ExtResult<()>;
+    fn size(&self) -> i64;
 }
 
 #[repr(C)]
@@ -52,42 +50,51 @@ pub struct VfsImpl {
     pub unlock: VfsUnlock,
     pub size: VfsSize,
     pub run_once: VfsRunOnce,
+    pub current_time: VfsGetCurrentTime,
+    pub gen_random_number: VfsGenerateRandomNumber,
 }
 
 pub type VfsOpen = unsafe extern "C" fn(
-    ctx: *mut c_void,
+    ctx: *const c_void,
     path: *const c_char,
     flags: i32,
     direct: bool,
-) -> *mut VfsFile;
+) -> *const c_void;
 
-pub type VfsClose = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+pub type VfsClose = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
 
 pub type VfsRead =
-    unsafe extern "C" fn(file: *mut c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
+    unsafe extern "C" fn(file: *const c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
 
 pub type VfsWrite =
-    unsafe extern "C" fn(file: *mut c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
+    unsafe extern "C" fn(file: *const c_void, buf: *const u8, count: usize, offset: i64) -> i32;
 
-pub type VfsSync = unsafe extern "C" fn(file: *mut c_void) -> i32;
+pub type VfsSync = unsafe extern "C" fn(file: *const c_void) -> i32;
 
-pub type VfsLock = unsafe extern "C" fn(file: *mut c_void, exclusive: bool) -> ResultCode;
+pub type VfsLock = unsafe extern "C" fn(file: *const c_void, exclusive: bool) -> ResultCode;
 
-pub type VfsUnlock = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+pub type VfsUnlock = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
 
-pub type VfsSize = unsafe extern "C" fn(file: *mut c_void) -> i64;
+pub type VfsSize = unsafe extern "C" fn(file: *const c_void) -> i64;
 
-pub type VfsRunOnce = unsafe extern "C" fn(file: *mut c_void) -> ResultCode;
+pub type VfsRunOnce = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
+
+pub type VfsGetCurrentTime = unsafe extern "C" fn() -> *const c_char;
+
+pub type VfsGenerateRandomNumber = unsafe extern "C" fn() -> i64;
 
 #[repr(C)]
-pub struct VfsFile {
-    pub file: *mut c_void,
+pub struct VfsFileImpl {
+    pub file: *const c_void,
     pub vfs: *const VfsImpl,
 }
 
-impl VfsFile {
-    pub fn new(file: *mut c_void, vfs: *const VfsImpl) -> Self {
-        Self { file, vfs }
+impl VfsFileImpl {
+    pub fn new(file: *const c_void, vfs: *const VfsImpl) -> ExtResult<Self> {
+        if file.is_null() || vfs.is_null() {
+            return Err(ResultCode::Error);
+        }
+        Ok(Self { file, vfs })
     }
 }
 

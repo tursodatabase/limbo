@@ -1,4 +1,4 @@
-use limbo_ext::{VfsFile, VfsImpl};
+use limbo_ext::{VfsFileImpl, VfsImpl};
 use std::{cell::RefCell, rc::Rc};
 
 use crate::Result;
@@ -7,9 +7,6 @@ use super::{Buffer, Completion, File, OpenFlags, IO};
 
 impl IO for *const VfsImpl {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Rc<dyn File>> {
-        if self.is_null() {
-            return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
-        }
         let c_path = std::ffi::CString::new(path).map_err(|_| {
             crate::LimboError::ExtensionError("Failed to convert path to CString".to_string())
         })?;
@@ -21,32 +18,40 @@ impl IO for *const VfsImpl {
                 "File not found".to_string(),
             ));
         }
-        Ok(Rc::new(::limbo_ext::VfsFile::new(
-            file as *mut ::std::ffi::c_void,
-            vfs,
-        )))
+        Ok(Rc::new(limbo_ext::VfsFileImpl::new(file, *self)?))
     }
 
     fn run_once(&self) -> Result<()> {
-        Ok(())
+        unsafe {
+            if self.is_null() {
+                return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
+            }
+            let vfs = &**self;
+            let result = (vfs.run_once)(vfs.vfs);
+            if !result.is_ok() {
+                return Err(crate::LimboError::ExtensionError(result.to_string()));
+            }
+            Ok(())
+        }
     }
 
     fn generate_random_number(&self) -> i64 {
-        let mut buf = [0u8; 8];
-        getrandom::getrandom(&mut buf).unwrap();
-        i64::from_ne_bytes(buf)
+        let vfs = unsafe { &**self };
+        unsafe { (vfs.gen_random_number)() }
     }
 
     fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+        unsafe {
+            let vfs = &**self;
+            let chars = (vfs.current_time)();
+            let cstr = ::std::ffi::CString::from_raw(chars as *mut i8);
+            cstr.to_string_lossy().into_owned()
+        }
     }
 }
 
-impl File for VfsFile {
+impl File for VfsFileImpl {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
-        if self.vfs.is_null() {
-            return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
-        }
         let vfs = unsafe { &*self.vfs };
         let result = unsafe { (vfs.lock)(self.file, exclusive) };
         if result.is_ok() {
@@ -68,9 +73,6 @@ impl File for VfsFile {
     }
 
     fn pread(&self, pos: usize, c: Completion) -> Result<()> {
-        if self.vfs.is_null() {
-            return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
-        }
         let r = match &c {
             Completion::Read(ref r) => r,
             _ => unreachable!(),
@@ -118,9 +120,6 @@ impl File for VfsFile {
     }
 
     fn sync(&self, c: Completion) -> Result<()> {
-        if self.vfs.is_null() {
-            return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
-        }
         let vfs = unsafe { &*self.vfs };
         let result = unsafe { (vfs.sync)(self.file) };
         if result < 0 {
@@ -132,9 +131,6 @@ impl File for VfsFile {
     }
 
     fn size(&self) -> Result<u64> {
-        if self.vfs.is_null() {
-            return Err(crate::LimboError::ExtensionError("VFS is null".to_string()));
-        }
         let vfs = unsafe { &*self.vfs };
         let result = unsafe { (vfs.size)(self.file) };
         if result < 0 {

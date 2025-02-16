@@ -13,6 +13,8 @@ static = ["limbo_ext/static"]
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
+chrono = "0.4.39"
+getrandom = "0.3.1"
 limbo_ext = { path = "../core", features = ["static"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

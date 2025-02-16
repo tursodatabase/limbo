@@ -143,6 +143,9 @@ impl Database {
     }
 
     pub fn register_vfs_impl(&self, name: String, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() {
+            return ResultCode::Error;
+        }
         self.syms.borrow_mut().vfs_modules.insert(name, vfs);
         ResultCode::OK
     }

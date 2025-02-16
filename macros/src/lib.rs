@@ -629,11 +629,14 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     let sync_fn_name = format_ident!("{}_sync", struct_name);
     let size_fn_name = format_ident!("{}_size", struct_name);
     let run_once_fn_name = format_ident!("{}_run_once", struct_name);
+    let generate_random_number_fn_name = format_ident!("{}_generate_random_number", struct_name);
+    let get_current_time_fn_name = format_ident!("{}_get_current_time", struct_name);
+
     let expanded = quote! {
         #[no_mangle]
         pub unsafe extern "C" fn #register_fn_name(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
             let ctx = #struct_name::default();
-            let ctx = ::std::boxed::Box::into_raw(::std::boxed::Box::new(ctx)) as *mut ::std::ffi::c_void;
+            let ctx = ::std::boxed::Box::into_raw(::std::boxed::Box::new(ctx)) as *const ::std::ffi::c_void;
             let vfs_mod = ::limbo_ext::VfsImpl {
                 vfs: ctx,
                 open: #open_fn_name,
@@ -645,36 +648,41 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 sync: #sync_fn_name,
                 size: #size_fn_name,
                 run_once: #run_once_fn_name,
+                gen_random_number: #generate_random_number_fn_name,
+                current_time: #get_current_time_fn_name,
             };
-            let vfs_mod_ptr = ::std::boxed::Box::leak(std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
-            (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), vfs_mod_ptr)
+            let vfsimpl = ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
+            (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), vfsimpl)
         }
 
         #[no_mangle]
         pub unsafe extern "C" fn #open_fn_name(
-            ctx: *mut ::std::ffi::c_void,
+            ctx: *const ::std::ffi::c_void,
             path: *const ::std::ffi::c_char,
             flags: i32,
-            direct: bool
-        ) -> *mut ::limbo_ext::VfsFile {
-            let ctx = &mut *(ctx as *mut #struct_name);
-            let path_str = ::std::ffi::CStr::from_ptr(path).to_str().unwrap();
-            let Ok(file_handle) = <#struct_name as ::limbo_ext::VfsExtension>::open(ctx, path_str, flags, direct) else {
-                return ::std::ptr::null_mut();
+            direct: bool,
+        ) -> *const ::std::ffi::c_void {
+            let ctx = &*(ctx as *const ::limbo_ext::VfsImpl);
+            let Ok(path_str) = ::std::ffi::CStr::from_ptr(path).to_str() else {
+                  return ::std::ptr::null_mut();
             };
-            let boxed = ::std::boxed::Box::into_raw(::std::boxed::Box::new(file_handle));
-            let file_handle = boxed as *mut ::std::ffi::c_void;
-            let vfs_ptr = ctx as *const #struct_name;
-            let vfs_file = ::limbo_ext::VfsFile::new(file_handle, vfs_ptr as *const ::limbo_ext::VfsImpl);
-            ::std::boxed::Box::leak(::std::boxed::Box::new(vfs_file)) as *mut ::limbo_ext::VfsFile
+            let vfs = &*(ctx.vfs as *const #struct_name);
+            let Ok(file_handle) = <#struct_name as ::limbo_ext::VfsExtension>::open_file(vfs, path_str, flags, direct) else {
+                return ::std::ptr::null();
+            };
+            let boxed = ::std::boxed::Box::into_raw(::std::boxed::Box::new(file_handle)) as *const ::std::ffi::c_void;
+            let Ok(vfs_file) = ::limbo_ext::VfsFileImpl::new(boxed, ctx) else {
+                return ::std::ptr::null();
+            };
+            ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_file)) as *const ::std::ffi::c_void
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #close_fn_name(file_ptr: *mut ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
+        pub unsafe extern "C" fn #close_fn_name(file_ptr: *const ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
             if file_ptr.is_null() {
                 return ::limbo_ext::ResultCode::Error;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
 
             // this time we need to own it so we can drop it
@@ -687,22 +695,21 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #read_fn_name(file_ptr: *mut ::std::ffi::c_void, buf: *mut u8, count: usize, offset: i64) -> i32 {
+        pub unsafe extern "C" fn #read_fn_name(file_ptr: *const ::std::ffi::c_void, buf: *mut u8, count: usize, offset: i64) -> i32 {
             if file_ptr.is_null() {
                 return -1;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            match <#struct_name as ::limbo_ext::VfsExtension>::read(vfs_instance, file, ::std::slice::from_raw_parts_mut(buf, count), count, offset) {
+            match <#struct_name as ::limbo_ext::VfsExtension>::File::read(file, ::std::slice::from_raw_parts_mut(buf, count), count, offset) {
                 Ok(n) => n,
                 Err(_) => -1,
             }
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #run_once_fn_name(ctx: *mut ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
+        pub unsafe extern "C" fn #run_once_fn_name(ctx: *const ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
             if ctx.is_null() {
                 return ::limbo_ext::ResultCode::Error;
             }
@@ -714,75 +721,83 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #write_fn_name(file_ptr: *mut ::std::ffi::c_void, buf: *mut u8, count: usize, offset: i64) -> i32 {
+        pub unsafe extern "C" fn #write_fn_name(file_ptr: *const ::std::ffi::c_void, buf: *const u8, count: usize, offset: i64) -> i32 {
             if file_ptr.is_null() {
                 return -1;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            match <#struct_name as ::limbo_ext::VfsExtension>::write(vfs_instance, file, ::std::slice::from_raw_parts(buf, count), count, offset) {
+            match <#struct_name as ::limbo_ext::VfsExtension>::File::write(file, ::std::slice::from_raw_parts(buf, count), count, offset) {
                 Ok(n) => n,
                 Err(_) => -1,
             }
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #lock_fn_name(file_ptr: *mut ::std::ffi::c_void, exclusive: bool) -> ::limbo_ext::ResultCode {
+        pub unsafe extern "C" fn #lock_fn_name(file_ptr: *const ::std::ffi::c_void, exclusive: bool) -> ::limbo_ext::ResultCode {
             if file_ptr.is_null() {
                 return ::limbo_ext::ResultCode::Error;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::lock(vfs_instance, file, exclusive) {
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::File::lock(file, exclusive) {
                 return e;
             }
             ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #unlock_fn_name(file_ptr: *mut ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
+        pub unsafe extern "C" fn #unlock_fn_name(file_ptr: *const ::std::ffi::c_void) -> ::limbo_ext::ResultCode {
             if file_ptr.is_null() {
                 return ::limbo_ext::ResultCode::Error;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::unlock(vfs_instance, file) {
+            if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::File::unlock(file) {
                 return e;
             }
             ::limbo_ext::ResultCode::OK
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #sync_fn_name(file_ptr: *mut ::std::ffi::c_void) -> i32 {
+        pub unsafe extern "C" fn #sync_fn_name(file_ptr: *const ::std::ffi::c_void) -> i32 {
             if file_ptr.is_null() {
                 return -1;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            if <#struct_name as ::limbo_ext::VfsExtension>::sync(vfs_instance, file).is_err() {
+            if <#struct_name as ::limbo_ext::VfsExtension>::File::sync(file).is_err() {
                 return -1;
             }
             0
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn #size_fn_name(file_ptr: *mut ::std::ffi::c_void) -> i64 {
+        pub unsafe extern "C" fn #size_fn_name(file_ptr: *const ::std::ffi::c_void) -> i64 {
             if file_ptr.is_null() {
                 return -1;
             }
-            let vfs_file: &mut ::limbo_ext::VfsFile = &mut *(file_ptr as *mut ::limbo_ext::VfsFile);
-            let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
+            let vfs_file: &mut ::limbo_ext::VfsFileImpl = &mut *(file_ptr as *mut ::limbo_ext::VfsFileImpl);
             let file: &mut <#struct_name as ::limbo_ext::VfsExtension>::File =
                 &mut *(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
-            <#struct_name as ::limbo_ext::VfsExtension>::size(vfs_instance, file)
+            <#struct_name as ::limbo_ext::VfsExtension>::File::size(file)
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn #generate_random_number_fn_name() -> i64 {
+            let obj = #struct_name::default();
+            <#struct_name as ::limbo_ext::VfsExtension>::generate_random_number(&obj)
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn #get_current_time_fn_name() -> *const ::std::ffi::c_char {
+            let obj = #struct_name::default();
+            let time = <#struct_name as ::limbo_ext::VfsExtension>::get_current_time(&obj);
+            ::std::ffi::CString::new(time).unwrap().into_raw() as *const ::std::ffi::c_char
         }
     };
 

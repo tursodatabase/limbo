@@ -1769,6 +1769,8 @@ dependencies = [
 name = "limbo_testfs"
 version = "0.0.15"
 dependencies = [
+ "chrono",
+ "getrandom 0.3.1",
  "limbo_ext",
  "mimalloc",
 ]
