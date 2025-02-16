@@ -254,7 +254,7 @@ impl VTabCursor for CsvCursor {
 ### VFS extension Example:
 
 ```rust
-use limbo_ext::{Result, VfsDerive};
+use limbo_ext::{Result, VfsDerive, VfsExtension, VfsFile};
 
 /// Your struct must also impl Default
 #[derive(VfsDerive, Default)]
@@ -282,7 +282,7 @@ impl VfsExtension for ExampleFS {
     }
 
     fn run_once(&self) -> Result<()> {
-    // 'polling' method, if your extension is asynchronous
+    // method to cycle/advance IO, if your extension is asynchronous
         Ok(())
     }
 
@@ -291,9 +291,10 @@ impl VfsExtension for ExampleFS {
         Ok(())
     }
 
+}
+impl VfsFile for ExampleFile {
     fn read(
-        &self,
-        file: &mut Self::File,
+        &mut self,
         buf: &mut [u8],
         count: usize,
         offset: i64,
@@ -307,29 +308,29 @@ impl VfsExtension for ExampleFS {
             .map(|n| n as i32)
     }
 
-    fn write(&self, file: &mut Self::File, buf: &[u8], count: usize, offset: i64) -> Result<i32> {
-        if file.file.seek(SeekFrom::Start(offset as u64)).is_err() {
+    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> Result<i32> {
+        if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
             return Err(ResultCode::Error);
         }
-        file.file
+        self.file
             .write(&buf[..count])
             .map_err(|_| ResultCode::Error)
             .map(|n| n as i32)
     }
 
-    fn sync(&self, file: &Self::File) -> Result<()> {
-        file.file.sync_all().map_err(|_| ResultCode::Error)
+    fn sync(&self) -> Result<()> {
+        self.file.sync_all().map_err(|_| ResultCode::Error)
     }
 
-    fn lock(&self, _file: &Self::File, _exclusive: bool) -> Result<()> {
+    fn lock(&self, _exclusive: bool) -> Result<()> {
         Ok(())
     }
 
-    fn unlock(&self, _file: &Self::File) -> Result<()> {
+    fn unlock(&self) -> Result<()> {
         Ok(())
     }
 
-    fn size(&self, file: &Self::File) -> i64 {
-        file.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
+    fn size(&self) -> i64 {
+        self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
     }
 }
