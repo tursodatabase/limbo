@@ -18,9 +18,9 @@ use crate::{
     LimboError,
 };
 use libc::shmatt_t;
+use limbo_sqlite3_parser::ast::{self, Expr, Id, Literal, Name, QualifiedName, Stmt};
 use rustix::net::eth::DDCMP;
 use rustix::path::Arg;
-use sqlite3_parser::ast::{self, Expr, Id, Literal, Name, QualifiedName, Stmt};
 
 /**
  * sqlite> EXPLAIN DROP TABLE examp;
@@ -111,16 +111,7 @@ pub fn translate_drop_table(
 
     epilogue(&mut program, init_label, start_offset);
 
-    // remove table data from memory
-    sqlite3TableDelete(schema, &tbl_name);
-
     Ok(program)
-}
-
-fn sqlite3TableDelete(schema: &Schema, tbl_name: &ast::QualifiedName) -> Result<()> {
-    let table = schema.get_table(&tbl_name.name.0).unwrap();
-
-    Ok(())
 }
 
 fn emit_fk_drop_tables(schema: &Schema, tbl_name: ast::QualifiedName) {}
@@ -214,7 +205,7 @@ fn emit_schema_delete(
         alias: None,
     };
 
-    let delete_predicate = Some(Expr::Binary(
+    let delete_predicate = Some(Box::new(Expr::Binary(
         Box::new(Expr::Binary(
             Box::new(Expr::Id(Id("tbl_name".to_string()))),
             ast::Operator::Equals,
@@ -228,7 +219,7 @@ fn emit_schema_delete(
                 type_column_value.to_string(),
             ))),
         )),
-    ));
+    )));
     let mut p = prepare_delete_plan(schema, &table_name, delete_predicate, None)?;
     optimize_plan(&mut p, schema);
     let plan = match p {
