@@ -1110,7 +1110,7 @@ pub fn insn_to_str(
                 *root as i32,
                 *former_root_reg as i32,
                 *is_temp as i32,
-                OwnedValue::build_text(Rc::new("".to_string())),
+                OwnedValue::build_text(&Rc::new("".to_string())),
                 0,
                 format!(
                     "root iDb={} former_root={} is_temp={}",
@@ -1127,7 +1127,7 @@ pub fn insn_to_str(
                 *db as i32,
                 0,
                 0,
-                OwnedValue::build_text(Rc::new(table_name.clone())),
+                OwnedValue::build_text(&Rc::new(table_name.clone())),
                 0,
                 format!("DROP TABLE {}", table_name),
             ),
