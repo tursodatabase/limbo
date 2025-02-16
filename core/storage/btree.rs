@@ -2188,6 +2188,9 @@ impl BTreeCursor {
         id as u32
     }
 
+    /// Clear the overflow pages linked to a specific page provided by the leaf cell
+    /// Uses a state machine to keep track of it's operations so that traversal can be
+    /// resumed from last point after IO interruption
     fn clear_overflow_pages(&mut self, cell: &BTreeCell) -> Result<CursorResult<()>> {
         loop {
             let state = self.overflow_state.take().unwrap_or(OverflowState::Start);
@@ -2241,6 +2244,7 @@ impl BTreeCursor {
 
     /// Destroys a B-tree by freeing all its pages in an iterative depth-first order.
     /// This ensures child pages are freed before their parents
+    /// Uses a state machine to keep track of the operation to ensure IO doesn't cause repeated traversals
     ///
     /// # Example
     /// For a B-tree with this structure (where 4' is an overflow page):
