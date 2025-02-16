@@ -75,6 +75,25 @@ macro_rules! return_if_locked {
     }};
 }
 
+/// State machine of destroy operations
+/// Keep track of traversal so that it can be resumed when IO is encountered
+#[derive(Debug, Clone)]
+enum DestroyState {
+    Start,
+    LoadPage,
+    ProcessPage,
+    ClearOverflowPages {
+        cell_idx: i32,
+        overflow_chain: Vec<u32>,
+        next_to_free: usize,
+    },
+    FreePage,
+}
+
+struct DestroyInfo {
+    state: DestroyState,
+}
+
 /// State machine of a write operation.
 /// May involve balancing due to overflow.
 #[derive(Debug, Clone, Copy)]
@@ -120,6 +139,7 @@ impl WriteInfo {
 enum CursorState {
     None,
     Write(WriteInfo),
+    Destroy(DestroyInfo),
 }
 
 impl CursorState {
@@ -132,6 +152,19 @@ impl CursorState {
     fn mut_write_info(&mut self) -> Option<&mut WriteInfo> {
         match self {
             CursorState::Write(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn destroy_info(&self) -> Option<&DestroyInfo> {
+        match self {
+            CursorState::Destroy(x) => Some(x),
+            _ => None,
+        }
+    }
+    fn mut_destroy_info(&mut self) -> Option<&mut DestroyInfo> {
+        match self {
+            CursorState::Destroy(x) => Some(x),
             _ => None,
         }
     }
@@ -2251,25 +2284,85 @@ impl BTreeCursor {
     ///
     /// The destruction order would be: [4,5,2,6,7,3,1]
     pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
-        self.move_to_root();
+        if let CursorState::None = &self.state {
+            self.move_to_root();
+            self.state = CursorState::Destroy(DestroyInfo {
+                state: DestroyState::Start,
+            });
+        }
 
         loop {
-            let page = self.stack.top();
-            return_if_locked!(page);
+            let destroy_state = {
+                let destroy_info = self
+                    .state
+                    .mut_destroy_info()
+                    .expect("unable to get a mut reference to destroy state in cursor");
+                destroy_info.state.clone()
+            };
 
-            if !page.is_loaded() {
-                self.pager.load_page(Arc::clone(&page))?;
-                return Ok(CursorResult::IO);
-            }
+            match destroy_state {
+                DestroyState::Start => {
+                    let destroy_info = self
+                        .state
+                        .mut_destroy_info()
+                        .expect("unable to get a mut reference to destroy state in cursor");
+                    destroy_info.state = DestroyState::LoadPage;
+                }
+                DestroyState::LoadPage => {
+                    let page = self.stack.top();
+                    return_if_locked!(page);
 
-            let contents = page.get().contents.as_ref().unwrap();
-            let current_page_id = page.get().id;
+                    if !page.is_loaded() {
+                        self.pager.load_page(Arc::clone(&page));
+                        return Ok(CursorResult::IO);
+                    }
 
-            //  if this node is an interior cell, process all it's children first
-            if !contents.is_leaf() {
-                let cell_idx = self.stack.current_cell_index();
-                //  process interior nodes first
-                if cell_idx < contents.cell_count() as i32 {
+                    let destroy_info = self
+                        .state
+                        .mut_destroy_info()
+                        .expect("unable to get a mut reference to destroy state in cursor");
+                    destroy_info.state = DestroyState::ProcessPage;
+                }
+                DestroyState::ProcessPage => {
+                    let page = self.stack.top();
+                    assert!(page.is_loaded()); //  page should be loaded at this time
+
+                    let contents = page.get().contents.as_ref().unwrap();
+
+                    let cell_idx = self.stack.current_cell_index();
+                    if cell_idx > contents.cell_count() as i32 {
+                        //  If all the cells in this page have been processed, move state machine to freeing current page
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::FreePage;
+                        continue;
+                    } else if cell_idx == contents.cell_count() as i32 {
+                        //  At the last cell index
+                        //  If interior page, free right page
+                        if !contents.is_leaf() {
+                            if let Some(rightmost) = contents.rightmost_pointer() {
+                                let rightmost_page = self.pager.read_page(rightmost as usize)?;
+                                self.stack.advance();
+                                self.stack.push(rightmost_page);
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                                continue;
+                            }
+                        }
+                        //  If leaf page, free current page
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::FreePage;
+                        continue;
+                    }
+
+                    //  There are still cells left to process in this page
                     let cell = contents.cell_get(
                         cell_idx as usize,
                         Rc::clone(&self.pager),
@@ -2277,47 +2370,145 @@ impl BTreeCursor {
                         self.payload_overflow_threshold_min(contents.page_type()),
                         self.usable_space(),
                     )?;
-                    //  load the actual page this cell points to
-                    if let BTreeCell::TableInteriorCell(interior) = cell {
-                        let child_page =
-                            self.pager.read_page(interior._left_child_page as usize)?;
+                    if !contents.is_leaf() {
+                        //  Load the left child of this interior cell
+                        let child_page_id = match &cell {
+                            BTreeCell::TableInteriorCell(cell) => cell._left_child_page,
+                            BTreeCell::IndexInteriorCell(cell) => cell.left_child_page,
+                            _ => panic!("expected interior cell"),
+                        };
+                        let child_page = self.pager.read_page(child_page_id as usize)?;
                         self.stack.advance();
                         self.stack.push(child_page);
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::LoadPage;
                         continue;
-                    }
-                //  process the right child
-                } else if cell_idx == contents.cell_count() as i32 {
-                    if let Some(rightmost) = contents.rightmost_pointer() {
-                        let rightmost_page = self.pager.read_page(rightmost as usize)?;
-                        self.stack.advance();
-                        self.stack.push(rightmost_page);
-                        continue;
+                    } else {
+                        //  Clear the overflow pages for this leaf cell
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::ClearOverflowPages {
+                            cell_idx: self.stack.current_cell_index(),
+                            overflow_chain: Vec::new(),
+                            next_to_free: 0,
+                        };
                     }
                 }
-            } else {
-                //  if the node is a leaf node, clear overflow pages
-                let cell_idx = self.stack.current_cell_index();
-                for i in cell_idx..contents.cell_count() as i32 {
+                DestroyState::ClearOverflowPages { cell_idx, .. } => {
+                    let page = self.stack.top();
+                    let contents = page.get().contents.as_ref().unwrap();
                     let cell = contents.cell_get(
-                        i as usize,
+                        cell_idx as usize,
                         Rc::clone(&self.pager),
                         self.payload_overflow_threshold_max(contents.page_type()),
                         self.payload_overflow_threshold_min(contents.page_type()),
                         self.usable_space(),
                     )?;
-                    return_if_io!(self.clear_overflow_pages(&cell));
-                    self.stack.advance();
+
+                    match self.clear_overflow_pages(&cell)? {
+                        CursorResult::Ok(_) => {
+                            let destroy_info = self
+                                .state
+                                .mut_destroy_info()
+                                .expect("unable to get a mut reference to destroy state in cursor");
+                            destroy_info.state = DestroyState::ProcessPage;
+                            self.stack.advance();
+                        }
+                        CursorResult::IO => return Ok(CursorResult::IO),
+                    }
+                }
+                DestroyState::FreePage => {
+                    let page = self.stack.top();
+                    let page_id = page.get().id;
+
+                    self.pager.free_page(Some(page), page_id)?;
+
+                    if self.stack.has_parent() {
+                        self.stack.pop();
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::ProcessPage;
+                    } else {
+                        self.state = CursorState::None;
+                        return Ok(CursorResult::Ok(()));
+                    }
                 }
             }
-
-            self.pager.free_page(Some(page), current_page_id)?;
-            if self.stack.has_parent() {
-                self.stack.pop();
-            } else {
-                break;
-            }
         }
-        Ok(CursorResult::Ok(()))
+        // self.move_to_root();
+
+        // loop {
+        //     let page = self.stack.top();
+        //     return_if_locked!(page);
+
+        //     if !page.is_loaded() {
+        //         self.pager.load_page(Arc::clone(&page))?;
+        //         return Ok(CursorResult::IO);
+        //     }
+
+        //     let contents = page.get().contents.as_ref().unwrap();
+        //     let current_page_id = page.get().id;
+
+        //     //  if this node is an interior cell, process all it's children first
+        //     if !contents.is_leaf() {
+        //         let cell_idx = self.stack.current_cell_index();
+        //         //  process interior nodes first
+        //         if cell_idx < contents.cell_count() as i32 {
+        //             let cell = contents.cell_get(
+        //                 cell_idx as usize,
+        //                 Rc::clone(&self.pager),
+        //                 self.payload_overflow_threshold_max(contents.page_type()),
+        //                 self.payload_overflow_threshold_min(contents.page_type()),
+        //                 self.usable_space(),
+        //             )?;
+        //             //  load the actual page this cell points to
+        //             if let BTreeCell::TableInteriorCell(interior) = cell {
+        //                 let child_page =
+        //                     self.pager.read_page(interior._left_child_page as usize)?;
+        //                 self.stack.advance();
+        //                 self.stack.push(child_page);
+        //                 continue;
+        //             }
+        //         //  process the right child
+        //         } else if cell_idx == contents.cell_count() as i32 {
+        //             if let Some(rightmost) = contents.rightmost_pointer() {
+        //                 let rightmost_page = self.pager.read_page(rightmost as usize)?;
+        //                 self.stack.advance();
+        //                 self.stack.push(rightmost_page);
+        //                 continue;
+        //             }
+        //         }
+        //     } else {
+        //         //  if the node is a leaf node, clear overflow pages
+        //         let cell_idx = self.stack.current_cell_index();
+        //         for i in cell_idx..contents.cell_count() as i32 {
+        //             let cell = contents.cell_get(
+        //                 i as usize,
+        //                 Rc::clone(&self.pager),
+        //                 self.payload_overflow_threshold_max(contents.page_type()),
+        //                 self.payload_overflow_threshold_min(contents.page_type()),
+        //                 self.usable_space(),
+        //             )?;
+        //             return_if_io!(self.clear_overflow_pages(&cell));
+        //             self.stack.advance();
+        //         }
+        //     }
+
+        //     self.pager.free_page(Some(page), current_page_id)?;
+        //     if self.stack.has_parent() {
+        //         self.stack.pop();
+        //     } else {
+        //         break;
+        //     }
+        // }
+        // Ok(CursorResult::Ok(()))
     }
 }
 
