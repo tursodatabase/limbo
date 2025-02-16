@@ -237,7 +237,19 @@ pub fn translate_condition_expr(
                 resolver,
             )?;
         }
-        ast::Expr::Binary(lhs, op, rhs) => {
+        ast::Expr::Binary(lhs, op, rhs)
+            if matches!(
+                op,
+                ast::Operator::Greater
+                    | ast::Operator::GreaterEquals
+                    | ast::Operator::Less
+                    | ast::Operator::LessEquals
+                    | ast::Operator::Equals
+                    | ast::Operator::NotEquals
+                    | ast::Operator::Is
+                    | ast::Operator::IsNot
+            ) =>
+        {
             let lhs_reg = program.alloc_register();
             let rhs_reg = program.alloc_register();
             translate_and_mark(program, Some(referenced_tables), lhs, lhs_reg, resolver)?;
@@ -267,35 +279,24 @@ pub fn translate_condition_expr(
                 ast::Operator::IsNot => {
                     emit_cmp_null_insn!(program, condition_metadata, Ne, Eq, lhs_reg, rhs_reg)
                 }
-                _ => {
-                    todo!("op {:?} not implemented", op);
-                }
+                _ => unreachable!(),
             }
         }
-        ast::Expr::Literal(lit) => match lit {
-            ast::Literal::Numeric(val) => {
-                let maybe_int = val.parse::<i64>();
-                if let Ok(int_value) = maybe_int {
-                    let reg = program.alloc_register();
-                    program.emit_insn(Insn::Integer {
-                        value: int_value,
-                        dest: reg,
-                    });
-                    emit_cond_jump(program, condition_metadata, reg);
-                } else {
-                    crate::bail_parse_error!("unsupported literal type in condition");
-                }
-            }
-            ast::Literal::String(string) => {
-                let reg = program.alloc_register();
-                program.emit_insn(Insn::String8 {
-                    value: string.clone(),
-                    dest: reg,
-                });
-                emit_cond_jump(program, condition_metadata, reg);
-            }
-            unimpl => todo!("literal {:?} not implemented", unimpl),
-        },
+        ast::Expr::Binary(_, _, _) => {
+            let result_reg = program.alloc_register();
+            translate_expr(program, Some(referenced_tables), expr, result_reg, resolver)?;
+            emit_cond_jump(program, condition_metadata, result_reg);
+        }
+        ast::Expr::Literal(_)
+        | ast::Expr::Cast { .. }
+        | ast::Expr::FunctionCall { .. }
+        | ast::Expr::Column { .. }
+        | ast::Expr::RowId { .. }
+        | ast::Expr::Case { .. } => {
+            let reg = program.alloc_register();
+            translate_expr(program, Some(referenced_tables), expr, reg, resolver)?;
+            emit_cond_jump(program, condition_metadata, reg);
+        }
         ast::Expr::InList { lhs, not, rhs } => {
             // lhs is e.g. a column reference
             // rhs is an Option<Vec<Expr>>
@@ -410,49 +411,9 @@ pub fn translate_condition_expr(
                 program.resolve_label(jump_target_when_true, program.offset());
             }
         }
-        ast::Expr::Like {
-            lhs,
-            not,
-            op,
-            rhs,
-            escape: _,
-        } => {
+        ast::Expr::Like { not, .. } => {
             let cur_reg = program.alloc_register();
-            match op {
-                ast::LikeOperator::Like | ast::LikeOperator::Glob => {
-                    let start_reg = program.alloc_registers(2);
-                    let mut constant_mask = 0;
-                    translate_and_mark(
-                        program,
-                        Some(referenced_tables),
-                        lhs,
-                        start_reg + 1,
-                        resolver,
-                    )?;
-                    let _ =
-                        translate_expr(program, Some(referenced_tables), rhs, start_reg, resolver)?;
-                    if matches!(rhs.as_ref(), ast::Expr::Literal(_)) {
-                        program.mark_last_insn_constant();
-                        constant_mask = 1;
-                    }
-                    let func = match op {
-                        ast::LikeOperator::Like => ScalarFunc::Like,
-                        ast::LikeOperator::Glob => ScalarFunc::Glob,
-                        _ => unreachable!(),
-                    };
-                    program.emit_insn(Insn::Function {
-                        constant_mask,
-                        start_reg,
-                        dest: cur_reg,
-                        func: FuncCtx {
-                            func: Func::Scalar(func),
-                            arg_count: 2,
-                        },
-                    });
-                }
-                ast::LikeOperator::Match => todo!(),
-                ast::LikeOperator::Regexp => todo!(),
-            }
+            translate_like_base(program, Some(referenced_tables), expr, cur_reg, resolver)?;
             if !*not {
                 emit_cond_jump(program, condition_metadata, cur_reg);
             } else if condition_metadata.jump_if_condition_is_true {
@@ -500,7 +461,17 @@ pub fn translate_condition_expr(
                 target_pc: condition_metadata.jump_target_when_false,
             });
         }
-        _ => todo!("op {:?} not implemented", expr),
+        ast::Expr::Unary(_, _) => {
+            // This is an inefficient implementation for op::NOT, because translate_expr() will emit an Insn::Not,
+            // and then we immediately emit an Insn::If/Insn::IfNot for the conditional jump. In reality we would not
+            // like to emit the negation instruction Insn::Not at all, since we could just emit the "opposite" jump instruction
+            // directly. However, using translate_expr() directly simplifies our conditional jump code for unary expressions,
+            // and we'd rather be correct than maximally efficient, for now.
+            let expr_reg = program.alloc_register();
+            translate_expr(program, Some(referenced_tables), expr, expr_reg, resolver)?;
+            emit_cond_jump(program, condition_metadata, expr_reg);
+        }
+        other => todo!("expression {:?} not implemented", other),
     }
     Ok(())
 }
@@ -1969,7 +1940,21 @@ pub fn translate_expr(
         ast::Expr::InSelect { .. } => todo!(),
         ast::Expr::InTable { .. } => todo!(),
         ast::Expr::IsNull(_) => todo!(),
-        ast::Expr::Like { .. } => todo!(),
+        ast::Expr::Like { not, .. } => {
+            let like_reg = if *not {
+                program.alloc_register()
+            } else {
+                target_register
+            };
+            translate_like_base(program, referenced_tables, expr, like_reg, resolver)?;
+            if *not {
+                program.emit_insn(Insn::Not {
+                    reg: like_reg,
+                    dest: target_register,
+                });
+            }
+            Ok(target_register)
+        }
         ast::Expr::Literal(lit) => match lit {
             ast::Literal::Numeric(val) => {
                 let maybe_int = val.parse::<i64>();
@@ -2157,6 +2142,55 @@ pub fn translate_expr(
             Ok(target_register)
         }
     }
+}
+
+fn translate_like_base(
+    program: &mut ProgramBuilder,
+    referenced_tables: Option<&[TableReference]>,
+    expr: &ast::Expr,
+    target_register: usize,
+    resolver: &Resolver,
+) -> Result<usize> {
+    let ast::Expr::Like {
+        lhs,
+        op,
+        rhs,
+        escape: _,
+        ..
+    } = expr
+    else {
+        crate::bail_parse_error!("expected Like expression");
+    };
+    match op {
+        ast::LikeOperator::Like | ast::LikeOperator::Glob => {
+            let start_reg = program.alloc_registers(2);
+            let mut constant_mask = 0;
+            translate_and_mark(program, referenced_tables, lhs, start_reg + 1, resolver)?;
+            let _ = translate_expr(program, referenced_tables, rhs, start_reg, resolver)?;
+            if matches!(rhs.as_ref(), ast::Expr::Literal(_)) {
+                program.mark_last_insn_constant();
+                constant_mask = 1;
+            }
+            let func = match op {
+                ast::LikeOperator::Like => ScalarFunc::Like,
+                ast::LikeOperator::Glob => ScalarFunc::Glob,
+                _ => unreachable!(),
+            };
+            program.emit_insn(Insn::Function {
+                constant_mask,
+                start_reg,
+                dest: target_register,
+                func: FuncCtx {
+                    func: Func::Scalar(func),
+                    arg_count: 2,
+                },
+            });
+        }
+        ast::LikeOperator::Match => todo!(),
+        ast::LikeOperator::Regexp => todo!(),
+    }
+
+    Ok(target_register)
 }
 
 /// Emits a whole insn for a function call.

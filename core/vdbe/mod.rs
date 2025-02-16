@@ -53,9 +53,9 @@ use crate::{
 };
 use crate::{resolve_ext_path, Connection, Result, TransactionState, DATABASE_VERSION};
 use insn::{
-    exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
-    exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
-    exec_subtract, Cookie,
+    cast_text_to_numerical, exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or,
+    exec_boolean_not, exec_concat, exec_divide, exec_multiply, exec_or, exec_remainder,
+    exec_shift_left, exec_shift_right, exec_subtract, Cookie,
 };
 use likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
 use rand::distributions::{Distribution, Uniform};
@@ -3515,6 +3515,7 @@ fn exec_if(reg: &OwnedValue, jump_if_null: bool, not: bool) -> bool {
         OwnedValue::Integer(0) | OwnedValue::Float(0.0) => not,
         OwnedValue::Integer(_) | OwnedValue::Float(_) => !not,
         OwnedValue::Null => jump_if_null,
+        OwnedValue::Text(t) => exec_if(&cast_text_to_real(t.as_str()), jump_if_null, not),
         _ => false,
     }
 }
@@ -3579,7 +3580,7 @@ fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
                 let text = String::from_utf8_lossy(b);
                 cast_text_to_numeric(&text)
             }
-            OwnedValue::Text(t) => cast_text_to_numeric(t.as_str()),
+            OwnedValue::Text(t) => cast_text_to_numerical(t.as_str()),
             OwnedValue::Integer(i) => OwnedValue::Integer(*i),
             OwnedValue::Float(f) => OwnedValue::Float(*f),
             _ => value.clone(), // TODO probably wrong
@@ -3671,14 +3672,17 @@ fn affinity(datatype: &str) -> Affinity {
 /// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
 fn cast_text_to_integer(text: &str) -> OwnedValue {
     let text = text.trim();
+    if text.is_empty() {
+        return OwnedValue::Integer(0);
+    }
     if let Ok(i) = text.parse::<i64>() {
         return OwnedValue::Integer(i);
     }
     // Try to find longest valid prefix that parses as an integer
     // TODO: inefficient
-    let mut end_index = text.len() - 1;
-    while end_index > 0 {
-        if let Ok(i) = text[..=end_index].parse::<i64>() {
+    let mut end_index = text.len().saturating_sub(1) as isize;
+    while end_index >= 0 {
+        if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
             return OwnedValue::Integer(i);
         }
         end_index -= 1;
@@ -3692,14 +3696,17 @@ fn cast_text_to_integer(text: &str) -> OwnedValue {
 /// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
 fn cast_text_to_real(text: &str) -> OwnedValue {
     let trimmed = text.trim_start();
+    if trimmed.is_empty() {
+        return OwnedValue::Float(0.0);
+    }
     if let Ok(num) = trimmed.parse::<f64>() {
         return OwnedValue::Float(num);
     }
     // Try to find longest valid prefix that parses as a float
     // TODO: inefficient
-    let mut end_index = trimmed.len() - 1;
-    while end_index > 0 {
-        if let Ok(num) = trimmed[..=end_index].parse::<f64>() {
+    let mut end_index = trimmed.len().saturating_sub(1) as isize;
+    while end_index >= 0 {
+        if let Ok(num) = trimmed[..=end_index as usize].parse::<f64>() {
             return OwnedValue::Float(num);
         }
         end_index -= 1;

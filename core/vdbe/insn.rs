@@ -1,8 +1,9 @@
 use std::num::NonZero;
 
-use super::{AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
+use super::{cast_text_to_integer, AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
+use crate::vdbe::cast_text_to_real;
 use limbo_macros::Description;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
@@ -688,13 +689,19 @@ pub enum Cookie {
     UserVersion = 6,
 }
 
-fn cast_text_to_numerical(value: &str) -> OwnedValue {
-    if let Ok(x) = value.parse::<i64>() {
-        OwnedValue::Integer(x)
-    } else if let Ok(x) = value.parse::<f64>() {
-        OwnedValue::Float(x)
+pub fn cast_text_to_numerical(value: &str) -> OwnedValue {
+    if value.contains('.') || value.contains('e') || value.contains('E') {
+        let OwnedValue::Float(f) = cast_text_to_real(value) else {
+            panic!("cast_text_to_numerical: expected float, got {}", value);
+        };
+        // If the value is within floating point precision of an integer, return an integer.
+        if f.fract() == 0.0 {
+            OwnedValue::Integer(f.trunc() as i64)
+        } else {
+            OwnedValue::Float(f)
+        }
     } else {
-        OwnedValue::Integer(0)
+        cast_text_to_integer(value)
     }
 }
 
@@ -897,15 +904,42 @@ pub fn exec_remainder(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue 
         | (_, OwnedValue::Null)
         | (_, OwnedValue::Integer(0))
         | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => OwnedValue::Integer(lhs % rhs),
+        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
+            if rhs == &0 {
+                OwnedValue::Null
+            } else {
+                OwnedValue::Integer(lhs % rhs)
+            }
+        }
         (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float(((*lhs as i64) % (*rhs as i64)) as f64)
+            let rhs_int = *rhs as i64;
+            if rhs_int == 0 {
+                OwnedValue::Null
+            } else {
+                OwnedValue::Float(((*lhs as i64) % rhs_int) as f64)
+            }
         }
         (OwnedValue::Float(lhs), OwnedValue::Integer(rhs)) => {
-            OwnedValue::Float(((*lhs as i64) % rhs) as f64)
+            if rhs == &0 {
+                OwnedValue::Null
+            } else {
+                OwnedValue::Float(((*lhs as i64) % rhs) as f64)
+            }
         }
         (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float((lhs % *rhs as i64) as f64)
+            let rhs_int = *rhs as i64;
+            if rhs_int == 0 {
+                OwnedValue::Null
+            } else {
+                OwnedValue::Float((lhs % rhs_int) as f64)
+            }
+        }
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_remainder(
+            &cast_text_to_numerical(lhs.as_str()),
+            &cast_text_to_numerical(rhs.as_str()),
+        ),
+        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
+            exec_remainder(&cast_text_to_numerical(text.as_str()), other)
         }
         _ => todo!(),
     }
@@ -1023,64 +1057,71 @@ pub fn exec_boolean_not(mut reg: &OwnedValue) -> OwnedValue {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer((*i == 0) as i64),
         OwnedValue::Float(f) => OwnedValue::Integer((*f == 0.0) as i64),
-        OwnedValue::Text(text) => exec_boolean_not(&cast_text_to_numerical(text.as_str())),
+        OwnedValue::Text(text) => exec_boolean_not(&cast_text_to_real(text.as_str())),
         _ => todo!(),
     }
 }
 
 pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    // Use Debug implementation for f64 to not lose precision
     match (lhs, rhs) {
         (OwnedValue::Text(lhs_text), OwnedValue::Text(rhs_text)) => {
-            OwnedValue::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
+            OwnedValue::build_text(&format!("{}{}", lhs_text.as_str(), rhs_text.as_str()))
         }
         (OwnedValue::Text(lhs_text), OwnedValue::Integer(rhs_int)) => {
-            OwnedValue::build_text(&(lhs_text.as_str().to_string() + &rhs_int.to_string()))
+            OwnedValue::build_text(&format!("{}{}", lhs_text.as_str(), rhs_int))
         }
         (OwnedValue::Text(lhs_text), OwnedValue::Float(rhs_float)) => {
-            OwnedValue::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
+            OwnedValue::build_text(&format!("{}{:?}", lhs_text.as_str(), rhs_float))
         }
-        (OwnedValue::Text(lhs_text), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(
-            (lhs_text.as_str().to_string() + &rhs_agg.final_value().to_string()).as_str(),
-        ),
+        (OwnedValue::Text(lhs_text), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(&format!(
+            "{:?}{:?}",
+            lhs_text.as_str(),
+            rhs_agg.final_value()
+        )),
 
         (OwnedValue::Integer(lhs_int), OwnedValue::Text(rhs_text)) => {
-            OwnedValue::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
+            OwnedValue::build_text(&format!("{}{}", lhs_int, rhs_text.as_str()))
         }
         (OwnedValue::Integer(lhs_int), OwnedValue::Integer(rhs_int)) => {
-            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_int.to_string()))
+            OwnedValue::build_text(&format!("{}{}", lhs_int, rhs_int))
         }
         (OwnedValue::Integer(lhs_int), OwnedValue::Float(rhs_float)) => {
-            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
+            OwnedValue::build_text(&format!("{}{:?}", lhs_int, rhs_float))
         }
         (OwnedValue::Integer(lhs_int), OwnedValue::Agg(rhs_agg)) => {
-            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_agg.final_value().to_string()))
+            OwnedValue::build_text(&format!("{}{:?}", lhs_int, rhs_agg.final_value()))
         }
 
         (OwnedValue::Float(lhs_float), OwnedValue::Text(rhs_text)) => {
-            OwnedValue::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
+            OwnedValue::build_text(&format!("{:?}{}", lhs_float, rhs_text.as_str()))
         }
         (OwnedValue::Float(lhs_float), OwnedValue::Integer(rhs_int)) => {
-            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_int.to_string()))
+            OwnedValue::build_text(&format!("{:?}{}", lhs_float, rhs_int))
         }
         (OwnedValue::Float(lhs_float), OwnedValue::Float(rhs_float)) => {
-            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
+            OwnedValue::build_text(&format!("{:?}{:?}", lhs_float, rhs_float))
         }
         (OwnedValue::Float(lhs_float), OwnedValue::Agg(rhs_agg)) => {
-            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_agg.final_value().to_string()))
+            OwnedValue::build_text(&format!("{:?}{}", lhs_float, rhs_agg.final_value()))
         }
 
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Text(rhs_text)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + rhs_text.as_str()))
-        }
+        (OwnedValue::Agg(lhs_agg), OwnedValue::Text(rhs_text)) => OwnedValue::build_text(&format!(
+            "{:?}{:?}",
+            lhs_agg.final_value(),
+            rhs_text.as_str()
+        )),
         (OwnedValue::Agg(lhs_agg), OwnedValue::Integer(rhs_int)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + &rhs_int.to_string()))
+            OwnedValue::build_text(&format!("{:?}{:?}", lhs_agg.final_value(), rhs_int))
         }
         (OwnedValue::Agg(lhs_agg), OwnedValue::Float(rhs_float)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + &rhs_float.to_string()))
+            OwnedValue::build_text(&format!("{:?}{}", lhs_agg.final_value(), rhs_float))
         }
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(
-            &(lhs_agg.final_value().to_string() + &rhs_agg.final_value().to_string()),
-        ),
+        (OwnedValue::Agg(lhs_agg), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(&format!(
+            "{:?}{:?}",
+            lhs_agg.final_value(),
+            rhs_agg.final_value()
+        )),
 
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Blob(_), _) | (_, OwnedValue::Blob(_)) => {
@@ -1134,11 +1175,11 @@ pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Float(0.0), OwnedValue::Float(0.0))
         | (OwnedValue::Integer(0), OwnedValue::Integer(0)) => OwnedValue::Integer(0),
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_or(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_real(lhs.as_str()),
+            &cast_text_to_real(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_or(&cast_text_to_numerical(text.as_str()), other)
+            exec_or(&cast_text_to_real(text.as_str()), other)
         }
         _ => OwnedValue::Integer(1),
     }
