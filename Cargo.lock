@@ -1639,6 +1639,7 @@ dependencies = [
  "limbo_sqlite3_parser",
  "limbo_time",
  "limbo_uuid",
+ "memmap2",
  "miette",
  "mimalloc",
  "parking_lot",
