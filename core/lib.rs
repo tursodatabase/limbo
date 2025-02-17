@@ -556,7 +556,6 @@ impl VirtualTable {
             }
         }
         let mut parser = Parser::new(schema.as_bytes());
-        parser.reset(schema.as_bytes());
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
         )? {

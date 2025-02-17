@@ -988,13 +988,11 @@ impl Program {
                             )));
                         }
                     }
-                    // argv[0] = current_rowid (for DELETE if applicable)
-                    // argv[1] = insert_rowid (for INSERT if applicable)
-                    // argv[2..] = column values
                     let result = virtual_table.update(&argv);
                     match result {
                         Ok(Some(new_rowid)) => {
                             if *conflict_action == 5 {
+                                // ResolveType::Replace
                                 if let Some(conn) = self.connection.upgrade() {
                                     conn.update_last_rowid(new_rowid as u64);
                                 }

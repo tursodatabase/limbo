@@ -169,7 +169,11 @@ impl VTabModule for CsvVTable {
     /// Declare the name for your virtual table
     const NAME: &'static str = "csv_data";
 
-    fn init_sql() -> &'static str {
+    /// Declare the type of vtable (TableValuedFunction or VirtualTable)
+    const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
+
+    /// Function to initialize the schema of your vtable 
+    fn create_schema(_args: &[Value]) -> &'static str {
         "CREATE TABLE csv_data(
             name TEXT,
             age TEXT,
@@ -178,7 +182,7 @@ impl VTabModule for CsvVTable {
     }
 
     /// Open to return a new cursor: In this simple example, the CSV file is read completely into memory on connect.
-    fn open() -> Result<Self::VCursor, Self::Error> {
+    fn open(&self) -> Result<Self::VCursor, Self::Error> {
         // Read CSV file contents from "data.csv"
         let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
         // For simplicity, we'll ignore the header row.
@@ -195,7 +199,7 @@ impl VTabModule for CsvVTable {
     }
 
     /// Filter through result columns. (not used in this simple example)
-    fn filter(_cursor: &mut Self::VCursor, _arg_count: i32, _args: &[Value]) -> ResultCode {
+    fn filter(_cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
         ResultCode::OK
     }
 
@@ -217,6 +221,22 @@ impl VTabModule for CsvVTable {
     /// Return true if the cursor is at the end.
     fn eof(cursor: &Self::VCursor) -> bool {
         cursor.index >= cursor.rows.len()
+    }
+
+    /// *Optional* methods for non-readonly tables
+
+    /// Update the value at rowid
+    fn update(&mut self, _rowid: i64, _args: &[Value]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Insert the value(s)
+    fn insert(&mut self, _args: &[Value]) -> Result<i64, Self::Error> {
+        Ok(0)
+    }
+    /// Delete the value at rowid
+    fn delete(&mut self, _rowid: i64) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 

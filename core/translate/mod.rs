@@ -625,10 +625,14 @@ fn translate_create_virtual_table(
 
     let args_reg = if !args_vec.is_empty() {
         let args_start = program.alloc_register();
+
+        // Emit string8 instructions for each arg
         for (i, arg) in args_vec.iter().enumerate() {
             program.emit_string8(arg.clone(), args_start + i);
         }
         let args_record_reg = program.alloc_register();
+
+        // VCreate expects an array of args as a record
         program.emit_insn(Insn::MakeRecord {
             start_reg: args_start,
             count: args_vec.len(),
