@@ -308,13 +308,7 @@ fn emit_program_for_delete(
         &plan.table_references,
         &plan.where_clause,
     )?;
-    if let Some(table) = plan.table_references.first() {
-        if table.virtual_table().is_some() {
-            emit_delete_vtable_insns(program, &mut t_ctx, &plan.table_references, &plan.limit)?;
-        } else {
-            emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.limit)?;
-        }
-    }
+    emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.limit)?;
 
     // Clean up and close the main execution loop
     close_loop(program, &mut t_ctx, &plan.table_references)?;
@@ -325,77 +319,6 @@ fn emit_program_for_delete(
     epilogue(program, init_label, start_offset)?;
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
-    Ok(())
-}
-
-fn emit_delete_vtable_insns(
-    program: &mut ProgramBuilder,
-    t_ctx: &mut TranslateCtx,
-    table_references: &[TableReference],
-    limit: &Option<isize>,
-) -> Result<()> {
-    let table_reference = table_references.first().unwrap();
-
-    let cursor_id = match &table_reference.op {
-        Operation::Scan { .. } => program.resolve_cursor_id(&table_reference.identifier),
-        Operation::Search(search) => match search {
-            Search::RowidEq { .. } | Search::RowidSearch { .. } => {
-                program.resolve_cursor_id(&table_reference.identifier)
-            }
-            Search::IndexSearch { index, .. } => program.resolve_cursor_id(&index.name),
-        },
-        _ => return Ok(()),
-    };
-
-    let rowid_reg = program.alloc_register();
-    program.emit_insn(Insn::RowId {
-        cursor_id,
-        dest: rowid_reg,
-    });
-    // if we have a limit, decrement and check zero
-    if let Some(limit) = limit {
-        let limit_reg = program.alloc_register();
-        program.emit_insn(Insn::Integer {
-            value: *limit as i64,
-            dest: limit_reg,
-        });
-        program.mark_last_insn_constant();
-
-        program.emit_insn(Insn::DecrJumpZero {
-            reg: limit_reg,
-            target_pc: t_ctx.label_main_loop_end.unwrap(),
-        });
-    }
-
-    // we want old_rowid= rowid_reg, new_rowid= NULL, so we pass 2 arguments to VUpdate
-    // we need a second register for the new rowid = NULL
-    let new_rowid_reg = program.alloc_register();
-
-    program.emit_insn(Insn::Null {
-        dest: new_rowid_reg,
-        dest_end: None,
-    });
-
-    // we'll do VUpdate with arg_count=2:
-    // argv[0] => old_rowid = rowid_reg
-    // argv[1] => new_rowid = new_rowid_reg (NULL)
-
-    let Some(virtual_table) = table_reference.virtual_table() else {
-        return Err(crate::LimboError::ParseError(
-            "Table is not a virtual table".to_string(),
-        ));
-    };
-    let conflict_action = 0u16;
-    let start_reg = rowid_reg;
-
-    program.emit_insn(Insn::VUpdate {
-        cursor_id,
-        arg_count: 2,
-        start_reg,
-        vtab_ptr: virtual_table.implementation.as_ref().ctx as usize,
-        conflict_action,
-    });
-
     Ok(())
 }
 
@@ -423,8 +346,27 @@ fn emit_delete_insns(
         cursor_id,
         dest: key_reg,
     });
-    program.emit_insn(Insn::DeleteAsync { cursor_id });
-    program.emit_insn(Insn::DeleteAwait { cursor_id });
+
+    if let Some(vtab) = table_reference.virtual_table() {
+        let conflict_action = 0u16;
+        let start_reg = key_reg;
+
+        let new_rowid_reg = program.alloc_register();
+        program.emit_insn(Insn::Null {
+            dest: new_rowid_reg,
+            dest_end: None,
+        });
+        program.emit_insn(Insn::VUpdate {
+            cursor_id,
+            arg_count: 2,
+            start_reg,
+            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
+            conflict_action,
+        });
+    } else {
+        program.emit_insn(Insn::DeleteAsync { cursor_id });
+        program.emit_insn(Insn::DeleteAwait { cursor_id });
+    }
     if let Some(limit) = limit {
         let limit_reg = program.alloc_register();
         program.emit_insn(Insn::Integer {

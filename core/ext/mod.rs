@@ -11,7 +11,7 @@ type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
 #[derive(Clone)]
 pub struct VTabImpl {
-    pub module_type: VTabKind,
+    pub module_kind: VTabKind,
     pub implementation: Rc<VTabModuleImpl>,
 }
 
@@ -104,7 +104,7 @@ impl Database {
     ) -> ResultCode {
         let module = Rc::new(module);
         let vmodule = VTabImpl {
-            module_type: kind,
+            module_kind: kind,
             implementation: module,
         };
         self.syms

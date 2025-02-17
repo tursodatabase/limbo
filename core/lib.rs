@@ -542,7 +542,7 @@ impl VirtualTable {
                 module_name
             )))?;
         if let VTabKind::VirtualTable = kind {
-            if module.module_type != VTabKind::VirtualTable {
+            if module.module_kind != VTabKind::VirtualTable {
                 return Err(LimboError::ExtensionError(format!(
                     "Virtual table module {} is not a virtual table",
                     module_name
@@ -612,10 +612,7 @@ impl VirtualTable {
 
     pub fn column(&self, cursor: &VTabOpaqueCursor, column: usize) -> Result<OwnedValue> {
         let val = unsafe { (self.implementation.column)(cursor.as_ptr(), column as u32) };
-        let res = OwnedValue::from_ffi(&val)?;
-        unsafe {
-            val.free();
-        }
+        let res = OwnedValue::from_ffi(val)?;
         Ok(res)
     }
 
