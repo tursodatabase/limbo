@@ -110,6 +110,10 @@ pub fn init_loop(
                         program.emit_insn(Insn::VOpenAsync { cursor_id });
                         program.emit_insn(Insn::VOpenAwait {});
                     }
+                    (OperationMode::DELETE, Table::Virtual(_)) => {
+                        program.emit_insn(Insn::VOpenAsync { cursor_id });
+                        program.emit_insn(Insn::VOpenAwait {});
+                    }
                     _ => {
                         unimplemented!()
                     }
@@ -286,44 +290,23 @@ pub fn open_loop(
                         },
                     ),
                     Table::Virtual(ref table) => {
-                        let args = if let Some(args) = table.args.as_ref() {
-                            args
-                        } else {
-                            &vec![]
-                        };
-                        let start_reg = program.alloc_registers(args.len());
+                        let start_reg = program
+                            .alloc_registers(table.args.as_ref().map(|a| a.len()).unwrap_or(0));
                         let mut cur_reg = start_reg;
-
-                        for arg_str in args {
+                        let args = match table.args.as_ref() {
+                            Some(args) => args,
+                            None => &vec![],
+                        };
+                        for arg in args {
                             let reg = cur_reg;
                             cur_reg += 1;
-
-                            if let Ok(i) = arg_str.parse::<i64>() {
-                                program.emit_insn(Insn::Integer {
-                                    value: i,
-                                    dest: reg,
-                                });
-                            } else if let Ok(f) = arg_str.parse::<f64>() {
-                                program.emit_insn(Insn::Real {
-                                    value: f,
-                                    dest: reg,
-                                });
-                            } else if arg_str.starts_with('"') && arg_str.ends_with('"') {
-                                program.emit_insn(Insn::String8 {
-                                    value: arg_str.trim_matches('"').to_string(),
-                                    dest: reg,
-                                });
-                            } else {
-                                program.emit_insn(Insn::String8 {
-                                    value: arg_str.clone(),
-                                    dest: reg,
-                                });
-                            }
+                            let _ =
+                                translate_expr(program, Some(tables), arg, reg, &t_ctx.resolver)?;
                         }
                         program.emit_insn(Insn::VFilter {
                             cursor_id,
                             pc_if_empty: loop_end,
-                            arg_count: args.len(),
+                            arg_count: table.args.as_ref().map_or(0, |args| args.len()),
                             args_reg: start_reg,
                         });
                     }
@@ -697,9 +680,9 @@ fn emit_loop_source(
             );
             let offset_jump_to = t_ctx
                 .labels_main_loop
-                .get(0)
+                .first()
                 .map(|l| l.next)
-                .or_else(|| t_ctx.label_main_loop_end);
+                .or(t_ctx.label_main_loop_end);
             emit_select_result(
                 program,
                 t_ctx,

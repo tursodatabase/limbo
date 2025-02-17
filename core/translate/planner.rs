@@ -9,7 +9,7 @@ use super::{
 use crate::{
     function::Func,
     schema::{Schema, Table},
-    util::{exprs_are_equivalent, normalize_ident},
+    util::{exprs_are_equivalent, normalize_ident, vtable_args},
     vdbe::BranchOffset,
     Result,
 };
@@ -303,16 +303,25 @@ fn parse_from_clause_table<'a>(
                 return Ok(());
             };
             // Check if our top level schema has this table.
-            if let Some(table) = schema.get_btree_table(&normalized_qualified_name) {
+            if let Some(table) = schema.get_table(&normalized_qualified_name) {
                 let alias = maybe_alias
                     .map(|a| match a {
                         ast::As::As(id) => id,
                         ast::As::Elided(id) => id,
                     })
                     .map(|a| a.0);
+                let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
+                    Table::Virtual(tbl.clone())
+                } else if let Table::BTree(table) = table.as_ref() {
+                    Table::BTree(table.clone())
+                } else {
+                    return Err(crate::LimboError::InvalidArgument(
+                        "Table type not supported".to_string(),
+                    ));
+                };
                 scope.tables.push(TableReference {
                     op: Operation::Scan { iter_dir: None },
-                    table: Table::BTree(table.clone()),
+                    table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
                     join_info: None,
                 });
@@ -367,17 +376,16 @@ fn parse_from_clause_table<'a>(
                 .push(TableReference::new_subquery(identifier, subplan, None));
             Ok(())
         }
-        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
+        ast::SelectTable::TableCall(qualified_name, ref maybe_args, maybe_alias) => {
             let normalized_name = &normalize_ident(qualified_name.name.0.as_str());
+            let args = vtable_args(maybe_args.as_ref().unwrap_or(&vec![]).as_slice());
             let vtab = crate::VirtualTable::from_args(
                 None,
                 normalized_name,
-                &maybe_args
-                    .as_ref()
-                    .map(|a| a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-                    .unwrap_or_default(),
+                args,
                 syms,
                 limbo_ext::VTabKind::TableValuedFunction,
+                maybe_args,
             )?;
             let alias = maybe_alias
                 .as_ref()
@@ -610,7 +618,7 @@ fn parse_join<'a>(
         constraint,
     } = join;
 
-    parse_from_clause_table(schema, table, scope, &syms)?;
+    parse_from_clause_table(schema, table, scope, syms)?;
 
     let (outer, natural) = match join_operator {
         ast::JoinOperator::TypedJoin(Some(join_type)) => {

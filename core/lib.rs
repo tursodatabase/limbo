@@ -516,18 +516,23 @@ pub type StepResult = vdbe::StepResult;
 #[derive(Clone, Debug)]
 pub struct VirtualTable {
     name: String,
-    args: Option<Vec<String>>,
+    args: Option<Vec<ast::Expr>>,
     pub implementation: Rc<VTabModuleImpl>,
     columns: Vec<Column>,
 }
 
 impl VirtualTable {
+    pub(crate) fn rowid(&self, cursor: &VTabOpaqueCursor) -> i64 {
+        unsafe { (self.implementation.rowid)(cursor.as_ptr()) }
+    }
+    /// takes ownership of the provided Args
     pub(crate) fn from_args(
         tbl_name: Option<&str>,
         module_name: &str,
-        args: &[String],
+        args: Vec<limbo_ext::Value>,
         syms: &SymbolTable,
         kind: VTabKind,
+        exprs: &Option<Vec<ast::Expr>>,
     ) -> Result<Rc<Self>> {
         let module = syms
             .vtab_modules
@@ -544,19 +549,23 @@ impl VirtualTable {
                 )));
             }
         };
-        let schema = module.implementation.as_ref().init_schema(args)?;
+        let schema = module.implementation.as_ref().init_schema(&args)?;
+        for arg in args {
+            unsafe {
+                arg.free();
+            }
+        }
         let mut parser = Parser::new(schema.as_bytes());
         parser.reset(schema.as_bytes());
-        println!("Schema: {}", schema);
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
         )? {
             let columns = columns_from_create_table_body(&body)?;
             let vtab = Rc::new(VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
-                args: Some(args.to_vec()),
                 implementation: module.implementation.clone(),
                 columns,
+                args: exprs.clone(),
             });
             return Ok(vtab);
         }
@@ -565,24 +574,8 @@ impl VirtualTable {
         ))
     }
 
-    pub fn open(&self) -> VTabOpaqueCursor {
-        let args = if let Some(args) = &self.args {
-            args.iter()
-                .map(|e| std::ffi::CString::new(e.to_string()).unwrap().into_raw())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let cursor =
-            unsafe { (self.implementation.open)(args.as_slice().as_ptr(), args.len() as i32) };
-        // free the CString pointers
-        for arg in args {
-            unsafe {
-                if !arg.is_null() {
-                    let _ = std::ffi::CString::from_raw(arg);
-                }
-            }
-        }
+    pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
+        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
         VTabOpaqueCursor::new(cursor)
     }
 
@@ -620,7 +613,11 @@ impl VirtualTable {
 
     pub fn column(&self, cursor: &VTabOpaqueCursor, column: usize) -> Result<OwnedValue> {
         let val = unsafe { (self.implementation.column)(cursor.as_ptr(), column as u32) };
-        OwnedValue::from_ffi(&val)
+        let res = OwnedValue::from_ffi(&val)?;
+        unsafe {
+            val.free();
+        }
+        Ok(res)
     }
 
     pub fn next(&self, cursor: &VTabOpaqueCursor) -> Result<bool> {
@@ -632,7 +629,7 @@ impl VirtualTable {
         }
     }
 
-    pub fn update(&self, args: &[OwnedValue], rowid: Option<i64>) -> Result<Option<i64>> {
+    pub fn update(&self, args: &[OwnedValue]) -> Result<Option<i64>> {
         let arg_count = args.len();
         let mut ext_args = Vec::with_capacity(arg_count);
         for i in 0..arg_count {
@@ -650,7 +647,6 @@ impl VirtualTable {
             }?;
             ext_args.push(extvalue_arg);
         }
-        let rowid = rowid.unwrap_or(-1);
         let newrowid = 0i64;
         let implementation = self.implementation.as_ref();
         let rc = unsafe {
@@ -658,10 +654,14 @@ impl VirtualTable {
                 implementation as *const VTabModuleImpl as *mut std::ffi::c_void,
                 arg_count as i32,
                 ext_args.as_ptr(),
-                rowid,
                 &newrowid as *const _ as *mut i64,
             )
         };
+        for arg in ext_args {
+            unsafe {
+                arg.free();
+            }
+        }
         match rc {
             ResultCode::OK => Ok(None),
             ResultCode::RowID => Ok(Some(newrowid)),

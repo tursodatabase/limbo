@@ -111,7 +111,6 @@ impl Database {
             .borrow_mut()
             .vtab_modules
             .insert(name.to_string(), vmodule.into());
-        println!("Registered module: {}", name);
         ResultCode::OK
     }
 

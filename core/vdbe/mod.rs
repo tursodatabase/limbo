@@ -304,14 +304,19 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-pub struct VTabOpaqueCursor(*mut c_void);
+pub struct VTabOpaqueCursor(*const c_void);
 
 impl VTabOpaqueCursor {
-    pub fn new(cursor: *mut c_void) -> Self {
-        Self(cursor)
+    pub fn new(cursor: *const c_void) -> Result<Self> {
+        if cursor.is_null() {
+            return Err(LimboError::InternalError(
+                "VTabOpaqueCursor: cursor is null".into(),
+            ));
+        }
+        Ok(Self(cursor))
     }
 
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub fn as_ptr(&self) -> *const c_void {
         self.0
     }
 }
@@ -866,7 +871,7 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VOpenAsync on non-virtual table cursor");
                     };
-                    let cursor = virtual_table.open();
+                    let cursor = virtual_table.open()?;
                     state
                         .cursors
                         .borrow_mut()
@@ -882,7 +887,7 @@ impl Program {
                     let table_name = state.registers[*table_name].to_string();
                     let args = if let Some(args_reg) = args_reg {
                         if let OwnedValue::Record(rec) = &state.registers[*args_reg] {
-                            rec.get_values().iter().map(|v| v.to_string()).collect()
+                            rec.get_values().iter().map(|v| v.to_ffi()).collect()
                         } else {
                             return Err(LimboError::InternalError(
                                 "VCreate: args_reg is not a record".to_string(),
@@ -899,9 +904,10 @@ impl Program {
                     let table = crate::VirtualTable::from_args(
                         Some(&table_name),
                         &module_name,
-                        &args,
+                        args,
                         &conn.db.syms.borrow(),
                         limbo_ext::VTabKind::VirtualTable,
+                        &None,
                     )?;
                     {
                         conn.db
@@ -971,7 +977,6 @@ impl Program {
                                 .to_string(),
                         ));
                     }
-
                     let mut argv = Vec::with_capacity(*arg_count);
                     for i in 0..*arg_count {
                         if let Some(value) = state.registers.get(*start_reg + i) {
@@ -983,18 +988,10 @@ impl Program {
                             )));
                         }
                     }
-
-                    let current_rowid = match argv.first() {
-                        Some(OwnedValue::Integer(rowid)) => Some(*rowid),
-                        _ => None,
-                    };
-                    let insert_rowid = match argv.get(1) {
-                        Some(OwnedValue::Integer(rowid)) => Some(*rowid),
-                        _ => None,
-                    };
-
-                    let result = virtual_table.update(&argv, insert_rowid);
-
+                    // argv[0] = current_rowid (for DELETE if applicable)
+                    // argv[1] = insert_rowid (for INSERT if applicable)
+                    // argv[2..] = column values
+                    let result = virtual_table.update(&argv);
                     match result {
                         Ok(Some(new_rowid)) => {
                             if *conflict_action == 5 {
@@ -1005,9 +1002,11 @@ impl Program {
                             state.pc += 1;
                         }
                         Ok(None) => {
+                            // no-op or successful update without rowid return
                             state.pc += 1;
                         }
                         Err(e) => {
+                            // virtual table update failed
                             return Err(LimboError::ExtensionError(format!(
                                 "Virtual table update failed: {}",
                                 e
@@ -1355,11 +1354,30 @@ impl Program {
                         }
                     }
 
-                    let cursor = get_cursor_as_table_mut(&mut cursors, *cursor_id);
-                    if let Some(ref rowid) = cursor.rowid()? {
-                        state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                    if let Some(Cursor::Table(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        if let Some(ref rowid) = btree_cursor.rowid()? {
+                            state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
+                    } else if let Some(Cursor::Virtual(virtual_cursor)) =
+                        cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                        let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                            panic!("VUpdate on non-virtual table cursor");
+                        };
+                        let rowid = virtual_table.rowid(virtual_cursor);
+                        if rowid != 0 {
+                            state.registers[*dest] = OwnedValue::Integer(rowid);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
                     } else {
-                        state.registers[*dest] = OwnedValue::Null;
+                        return Err(LimboError::InternalError(
+                            "RowId: cursor is not a table or virtual cursor".to_string(),
+                        ));
                     }
                     state.pc += 1;
                 }

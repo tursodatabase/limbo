@@ -572,8 +572,8 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable) -> String {
     format!(
         "CREATE VIRTUAL TABLE {} {} USING {}{}",
         vtab.tbl_name.name.0,
-        vtab.module_name.0,
         if_not_exists,
+        vtab.module_name.0,
         if args.is_empty() {
             String::new()
         } else {
