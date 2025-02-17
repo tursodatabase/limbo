@@ -544,17 +544,12 @@ impl VirtualTable {
         if let VTabKind::VirtualTable = kind {
             if module.module_kind != VTabKind::VirtualTable {
                 return Err(LimboError::ExtensionError(format!(
-                    "Virtual table module {} is not a virtual table",
+                    "{} is not a virtual table module",
                     module_name
                 )));
             }
         };
-        let schema = module.implementation.as_ref().init_schema(&args)?;
-        for arg in args {
-            unsafe {
-                arg.free();
-            }
-        }
+        let schema = module.implementation.as_ref().init_schema(args)?;
         let mut parser = Parser::new(schema.as_bytes());
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
@@ -612,8 +607,7 @@ impl VirtualTable {
 
     pub fn column(&self, cursor: &VTabOpaqueCursor, column: usize) -> Result<OwnedValue> {
         let val = unsafe { (self.implementation.column)(cursor.as_ptr(), column as u32) };
-        let res = OwnedValue::from_ffi(val)?;
-        Ok(res)
+        OwnedValue::from_ffi(val)
     }
 
     pub fn next(&self, cursor: &VTabOpaqueCursor) -> Result<bool> {
@@ -627,27 +621,12 @@ impl VirtualTable {
 
     pub fn update(&self, args: &[OwnedValue]) -> Result<Option<i64>> {
         let arg_count = args.len();
-        let mut ext_args = Vec::with_capacity(arg_count);
-        for i in 0..arg_count {
-            let ownedvalue_arg = args.get(i).unwrap();
-            let extvalue_arg: ExtValue = match ownedvalue_arg {
-                OwnedValue::Null => Ok(ExtValue::null()),
-                OwnedValue::Integer(i) => Ok(ExtValue::from_integer(*i)),
-                OwnedValue::Float(f) => Ok(ExtValue::from_float(*f)),
-                OwnedValue::Text(t) => Ok(ExtValue::from_text(t.as_str().to_string())),
-                OwnedValue::Blob(b) => Ok(ExtValue::from_blob((**b).clone())),
-                other => Err(LimboError::ExtensionError(format!(
-                    "Unsupported value type: {:?}",
-                    other
-                ))),
-            }?;
-            ext_args.push(extvalue_arg);
-        }
+        let ext_args = args.iter().map(|arg| arg.to_ffi()).collect::<Vec<_>>();
         let newrowid = 0i64;
         let implementation = self.implementation.as_ref();
         let rc = unsafe {
             (self.implementation.update)(
-                implementation as *const VTabModuleImpl as *mut std::ffi::c_void,
+                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
                 arg_count as i32,
                 ext_args.as_ptr(),
                 &newrowid as *const _ as *mut i64,

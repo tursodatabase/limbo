@@ -74,10 +74,13 @@ pub struct VTabModuleImpl {
 }
 
 impl VTabModuleImpl {
-    pub fn init_schema(&self, args: &[Value]) -> ExtResult<String> {
+    pub fn init_schema(&self, args: Vec<Value>) -> ExtResult<String> {
         let schema = unsafe { (self.create_schema)(args.as_ptr(), args.len() as i32) };
         if schema.is_null() {
             return Err(ResultCode::InvalidArgs);
+        }
+        for arg in args {
+            unsafe { arg.free() };
         }
         let schema = unsafe { std::ffi::CString::from_raw(schema) };
         Ok(schema.to_string_lossy().to_string())

@@ -37,20 +37,21 @@ pub fn parse_schema_rows(
                 StepResult::Row => {
                     let row = rows.row().unwrap();
                     let ty = row.get::<&str>(0)?;
-                    if !["table", "index", "virtual"].contains(&ty) {
+                    if !["table", "index"].contains(&ty) {
                         continue;
                     }
                     match ty {
                         "table" => {
                             let root_page: i64 = row.get::<i64>(3)?;
                             let sql: &str = row.get::<&str>(4)?;
-                            let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
-                            schema.add_btree_table(Rc::new(table));
-                        }
-                        "virtual" => {
-                            let name: &str = row.get::<&str>(1)?;
-                            let vtab = syms.vtabs.get(name).unwrap().clone();
-                            schema.add_virtual_table(vtab);
+                            if root_page == 0 && sql.to_lowercase().contains("virtual") {
+                                let name: &str = row.get::<&str>(1)?;
+                                let vtab = syms.vtabs.get(name).unwrap().clone();
+                                schema.add_virtual_table(vtab);
+                            } else {
+                                let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
+                                schema.add_btree_table(Rc::new(table));
+                            }
                         }
                         "index" => {
                             let root_page: i64 = row.get::<i64>(3)?;

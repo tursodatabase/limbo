@@ -176,7 +176,6 @@ addr  opcode         p1    p2    p3    p4             p5  comment
 enum SchemaEntryType {
     Table,
     Index,
-    Virtual,
 }
 
 impl SchemaEntryType {
@@ -184,7 +183,6 @@ impl SchemaEntryType {
         match self {
             SchemaEntryType::Table => "table",
             SchemaEntryType::Index => "index",
-            SchemaEntryType::Virtual => "virtual",
         }
     }
 }
@@ -211,7 +209,7 @@ fn emit_schema_entry(
     program.emit_string8_new_reg(tbl_name.to_string());
 
     let rootpage_reg = program.alloc_register();
-    if matches!(entry_type, SchemaEntryType::Virtual) {
+    if root_page_reg == 0 {
         program.emit_insn(Insn::Integer {
             dest: rootpage_reg,
             value: 0, // virtual tables in sqlite always have rootpage=0
@@ -664,7 +662,7 @@ fn translate_create_virtual_table(
     emit_schema_entry(
         &mut program,
         sqlite_schema_cursor_id,
-        SchemaEntryType::Virtual,
+        SchemaEntryType::Table,
         &tbl_name.name.0,
         &tbl_name.name.0,
         0, // virtual tables dont have a root page
