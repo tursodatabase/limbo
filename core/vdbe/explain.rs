@@ -1101,6 +1101,36 @@ pub fn insn_to_str(
                 0,
                 format!("r[{}]=root iDb={} flags={}", root, db, flags),
             ),
+            Insn::Destroy {
+                root,
+                former_root_reg,
+                is_temp,
+            } => (
+                "Destroy",
+                *root as i32,
+                *former_root_reg as i32,
+                *is_temp as i32,
+                OwnedValue::build_text(&Rc::new("".to_string())),
+                0,
+                format!(
+                    "root iDb={} former_root={} is_temp={}",
+                    root, former_root_reg, is_temp
+                ),
+            ),
+            Insn::DropTable {
+                db,
+                _p2,
+                _p3,
+                table_name,
+            } => (
+                "DropTable",
+                *db as i32,
+                0,
+                0,
+                OwnedValue::build_text(&Rc::new(table_name.clone())),
+                0,
+                format!("DROP TABLE {}", table_name),
+            ),
             Insn::Close { cursor_id } => (
                 "Close",
                 *cursor_id as i32,
