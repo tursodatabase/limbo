@@ -499,7 +499,7 @@ pub fn try_extract_index_search_expression(
     table_reference: &TableReference,
     available_indexes: &HashMap<String, Vec<Rc<Index>>>,
 ) -> Result<Option<Search>> {
-    if cond.eval_at_loop != table_index {
+    if !cond.should_eval_at_loop(table_index) {
         return Ok(None);
     }
     match &mut cond.expr {
@@ -512,7 +512,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: rhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -526,7 +526,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: rhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -542,7 +542,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: lhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -556,7 +556,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: lhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -580,7 +580,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: rhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -604,7 +604,7 @@ pub fn try_extract_index_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: lhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at_loop: cond.eval_at_loop,
+                                eval_at: cond.eval_at,
                             },
                         }));
                     }
