@@ -443,7 +443,7 @@ def test_series(pipe):
     run_test(
         pipe,
         "SELECT * FROM generate_series(1, 10);",
-        lambda res: "Virtual table generate_series not found" in res,
+        lambda res: "Virtual table module not found: generate_series" in res,
     )
     run_test(pipe, f".load {ext_path}", returns_null)
     run_test(
