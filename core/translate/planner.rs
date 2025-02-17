@@ -9,9 +9,9 @@ use super::{
 use crate::{
     function::Func,
     schema::{Schema, Table},
-    util::{exprs_are_equivalent, normalize_ident},
+    util::{exprs_are_equivalent, normalize_ident, vtable_args},
     vdbe::BranchOffset,
-    Result, VirtualTable,
+    Result,
 };
 use limbo_sqlite3_parser::ast::{
     self, Expr, FromClause, JoinType, Limit, Materialized, UnaryOperator, With,
@@ -310,9 +310,18 @@ fn parse_from_clause_table<'a>(
                         ast::As::Elided(id) => id,
                     })
                     .map(|a| a.0);
+                let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
+                    Table::Virtual(tbl.clone())
+                } else if let Table::BTree(table) = table.as_ref() {
+                    Table::BTree(table.clone())
+                } else {
+                    return Err(crate::LimboError::InvalidArgument(
+                        "Table type not supported".to_string(),
+                    ));
+                };
                 scope.tables.push(TableReference {
                     op: Operation::Scan { iter_dir: None },
-                    table: Table::BTree(table.clone()),
+                    table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
                     join_info: None,
                 });
@@ -367,11 +376,17 @@ fn parse_from_clause_table<'a>(
                 .push(TableReference::new_subquery(identifier, subplan, None));
             Ok(())
         }
-        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
+        ast::SelectTable::TableCall(qualified_name, ref maybe_args, maybe_alias) => {
             let normalized_name = &normalize_ident(qualified_name.name.0.as_str());
-            let Some(vtab) = syms.vtabs.get(normalized_name) else {
-                crate::bail_parse_error!("Virtual table {} not found", normalized_name);
-            };
+            let args = vtable_args(maybe_args.as_ref().unwrap_or(&vec![]).as_slice());
+            let vtab = crate::VirtualTable::from_args(
+                None,
+                normalized_name,
+                args,
+                syms,
+                limbo_ext::VTabKind::TableValuedFunction,
+                maybe_args,
+            )?;
             let alias = maybe_alias
                 .as_ref()
                 .map(|a| match a {
@@ -383,18 +398,10 @@ fn parse_from_clause_table<'a>(
             scope.tables.push(TableReference {
                 op: Operation::Scan { iter_dir: None },
                 join_info: None,
-                table: Table::Virtual(
-                    VirtualTable {
-                        name: normalized_name.clone(),
-                        args: maybe_args,
-                        implementation: vtab.implementation.clone(),
-                        columns: vtab.columns.clone(),
-                    }
-                    .into(),
-                )
-                .into(),
-                identifier: alias.clone(),
+                table: Table::Virtual(vtab),
+                identifier: alias,
             });
+
             Ok(())
         }
         _ => todo!(),

@@ -169,13 +169,11 @@ macro_rules! call_external_function {
     ) => {{
         if $arg_count == 0 {
             let result_c_value: ExtValue = unsafe { ($func_ptr)(0, std::ptr::null()) };
-            match OwnedValue::from_ffi(&result_c_value) {
+            match OwnedValue::from_ffi(result_c_value) {
                 Ok(result_ov) => {
                     $state.registers[$dest_register] = result_ov;
-                    unsafe { result_c_value.free() };
                 }
                 Err(e) => {
-                    unsafe { result_c_value.free() };
                     return Err(e);
                 }
             }
@@ -188,13 +186,14 @@ macro_rules! call_external_function {
             }
             let argv_ptr = ext_values.as_ptr();
             let result_c_value: ExtValue = unsafe { ($func_ptr)($arg_count as i32, argv_ptr) };
-            match OwnedValue::from_ffi(&result_c_value) {
+            for arg in ext_values {
+                unsafe { arg.free() };
+            }
+            match OwnedValue::from_ffi(result_c_value) {
                 Ok(result_ov) => {
                     $state.registers[$dest_register] = result_ov;
-                    unsafe { result_c_value.free() };
                 }
                 Err(e) => {
-                    unsafe { result_c_value.free() };
                     return Err(e);
                 }
             }
@@ -304,14 +303,19 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-pub struct VTabOpaqueCursor(*mut c_void);
+pub struct VTabOpaqueCursor(*const c_void);
 
 impl VTabOpaqueCursor {
-    pub fn new(cursor: *mut c_void) -> Self {
-        Self(cursor)
+    pub fn new(cursor: *const c_void) -> Result<Self> {
+        if cursor.is_null() {
+            return Err(LimboError::InternalError(
+                "VTabOpaqueCursor: cursor is null".into(),
+            ));
+        }
+        Ok(Self(cursor))
     }
 
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub fn as_ptr(&self) -> *const c_void {
         self.0
     }
 }
@@ -866,11 +870,52 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VOpenAsync on non-virtual table cursor");
                     };
-                    let cursor = virtual_table.open();
+                    let cursor = virtual_table.open()?;
                     state
                         .cursors
                         .borrow_mut()
                         .insert(*cursor_id, Some(Cursor::Virtual(cursor)));
+                    state.pc += 1;
+                }
+                Insn::VCreate {
+                    module_name,
+                    table_name,
+                    args_reg,
+                } => {
+                    let module_name = state.registers[*module_name].to_string();
+                    let table_name = state.registers[*table_name].to_string();
+                    let args = if let Some(args_reg) = args_reg {
+                        if let OwnedValue::Record(rec) = &state.registers[*args_reg] {
+                            rec.get_values().iter().map(|v| v.to_ffi()).collect()
+                        } else {
+                            return Err(LimboError::InternalError(
+                                "VCreate: args_reg is not a record".to_string(),
+                            ));
+                        }
+                    } else {
+                        vec![]
+                    };
+                    let Some(conn) = self.connection.upgrade() else {
+                        return Err(crate::LimboError::ExtensionError(
+                            "Failed to upgrade Connection".to_string(),
+                        ));
+                    };
+                    let table = crate::VirtualTable::from_args(
+                        Some(&table_name),
+                        &module_name,
+                        args,
+                        &conn.db.syms.borrow(),
+                        limbo_ext::VTabKind::VirtualTable,
+                        &None,
+                    )?;
+                    {
+                        conn.db
+                            .syms
+                            .as_ref()
+                            .borrow_mut()
+                            .vtabs
+                            .insert(table_name, table.clone());
+                    }
                     state.pc += 1;
                 }
                 Insn::VOpenAwait => {
@@ -912,6 +957,59 @@ impl Program {
                     let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
                     state.registers[*dest] = virtual_table.column(cursor, *column)?;
                     state.pc += 1;
+                }
+                Insn::VUpdate {
+                    cursor_id,
+                    arg_count,
+                    start_reg,
+                    conflict_action,
+                    ..
+                } => {
+                    let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                    let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                        panic!("VUpdate on non-virtual table cursor");
+                    };
+
+                    if *arg_count < 2 {
+                        return Err(LimboError::InternalError(
+                            "VUpdate: arg_count must be at least 2 (rowid and insert_rowid)"
+                                .to_string(),
+                        ));
+                    }
+                    let mut argv = Vec::with_capacity(*arg_count);
+                    for i in 0..*arg_count {
+                        if let Some(value) = state.registers.get(*start_reg + i) {
+                            argv.push(value.clone());
+                        } else {
+                            return Err(LimboError::InternalError(format!(
+                                "VUpdate: register out of bounds at {}",
+                                *start_reg + i
+                            )));
+                        }
+                    }
+                    let result = virtual_table.update(&argv);
+                    match result {
+                        Ok(Some(new_rowid)) => {
+                            if *conflict_action == 5 {
+                                // ResolveType::Replace
+                                if let Some(conn) = self.connection.upgrade() {
+                                    conn.update_last_rowid(new_rowid as u64);
+                                }
+                            }
+                            state.pc += 1;
+                        }
+                        Ok(None) => {
+                            // no-op or successful update without rowid return
+                            state.pc += 1;
+                        }
+                        Err(e) => {
+                            // virtual table update failed
+                            return Err(LimboError::ExtensionError(format!(
+                                "Virtual table update failed: {}",
+                                e
+                            )));
+                        }
+                    }
                 }
                 Insn::VNext {
                     cursor_id,
@@ -1253,11 +1351,30 @@ impl Program {
                         }
                     }
 
-                    let cursor = get_cursor_as_table_mut(&mut cursors, *cursor_id);
-                    if let Some(ref rowid) = cursor.rowid()? {
-                        state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                    if let Some(Cursor::Table(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        if let Some(ref rowid) = btree_cursor.rowid()? {
+                            state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
+                    } else if let Some(Cursor::Virtual(virtual_cursor)) =
+                        cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                        let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                            panic!("VUpdate on non-virtual table cursor");
+                        };
+                        let rowid = virtual_table.rowid(virtual_cursor);
+                        if rowid != 0 {
+                            state.registers[*dest] = OwnedValue::Integer(rowid);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
                     } else {
-                        state.registers[*dest] = OwnedValue::Null;
+                        return Err(LimboError::InternalError(
+                            "RowId: cursor is not a table or virtual cursor".to_string(),
+                        ));
                     }
                     state.pc += 1;
                 }
@@ -1740,6 +1857,9 @@ impl Program {
                                 }
                                 let argv_ptr = ext_values.as_ptr();
                                 unsafe { step_fn(state_ptr, argc as i32, argv_ptr) };
+                                for ext_value in ext_values {
+                                    unsafe { ext_value.free() };
+                                }
                             }
                         }
                     };
@@ -2724,8 +2844,13 @@ impl Program {
                         where_clause
                     ))?;
                     let mut schema = RefCell::borrow_mut(&conn.schema);
-                    // TODO: This function below is synchronous, make it not async
-                    parse_schema_rows(Some(stmt), &mut schema, conn.pager.io.clone())?;
+                    // TODO: This function below is synchronous, make it async
+                    parse_schema_rows(
+                        Some(stmt),
+                        &mut schema,
+                        conn.pager.io.clone(),
+                        &conn.db.syms.borrow(),
+                    )?;
                     state.pc += 1;
                 }
                 Insn::ReadCookie { db, dest, cookie } => {
