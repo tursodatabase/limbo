@@ -407,6 +407,7 @@ impl Value {
         }
     }
 
+    /// Extension authors should __not__ use this function.
     /// # Safety
     /// consumes the value while freeing the underlying memory with null check.
     /// however this does assume that the type was properly constructed with

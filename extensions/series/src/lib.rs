@@ -25,7 +25,7 @@ impl VTabModule for GenerateSeriesVTab {
     const NAME: &'static str = "generate_series";
     const VTAB_KIND: VTabKind = VTabKind::TableValuedFunction;
 
-    fn create_schema(_args: &[String]) -> String {
+    fn create_schema(_args: &[Value]) -> String {
         // Create table schema
         "CREATE TABLE generate_series(
             value INTEGER,
@@ -36,7 +36,7 @@ impl VTabModule for GenerateSeriesVTab {
         .into()
     }
 
-    fn open(_args: &[String]) -> Result<Self::VCursor, Self::Error> {
+    fn open(&self) -> Result<Self::VCursor, Self::Error> {
         Ok(GenerateSeriesCursor {
             start: 0,
             stop: 0,
@@ -45,9 +45,9 @@ impl VTabModule for GenerateSeriesVTab {
         })
     }
 
-    fn filter(cursor: &mut Self::VCursor, arg_count: i32, args: &[Value]) -> ResultCode {
+    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode {
         // args are the start, stop, and step
-        if arg_count == 0 || arg_count > 3 {
+        if args.is_empty() || args.len() > 3 {
             return ResultCode::InvalidArgs;
         }
         let start = try_option!(args[0].to_integer(), ResultCode::InvalidArgs);
@@ -90,10 +90,6 @@ impl VTabModule for GenerateSeriesVTab {
 
     fn eof(cursor: &Self::VCursor) -> bool {
         cursor.eof()
-    }
-
-    fn update(&mut self, _args: &[Value], _rowid: Option<i64>) -> Result<Option<i64>, Self::Error> {
-        Ok(None)
     }
 }
 
@@ -233,7 +229,8 @@ mod tests {
     }
     // Helper function to collect all values from a cursor, returns Result with error code
     fn collect_series(series: Series) -> Result<Vec<i64>, ResultCode> {
-        let mut cursor = GenerateSeriesVTab::open()?;
+        let tbl = GenerateSeriesVTab;
+        let mut cursor = tbl.open()?;
 
         // Create args array for filter
         let args = vec![
@@ -243,7 +240,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        match GenerateSeriesVTab::filter(&mut cursor, 3, &args) {
+        match GenerateSeriesVTab::filter(&mut cursor, &args) {
             ResultCode::OK => (),
             ResultCode::EOF => return Ok(vec![]),
             err => return Err(err),
@@ -549,8 +546,8 @@ mod tests {
         let start = series.start;
         let stop = series.stop;
         let step = series.step;
-
-        let mut cursor = GenerateSeriesVTab::open().unwrap();
+        let tbl = GenerateSeriesVTab::default();
+        let mut cursor = tbl.open().unwrap();
 
         let args = vec![
             Value::from_integer(start),
@@ -559,7 +556,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        GenerateSeriesVTab::filter(&mut cursor, 3, &args);
+        GenerateSeriesVTab::filter(&mut cursor, &args);
 
         let mut rowids = vec![];
         while !GenerateSeriesVTab::eof(&cursor) {

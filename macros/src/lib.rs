@@ -383,10 +383,20 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///      cursor.index >= cursor.rows.len()
 ///  }
 ///
-/// /// Update the row with the provided values, return the new rowid if provided
-///  fn update(&mut self, args: &[Value], rowid: Option<i64>) -> Result<Option<i64>, Self::Error> {
+/// /// **Optional** methods for non-readonly tables:
+///
+///  /// Update the row with the provided values, return the new rowid
+///  fn update(&mut self, rowid: i64, args: &[Value]) -> Result<Option<i64>, Self::Error> {
 ///      Ok(None)// return Ok(None) for read-only
 ///  }
+///  /// Insert a new row with the provided values, return the new rowid
+///  fn insert(&mut self, args: &[Value]) -> Result<(), Self::Error> {
+///      Ok(()) //
+///  }
+///  /// Delete the row with the provided rowid
+///  fn delete(&mut self, rowid: i64) -> Result<(), Self::Error> {
+///    Ok(())
+/// }
 ///
 ///  #[derive(Debug)]
 /// struct CsvCursor {
@@ -431,44 +441,40 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let next_fn_name = format_ident!("next_{}", struct_name);
     let eof_fn_name = format_ident!("eof_{}", struct_name);
     let update_fn_name = format_ident!("update_{}", struct_name);
+    let rowid_fn_name = format_ident!("rowid_{}", struct_name);
 
     let expanded = quote! {
         impl #struct_name {
             #[no_mangle]
             unsafe extern "C" fn #create_schema_fn_name(
-                argv: *const *mut ::std::ffi::c_char, argc: i32
+                argv: *const ::limbo_ext::Value, argc: i32
             ) -> *mut ::std::ffi::c_char {
                 let args = if argv.is_null() {
-                    Vec::new()
+                    &Vec::new()
                 } else {
-                    ::std::slice::from_raw_parts(argv, argc as usize).iter().map(|s| {
-                        ::std::ffi::CStr::from_ptr(*s).to_string_lossy().to_string()
-                    }).collect::<Vec<String>>()
+                    ::std::slice::from_raw_parts(argv, argc as usize)
                 };
                 let sql = <#struct_name as ::limbo_ext::VTabModule>::create_schema(&args);
                 ::std::ffi::CString::new(sql).unwrap().into_raw()
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(argv: *const *mut ::std::ffi::c_char, argc: i32) -> *mut ::std::ffi::c_void {
-                let args = if argv.is_null() {
-                    Vec::new()
+            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void) -> *const ::std::ffi::c_void {
+                if ctx.is_null() {
+                    return ::std::ptr::null();
+                }
+                let ctx  = ctx as *const #struct_name;
+                let ctx: &#struct_name = &*ctx;
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx) {
+                    return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *const ::std::ffi::c_void;
                 } else {
-                    ::std::slice::from_raw_parts(argv, argc as usize).iter().map(|s| {
-                        ::std::ffi::CStr::from_ptr(*s).to_string_lossy().to_string()
-                    }).collect::<Vec<String>>()
-                };
-                let schema = <#struct_name as ::limbo_ext::VTabModule>::create_schema(&args);
-                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(&args) {
-                return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *mut ::std::ffi::c_void;
-                } else {
-                    return ::std::ptr::null_mut();
+                    return ::std::ptr::null();
                 }
             }
 
             #[no_mangle]
             unsafe extern "C" fn #filter_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
                 argc: i32,
                 argv: *const ::limbo_ext::Value,
             ) -> ::limbo_ext::ResultCode {
@@ -477,12 +483,12 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 }
                 let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
                 let args = ::std::slice::from_raw_parts(argv, argc as usize);
-                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, argc, args)
+                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, args)
             }
 
             #[no_mangle]
             unsafe extern "C" fn #column_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
                 idx: u32,
             ) -> ::limbo_ext::Value {
                 if cursor.is_null() {
@@ -497,56 +503,86 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
 
             #[no_mangle]
             unsafe extern "C" fn #next_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
             ) -> ::limbo_ext::ResultCode {
                 if cursor.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
-                let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
+                let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
                 <#struct_name as ::limbo_ext::VTabModule>::next(cursor)
             }
 
             #[no_mangle]
             unsafe extern "C" fn #eof_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
             ) -> bool {
                 if cursor.is_null() {
                     return true;
                 }
-                let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
+                let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
                 <#struct_name as ::limbo_ext::VTabModule>::eof(cursor)
             }
 
             #[no_mangle]
             unsafe extern "C" fn #update_fn_name(
-                vtab: *mut ::std::ffi::c_void,
+                vtab: *const ::std::ffi::c_void,
                 argc: i32,
                 argv: *const ::limbo_ext::Value,
-                rowid: i64,
                 p_out_rowid: *mut i64,
-                ) -> ::limbo_ext::ResultCode {
+            ) -> ::limbo_ext::ResultCode {
                 if vtab.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
+
                 let vtab = &mut *(vtab as *mut #struct_name);
                 let args = ::std::slice::from_raw_parts(argv, argc as usize);
-                let rowid = if rowid == -1 {
-                    None
-                } else {
-                    Some(rowid as i64)
+
+                let old_rowid = match args.get(0).map(|v| v.value_type()) {
+                    Some(::limbo_ext::ValueType::Integer) => args.get(0).unwrap().to_integer(),
+                    _ => None,
                 };
-                let result = <#struct_name as ::limbo_ext::VTabModule>::update(vtab, args, rowid);
-                match result {
-                    Ok(Some(rowid)) => {
-                        // set the output rowid if it was provided
-                        *p_out_rowid = rowid;
-                        ::limbo_ext::ResultCode::RowID
+                let new_rowid = match args.get(1).map(|v| v.value_type()) {
+                    Some(::limbo_ext::ValueType::Integer) => args.get(1).unwrap().to_integer(),
+                    _ => None,
+                };
+                let columns = &args[2..];
+                match (old_rowid, new_rowid) {
+                    // DELETE: old_rowid provided, no new_rowid
+                    (Some(old), None) => {
+                     if <#struct_name as VTabModule>::delete(vtab, old).is_err() {
+                            return ::limbo_ext::ResultCode::Error;
+                      }
+                            return ::limbo_ext::ResultCode::OK;
                     }
-                    Ok(None) => ::limbo_ext::ResultCode::OK,
-                    Err(_) => ::limbo_ext::ResultCode::Error,
+                    // UPDATE: old_rowid provided and new_rowid may exist
+                    (Some(old), Some(new)) => {
+                        if <#struct_name as VTabModule>::update(vtab, old, &columns).is_err() {
+                            return ::limbo_ext::ResultCode::Error;
+                        }
+                        return ::limbo_ext::ResultCode::OK;
+                    }
+                    // INSERT: no old_rowid (old_rowid = None)
+                    (None, _) => {
+                        if let Ok(rowid) = <#struct_name as VTabModule>::insert(vtab, &columns) {
+                            if !p_out_rowid.is_null() {
+                                *p_out_rowid = rowid;
+                                 return ::limbo_ext::ResultCode::RowID;
+                            }
+                            return ::limbo_ext::ResultCode::OK;
+                        }
+                    }
                 }
+                return ::limbo_ext::ResultCode::Error;
             }
 
+            #[no_mangle]
+            pub unsafe extern "C" fn #rowid_fn_name(ctx: *const ::std::ffi::c_void) -> i64 {
+                if ctx.is_null() {
+                    return -1;
+                }
+                let cursor = &*(ctx as *const <#struct_name as ::limbo_ext::VTabModule>::VCursor);
+                <<#struct_name as ::limbo_ext::VTabModule>::VCursor as ::limbo_ext::VTabCursor>::rowid(cursor)
+            }
 
             #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
@@ -560,7 +596,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
                 let table_instance = ::std::boxed::Box::into_raw(::std::boxed::Box::new(#struct_name::default()));
                 let module = ::limbo_ext::VTabModuleImpl {
-                    ctx: table_instance as *mut ::std::ffi::c_void,
+                    ctx: table_instance as *const ::std::ffi::c_void,
                     name: name_c,
                     create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
@@ -569,6 +605,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     next: Self::#next_fn_name,
                     eof: Self::#eof_fn_name,
                     update: Self::#update_fn_name,
+                    rowid: Self::#rowid_fn_name,
                 };
                 (api.register_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }

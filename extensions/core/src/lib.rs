@@ -61,7 +61,7 @@ pub trait AggFunc {
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct VTabModuleImpl {
-    pub ctx: *mut c_void,
+    pub ctx: *const c_void,
     pub name: *const c_char,
     pub create_schema: VtabFnCreateSchema,
     pub open: VtabFnOpen,
@@ -70,18 +70,12 @@ pub struct VTabModuleImpl {
     pub next: VtabFnNext,
     pub eof: VtabFnEof,
     pub update: VtabFnUpdate,
+    pub rowid: VtabRowIDFn,
 }
 
 impl VTabModuleImpl {
-    pub fn init_schema(&self, args: &[String]) -> ExtResult<String> {
-        let c_args = args
-            .iter()
-            .map(|s| std::ffi::CString::new(s.as_bytes()).unwrap().into_raw())
-            .collect::<Vec<_>>();
-        let schema = unsafe { (self.create_schema)(c_args.as_ptr(), c_args.len() as i32) };
-        c_args.into_iter().for_each(|s| unsafe {
-            let _ = std::ffi::CString::from_raw(s);
-        });
+    pub fn init_schema(&self, args: &[Value]) -> ExtResult<String> {
+        let schema = unsafe { (self.create_schema)(args.as_ptr(), args.len() as i32) };
         if schema.is_null() {
             return Err(ResultCode::InvalidArgs);
         }
@@ -90,25 +84,25 @@ impl VTabModuleImpl {
     }
 }
 
-pub type VtabFnCreateSchema =
-    unsafe extern "C" fn(args: *const *mut c_char, argc: i32) -> *mut c_char;
+pub type VtabFnCreateSchema = unsafe extern "C" fn(args: *const Value, argc: i32) -> *mut c_char;
 
-pub type VtabFnOpen = unsafe extern "C" fn(args: *const *mut c_char, argc: i32) -> *mut c_void;
+pub type VtabFnOpen = unsafe extern "C" fn(*const c_void) -> *const c_void;
 
 pub type VtabFnFilter =
-    unsafe extern "C" fn(cursor: *mut c_void, argc: i32, argv: *const Value) -> ResultCode;
+    unsafe extern "C" fn(cursor: *const c_void, argc: i32, argv: *const Value) -> ResultCode;
 
-pub type VtabFnColumn = unsafe extern "C" fn(cursor: *mut c_void, idx: u32) -> Value;
+pub type VtabFnColumn = unsafe extern "C" fn(cursor: *const c_void, idx: u32) -> Value;
 
-pub type VtabFnNext = unsafe extern "C" fn(cursor: *mut c_void) -> ResultCode;
+pub type VtabFnNext = unsafe extern "C" fn(cursor: *const c_void) -> ResultCode;
 
-pub type VtabFnEof = unsafe extern "C" fn(cursor: *mut c_void) -> bool;
+pub type VtabFnEof = unsafe extern "C" fn(cursor: *const c_void) -> bool;
+
+pub type VtabRowIDFn = unsafe extern "C" fn(cursor: *const c_void) -> i64;
 
 pub type VtabFnUpdate = unsafe extern "C" fn(
-    vtab: *mut c_void,
+    vtab: *const c_void,
     argc: i32,
     argv: *const Value,
-    rowid: i64,
     p_out_rowid: *mut i64,
 ) -> ResultCode;
 
@@ -125,13 +119,21 @@ pub trait VTabModule: 'static {
     const NAME: &'static str;
     type Error: std::fmt::Display;
 
-    fn create_schema(args: &[String]) -> String;
-    fn open(args: &[String]) -> Result<Self::VCursor, Self::Error>;
-    fn filter(cursor: &mut Self::VCursor, arg_count: i32, args: &[Value]) -> ResultCode;
+    fn create_schema(args: &[Value]) -> String;
+    fn open(&self) -> Result<Self::VCursor, Self::Error>;
+    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode;
     fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error>;
     fn next(cursor: &mut Self::VCursor) -> ResultCode;
     fn eof(cursor: &Self::VCursor) -> bool;
-    fn update(&mut self, args: &[Value], rowid: Option<i64>) -> Result<Option<i64>, Self::Error>;
+    fn update(&mut self, _rowid: i64, _args: &[Value]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn insert(&mut self, _args: &[Value]) -> Result<i64, Self::Error> {
+        Ok(0)
+    }
+    fn delete(&mut self, _rowid: i64) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub trait VTabCursor: Sized {
