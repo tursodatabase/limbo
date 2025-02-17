@@ -468,6 +468,47 @@ def test_series(pipe):
     )
 
 
+def test_kv(pipe):
+    ext_path = "./target/debug/liblimbo_kv"
+    run_test(
+        pipe,
+        "create virtual table t using kv_store;",
+        lambda res: "Virtual table module not found: kv_store" in res,
+    )
+    run_test(pipe, f".load {ext_path}", returns_null)
+    run_test(
+        pipe,
+        "create virtual table t using kv_store;",
+        returns_null,
+        "can create kv_store vtable",
+    )
+    run_test(
+        pipe,
+        "insert into t values ('hello', 'world');",
+        returns_null,
+        "can insert into kv_store vtable",
+    )
+    run_test(
+        pipe,
+        "select value from t where key = 'hello';",
+        lambda res: "world" == res,
+        "can select from kv_store",
+    )
+    run_test(
+        pipe,
+        "delete from t where key = 'hello';",
+        returns_null,
+        "can delete from kv_store",
+    )
+    run_test(pipe, "insert into t values ('other', 'value');", returns_null)
+    run_test(
+        pipe,
+        "select value from t where key = 'hello';",
+        lambda res: "" == res,
+        "proper data is deleted",
+    )
+
+
 def main():
     pipe = init_limbo()
     try:
@@ -476,6 +517,7 @@ def main():
         test_aggregates(pipe)
         test_crypto(pipe)
         test_series(pipe)
+        test_kv(pipe)
 
     except Exception as e:
         print(f"Test FAILED: {e}")
