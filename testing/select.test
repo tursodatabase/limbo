@@ -160,3 +160,8 @@ do_execsql_test select-like-expression {
 do_execsql_test select-not-like-expression {
     select 'bar' not like 'bar%'
 } {0}
+
+# regression test for float divisor being cast to zero int and panicking
+do_execsql_test select-like-expression {
+    select 2 % 0.5
+} {}
