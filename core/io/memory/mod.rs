@@ -32,7 +32,7 @@ const PAGE_SIZE: usize = 4096;
 pub type MemPage = [u8];
 
 #[cfg(not(target_family = "unix"))]
-pub type MemPage = [u8; PAGE_SIZE];
+pub type MemPage = Box<[u8; PAGE_SIZE]>;
 
 const INITIAL_PAGES: OnceCell<usize> = OnceCell::new();
 const DEFAULT_INITIAL_PAGES: usize = 16;
@@ -87,7 +87,9 @@ impl MemoryIO {
         {
             unsafe {
                 let pages = &mut *self.pages.get();
-                Ok(pages.entry(page_no).or_insert_with(|| [0; PAGE_SIZE]))
+                Ok(pages
+                    .entry(page_no)
+                    .or_insert_with(|| Box::new([0; PAGE_SIZE])))
             }
         }
     }

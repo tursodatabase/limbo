@@ -1,8 +1,8 @@
 //! Normal memory page using btree
 
 use crate::Result;
-use std::collections::BTreeMap;
 use core::ops::{Deref, DerefMut};
+use std::collections::BTreeMap;
 
 use super::MemPage;
 
