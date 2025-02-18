@@ -2520,6 +2520,9 @@ impl Program {
                         _ => unreachable!("Not a record! Cannot insert a non record value."),
                     };
                     let key = &state.registers[*key_reg];
+                    // NOTE(pere): Sending moved_before == true is okay because we moved before but
+                    // if we were to set to false after starting a balance procedure, it might
+                    // leave undefined state.
                     return_if_io!(cursor.insert(key, record, true));
                     state.pc += 1;
                 }
