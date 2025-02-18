@@ -995,8 +995,11 @@ pub fn read_value(buf: &[u8], serial_type: &SerialType) -> Result<(OwnedValue, u
             if buf.len() < 3 {
                 crate::bail_corrupt_error!("Invalid BEInt24 value");
             }
+            let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
             Ok((
-                OwnedValue::Integer(i32::from_be_bytes([0, buf[0], buf[1], buf[2]]) as i64),
+                OwnedValue::Integer(
+                    i32::from_be_bytes([sign_extension, buf[0], buf[1], buf[2]]) as i64
+                ),
                 3,
             ))
         }
@@ -1013,9 +1016,17 @@ pub fn read_value(buf: &[u8], serial_type: &SerialType) -> Result<(OwnedValue, u
             if buf.len() < 6 {
                 crate::bail_corrupt_error!("Invalid BEInt48 value");
             }
+            let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
             Ok((
                 OwnedValue::Integer(i64::from_be_bytes([
-                    0, 0, buf[0], buf[1], buf[2], buf[3], buf[4], buf[5],
+                    sign_extension,
+                    sign_extension,
+                    buf[0],
+                    buf[1],
+                    buf[2],
+                    buf[3],
+                    buf[4],
+                    buf[5],
                 ])),
                 6,
             ))
@@ -1419,6 +1430,18 @@ mod tests {
     #[case(&[], SerialType::ConstInt1, OwnedValue::Integer(1))]
     #[case(&[1, 2, 3], SerialType::Blob(3), OwnedValue::Blob(vec![1, 2, 3].into()))]
     #[case(&[65, 66, 67], SerialType::String(3), OwnedValue::build_text("ABC"))]
+    #[case(&[0x80], SerialType::Int8, OwnedValue::Integer(-128))]
+    #[case(&[0x80, 0], SerialType::BEInt16, OwnedValue::Integer(-32768))]
+    #[case(&[0x80, 0, 0], SerialType::BEInt24, OwnedValue::Integer(-8388608))]
+    #[case(&[0x80, 0, 0, 0], SerialType::BEInt32, OwnedValue::Integer(-2147483648))]
+    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::BEInt48, OwnedValue::Integer(-140737488355328))]
+    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::BEInt64, OwnedValue::Integer(-9223372036854775808))]
+    #[case(&[0x7f], SerialType::Int8, OwnedValue::Integer(127))]
+    #[case(&[0x7f, 0xff], SerialType::BEInt16, OwnedValue::Integer(32767))]
+    #[case(&[0x7f, 0xff, 0xff], SerialType::BEInt24, OwnedValue::Integer(8388607))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::BEInt32, OwnedValue::Integer(2147483647))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::BEInt48, OwnedValue::Integer(140737488355327))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::BEInt64, OwnedValue::Integer(9223372036854775807))]
     fn test_read_value(
         #[case] buf: &[u8],
         #[case] serial_type: SerialType,

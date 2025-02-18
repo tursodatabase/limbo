@@ -27,7 +27,7 @@ pub struct Opts {
     pub database: Option<PathBuf>,
     #[clap(index = 2, help = "Optional SQL command to execute")]
     pub sql: Option<String>,
-    #[clap(short = 'm', long, default_value_t = OutputMode::Raw)]
+    #[clap(short = 'm', long, default_value_t = OutputMode::List)]
     pub output_mode: OutputMode,
     #[clap(short, long, default_value = "")]
     pub output: String,
@@ -73,7 +73,7 @@ pub enum Command {
     Cwd,
     /// Display information about settings
     ShowInfo,
-    /// Set the value of NULL to be printed in 'raw' mode
+    /// Set the value of NULL to be printed in 'list' mode
     NullValue,
     /// Toggle 'echo' mode to repeat commands before execution
     Echo,
@@ -117,7 +117,7 @@ impl Command {
             Self::Help => ".help",
             Self::Schema => ".schema ?<table>?",
             Self::Opcodes => ".opcodes",
-            Self::OutputMode => ".mode raw|pretty",
+            Self::OutputMode => ".mode list|pretty",
             Self::SetOutput => ".output ?file?",
             Self::Cwd => ".cd <directory>",
             Self::ShowInfo => ".show",
@@ -398,7 +398,7 @@ impl<'a> Limbo<'a> {
             Ok(file) => {
                 self.writer = Box::new(file);
                 self.opts.is_stdout = false;
-                self.opts.output_mode = OutputMode::Raw;
+                self.opts.output_mode = OutputMode::List;
                 self.opts.output_filename = path.to_string();
                 Ok(())
             }
@@ -636,7 +636,7 @@ impl<'a> Limbo<'a> {
     ) -> anyhow::Result<()> {
         match output {
             Ok(Some(ref mut rows)) => match self.opts.output_mode {
-                OutputMode::Raw => loop {
+                OutputMode::List => loop {
                     if self.interrupt_count.load(Ordering::SeqCst) > 0 {
                         println!("Query interrupted.");
                         return Ok(());

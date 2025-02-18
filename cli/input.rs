@@ -44,7 +44,7 @@ impl Default for Io {
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum OutputMode {
-    Raw,
+    List,
     Pretty,
 }
 
@@ -154,7 +154,7 @@ Special Commands:
 .quit                      Stop interpreting input stream and exit.
 .show                      Display current settings.
 .open <database_file>      Open and connect to a database file.
-.output <mode>             Change the output mode. Available modes are 'raw' and 'pretty'.
+.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'.
 .schema <table_name>       Show the schema of the specified table.
 .tables <pattern>          List names of tables matching LIKE pattern TABLE
 .opcodes                   Display all the opcodes defined by the virtual machine

@@ -1,4 +1,5 @@
 use limbo_core::{CheckpointStatus, Connection, Database, IO};
+use rand::{rng, RngCore};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ pub struct TempDatabase {
 #[allow(dead_code, clippy::arc_with_non_send_sync)]
 impl TempDatabase {
     pub fn new_empty() -> Self {
-        Self::new("test.db")
+        Self::new(&format!("test-{}.db", rng().next_u32()))
     }
 
     pub fn new(db_name: &str) -> Self {
