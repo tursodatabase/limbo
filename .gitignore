@@ -32,3 +32,4 @@ dist/
 
 # testing
 testing/limbo_output.txt
+**/limbo_output.txt

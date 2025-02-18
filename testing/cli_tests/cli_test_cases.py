@@ -142,7 +142,7 @@ def test_output_file():
 
     expected_lines = {
         f"Output: {output_filename}": "Can direct output to a file",
-        "Output mode: raw": "Output mode remains raw when output is redirected",
+        "Output mode: list": "Output mode remains list when output is redirected",
         "Error: pretty output can only be written to a tty": "Error message for pretty mode",
         "SELECT 'TEST_ECHO'": "Echoed command",
         "TEST_ECHO": "Echoed result",
