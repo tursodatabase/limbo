@@ -87,9 +87,7 @@ impl MemoryIO {
         {
             unsafe {
                 let pages = &mut *self.pages.get();
-                pages
-                    .entry(page_no)
-                    .or_insert_with(|| Box::new([0; PAGE_SIZE]))
+                Ok(pages.entry(page_no).or_insert_with(|| [0; PAGE_SIZE]))
             }
         }
     }
@@ -117,6 +115,7 @@ impl MemoryIO {
         }
     }
 
+    #[cfg(target_family = "unix")]
     fn resize(&self, capacity: usize) -> Result<()> {
         let pages = unsafe { &mut *self.pages.get() };
         let new_cap = PAGE_SIZE * capacity;

@@ -2,6 +2,7 @@
 
 use crate::Result;
 use std::collections::BTreeMap;
+use core::ops::{Deref, DerefMut};
 
 use super::MemPage;
 
@@ -15,5 +16,18 @@ impl MemoryPages {
         Ok(MemoryPages {
             inner: BTreeMap::new(),
         })
+    }
+}
+
+impl Deref for MemoryPages {
+    type Target = BTreeMap<usize, MemPage>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for MemoryPages {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
