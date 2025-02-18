@@ -36,9 +36,6 @@ rustix = {version = "0.38.34", default-features = true, features = ["mm"]}
 mimalloc = { version = "*", default-features = false }
 libloading = "0.8.6"
 
-[target.'cfg(not(target_family = "unix"))'.dependencies]
-memmap2 = "0.9.5"
-
 [dependencies]
 limbo_ext = { workspace = true }
 cfg_block = "0.1.1"

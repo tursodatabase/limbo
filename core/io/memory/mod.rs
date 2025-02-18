@@ -2,13 +2,13 @@
 mod mmap_rustix;
 
 #[cfg(target_family = "unix")]
-use mmap_rustix::MmapAnon;
+use mmap_rustix::MemoryPages;
 
 #[cfg(not(target_family = "unix"))]
-mod mmap;
+mod btree;
 
 #[cfg(not(target_family = "unix"))]
-use mmap::MmapAnon;
+use btree::MemoryPages;
 
 use super::{Buffer, Completion, File, OpenFlags, IO};
 use crate::Result;
@@ -23,12 +23,17 @@ use tracing::debug;
 
 pub struct MemoryIO {
     size: Cell<usize>,
-    pages: UnsafeCell<MmapAnon>,
+    pages: UnsafeCell<MemoryPages>,
 }
 
 // TODO: page size flag
 const PAGE_SIZE: usize = 4096;
-type MemPage = [u8];
+#[cfg(target_family = "unix")]
+pub type MemPage = [u8];
+
+#[cfg(not(target_family = "unix"))]
+pub type MemPage = [u8; PAGE_SIZE];
+
 const INITIAL_PAGES: OnceCell<usize> = OnceCell::new();
 const DEFAULT_INITIAL_PAGES: usize = 16;
 
@@ -52,44 +57,63 @@ impl MemoryIO {
         Ok(Arc::new(Self {
             size: 0.into(),
             // Initial default size of 4kb * 16 pages = 64kb
-            pages: MmapAnon::new(PAGE_SIZE * initial_pages)?.into(),
+            pages: MemoryPages::new(PAGE_SIZE * initial_pages)?.into(),
         }))
     }
 
     #[allow(clippy::mut_from_ref)]
     fn get_or_allocate_page(&self, page_no: usize) -> Result<&mut MemPage> {
-        let start = page_no * PAGE_SIZE;
-        let end = start + PAGE_SIZE;
-        let len_pages = unsafe {
-            let page = &mut *self.pages.get();
-            page.len()
-        };
+        #[cfg(target_family = "unix")]
+        {
+            let start = page_no * PAGE_SIZE;
+            let end = start + PAGE_SIZE;
+            let len_pages = unsafe {
+                let page = &mut *self.pages.get();
+                page.len()
+            };
 
-        if end > len_pages {
-            let cap_pages = len_pages / PAGE_SIZE;
-            self.resize(cap_pages * 2)?;
+            if end > len_pages {
+                let cap_pages = len_pages / PAGE_SIZE;
+                self.resize(cap_pages * 2)?;
+            }
+
+            let page = unsafe {
+                let page = &mut *self.pages.get();
+                &mut page[start..end]
+            };
+            Ok(page)
         }
-
-        let page = unsafe {
-            let page = &mut *self.pages.get();
-            &mut page[start..end]
-        };
-        Ok(page)
+        #[cfg(not(target_family = "unix"))]
+        {
+            unsafe {
+                let pages = &mut *self.pages.get();
+                pages
+                    .entry(page_no)
+                    .or_insert_with(|| Box::new([0; PAGE_SIZE]))
+            }
+        }
     }
 
     fn get_page(&self, page_no: usize) -> Option<&MemPage> {
-        let start = page_no * PAGE_SIZE;
-        let end = start + PAGE_SIZE;
-        let pages = unsafe { &mut *self.pages.get() };
+        #[cfg(target_family = "unix")]
+        {
+            let start = page_no * PAGE_SIZE;
+            let end = start + PAGE_SIZE;
+            let pages = unsafe { &mut *self.pages.get() };
 
-        // Make sure that we are accessing into a valid memory page
-        assert!(end <= pages.len());
+            // Make sure that we are accessing into a valid memory page
+            assert!(end <= pages.len());
 
-        let page = &pages[start..end];
-        if page.is_empty() {
-            None
-        } else {
-            Some(page)
+            let page = &pages[start..end];
+            if page.is_empty() {
+                None
+            } else {
+                Some(page)
+            }
+        }
+        #[cfg(not(target_family = "unix"))]
+        unsafe {
+            (*self.pages.get()).get(&page_no)
         }
     }
 
@@ -103,7 +127,7 @@ impl MemoryIO {
 
         #[cfg(not(target_os = "linux"))]
         {
-            let mut new_pages = MmapAnon::new(new_cap)?;
+            let mut new_pages = MemoryPages::new(new_cap)?;
             new_pages[..pages.len()].clone_from_slice(pages);
 
             *pages = new_pages;

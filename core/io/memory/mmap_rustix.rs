@@ -1,4 +1,4 @@
-//! Mmap code using rustix
+//! Memory pages using Mmap with rustix
 
 use crate::Result;
 use core::ffi::c_void;
@@ -71,13 +71,13 @@ impl Drop for MmapInner {
 }
 
 #[derive(Debug)]
-pub struct MmapAnon {
+pub struct MemoryPages {
     inner: MmapInner,
 }
 
-impl MmapAnon {
+impl MemoryPages {
     pub fn new(len: usize) -> Result<Self> {
-        Ok(MmapAnon {
+        Ok(MemoryPages {
             inner: MmapInner::new(len)?,
         })
     }
@@ -95,7 +95,7 @@ impl MmapAnon {
     }
 }
 
-impl Deref for MmapAnon {
+impl Deref for MemoryPages {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
@@ -103,19 +103,19 @@ impl Deref for MmapAnon {
     }
 }
 
-impl DerefMut for MmapAnon {
+impl DerefMut for MemoryPages {
     fn deref_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.inner.mut_ptr(), self.inner.len()) }
     }
 }
 
-impl AsRef<[u8]> for MmapAnon {
+impl AsRef<[u8]> for MemoryPages {
     fn as_ref(&self) -> &[u8] {
         self.deref()
     }
 }
 
-impl AsMut<[u8]> for MmapAnon {
+impl AsMut<[u8]> for MemoryPages {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
     }

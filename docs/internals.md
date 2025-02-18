@@ -132,4 +132,4 @@ The code generator module takes AST as input and produces virtual machine progra
 
 ### Memory
 
-The `:memory` option in Limbo, is backed by an anonymous Memory Mapping to support persisting an in-memory database to disk. You can set the `INITIAL_MEM_PAGES` enviroment flag to control how many pages are allocated on startup.
+The `:memory` option in Limbo in unix, is backed by an anonymous Memory Mapping to support persisting an in-memory database to disk. You can set the `INITIAL_MEM_PAGES` enviroment flag to control how many pages are allocated on startup.
