@@ -9,6 +9,7 @@ struct Median;
 
 impl AggFunc for Median {
     type State = Vec<f64>;
+    type Error = &'static str;
     const NAME: &'static str = "median";
     const ARGS: i32 = 1;
 
@@ -18,9 +19,9 @@ impl AggFunc for Median {
         }
     }
 
-    fn finalize(state: Self::State) -> Value {
+    fn finalize(state: Self::State) -> Result<Value, Self::Error> {
         if state.is_empty() {
-            return Value::null();
+            return Ok(Value::null());
         }
 
         let mut sorted = state;
@@ -28,11 +29,11 @@ impl AggFunc for Median {
 
         let len = sorted.len();
         if len % 2 == 1 {
-            Value::from_float(sorted[len / 2])
+            Ok(Value::from_float(sorted[len / 2]))
         } else {
             let mid1 = sorted[len / 2 - 1];
             let mid2 = sorted[len / 2];
-            Value::from_float((mid1 + mid2) / 2.0)
+            Ok(Value::from_float((mid1 + mid2) / 2.0))
         }
     }
 }
@@ -41,8 +42,8 @@ impl AggFunc for Median {
 struct Percentile;
 
 impl AggFunc for Percentile {
-    type State = (Vec<f64>, Option<f64>, Option<&'static str>);
-
+    type State = (Vec<f64>, Option<f64>, Option<Self::Error>);
+    type Error = &'static str;
     const NAME: &'static str = "percentile";
     const ARGS: i32 = 2;
 
@@ -69,16 +70,16 @@ impl AggFunc for Percentile {
         }
     }
 
-    fn finalize(state: Self::State) -> Value {
+    fn finalize(state: Self::State) -> Result<Value, Self::Error> {
         let (mut values, p_value, err_value) = state;
         if values.is_empty() {
-            return Value::null();
+            return Ok(Value::null());
         }
         if let Some(err) = err_value {
-            return Value::error_with_message(err.into());
+            return Err(err);
         }
         if values.len() == 1 {
-            return Value::from_float(values[0]);
+            return Ok(Value::from_float(values[0]));
         }
 
         let p = p_value.unwrap();
@@ -89,10 +90,12 @@ impl AggFunc for Percentile {
         let upper = index.ceil() as usize;
 
         if lower == upper {
-            Value::from_float(values[lower])
+            Ok(Value::from_float(values[lower]))
         } else {
             let weight = index - lower as f64;
-            Value::from_float(values[lower] * (1.0 - weight) + values[upper] * weight)
+            Ok(Value::from_float(
+                values[lower] * (1.0 - weight) + values[upper] * weight,
+            ))
         }
     }
 }
@@ -101,8 +104,8 @@ impl AggFunc for Percentile {
 struct PercentileCont;
 
 impl AggFunc for PercentileCont {
-    type State = (Vec<f64>, Option<f64>, Option<&'static str>);
-
+    type State = (Vec<f64>, Option<f64>, Option<Self::Error>);
+    type Error = &'static str;
     const NAME: &'static str = "percentile_cont";
     const ARGS: i32 = 2;
 
@@ -129,16 +132,16 @@ impl AggFunc for PercentileCont {
         }
     }
 
-    fn finalize(state: Self::State) -> Value {
+    fn finalize(state: Self::State) -> Result<Value, Self::Error> {
         let (mut values, p_value, err_state) = state;
         if values.is_empty() {
-            return Value::null();
+            return Ok(Value::null());
         }
         if let Some(err) = err_state {
-            return Value::error_with_message(err.into());
+            return Err(err);
         }
         if values.len() == 1 {
-            return Value::from_float(values[0]);
+            return Ok(Value::from_float(values[0]));
         }
 
         let p = p_value.unwrap();
@@ -149,10 +152,12 @@ impl AggFunc for PercentileCont {
         let upper = index.ceil() as usize;
 
         if lower == upper {
-            Value::from_float(values[lower])
+            Ok(Value::from_float(values[lower]))
         } else {
             let weight = index - lower as f64;
-            Value::from_float(values[lower] * (1.0 - weight) + values[upper] * weight)
+            Ok(Value::from_float(
+                values[lower] * (1.0 - weight) + values[upper] * weight,
+            ))
         }
     }
 }
@@ -161,8 +166,8 @@ impl AggFunc for PercentileCont {
 struct PercentileDisc;
 
 impl AggFunc for PercentileDisc {
-    type State = (Vec<f64>, Option<f64>, Option<&'static str>);
-
+    type State = (Vec<f64>, Option<f64>, Option<Self::Error>);
+    type Error = &'static str;
     const NAME: &'static str = "percentile_disc";
     const ARGS: i32 = 2;
 
@@ -170,19 +175,19 @@ impl AggFunc for PercentileDisc {
         Percentile::step(state, args);
     }
 
-    fn finalize(state: Self::State) -> Value {
+    fn finalize(state: Self::State) -> Result<Value, Self::Error> {
         let (mut values, p_value, err_value) = state;
         if values.is_empty() {
-            return Value::null();
+            return Ok(Value::null());
         }
         if let Some(err) = err_value {
-            return Value::error_with_message(err.into());
+            return Err(err);
         }
 
         let p = p_value.unwrap();
         values.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = values.len() as f64;
         let index = (p * (n - 1.0)).floor() as usize;
-        Value::from_float(values[index])
+        Ok(Value::from_float(values[index]))
     }
 }

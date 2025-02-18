@@ -171,7 +171,7 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
     let fn_body = &ast.block;
     let alias_check = if let Some(alias) = &scalar_info.alias {
         quote! {
-            let Ok(alias_c_name) = std::ffi::CString::new(#alias) else {
+            let Ok(alias_c_name) = ::std::ffi::CString::new(#alias) else {
                 return ::limbo_ext::ResultCode::Error;
             };
             (api.register_scalar_function)(
@@ -193,7 +193,7 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
                 return ::limbo_ext::ResultCode::Error;
             }
             let api = unsafe { &*api };
-            let Ok(c_name) = std::ffi::CString::new(#name) else {
+            let Ok(c_name) = ::std::ffi::CString::new(#name) else {
                 return ::limbo_ext::ResultCode::Error;
             };
             (api.register_scalar_function)(
@@ -232,6 +232,7 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
 ///
 ///impl AggFunc for SumPlusOne {
 ///   type State = i64;
+///   type Error = &'static str;
 ///   const NAME: &'static str = "sum_plus_one";
 ///   const ARGS: i32 = 1;
 ///   fn step(state: &mut Self::State, args: &[Value]) {
@@ -240,8 +241,8 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
 ///     };
 ///     *state += val;
 ///     }
-///     fn finalize(state: Self::State) -> Value {
-///        Value::from_integer(state + 1)
+///     fn finalize(state: Self::State) -> Result<Value, Self::Error> {
+///        Ok(Value::from_integer(state + 1))
 ///     }
 ///}
 /// ```
@@ -259,11 +260,11 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
         impl #struct_name {
             #[no_mangle]
             pub extern "C" fn #init_fn_name() -> *mut ::limbo_ext::AggCtx {
-                let state = Box::new(<#struct_name as ::limbo_ext::AggFunc>::State::default());
-                let ctx = Box::new(::limbo_ext::AggCtx {
-                    state: Box::into_raw(state) as *mut ::std::os::raw::c_void,
+                let state = ::std::boxed::Box::new(<#struct_name as ::limbo_ext::AggFunc>::State::default());
+                let ctx = ::std::boxed::Box::new(::limbo_ext::AggCtx {
+                    state: ::std::boxed::Box::into_raw(state) as *mut ::std::os::raw::c_void,
                 });
-                Box::into_raw(ctx)
+                ::std::boxed::Box::into_raw(ctx)
             }
 
             #[no_mangle]
@@ -275,7 +276,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
                 unsafe {
                     let ctx = &mut *ctx;
                     let state = &mut *(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
-                    let args = std::slice::from_raw_parts(argv, argc as usize);
+                    let args = ::std::slice::from_raw_parts(argv, argc as usize);
                     <#struct_name as ::limbo_ext::AggFunc>::step(state, args);
                 }
             }
@@ -286,8 +287,13 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
             ) -> ::limbo_ext::Value {
                 unsafe {
                     let ctx = &mut *ctx;
-                    let state = Box::from_raw(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
-                    <#struct_name as ::limbo_ext::AggFunc>::finalize(*state)
+                    let state = ::std::boxed::Box::from_raw(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
+                    match <#struct_name as ::limbo_ext::AggFunc>::finalize(*state) {
+                        Ok(val) => val,
+                        Err(e) => {
+                            ::limbo_ext::Value::error_with_message(e.to_string())
+                        }
+                    }
                 }
             }
 
@@ -301,7 +307,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 
                 let api = &*api;
                 let name_str = #struct_name::NAME;
-                let c_name = match std::ffi::CString::new(name_str) {
+                let c_name = match ::std::ffi::CString::new(name_str) {
                     Ok(cname) => cname,
                     Err(_) => return ::limbo_ext::ResultCode::Error,
                 };
@@ -335,13 +341,12 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///    const NAME: &'static str = "csv_data";
 ///
 ///    /// Declare the schema for your virtual table
-///    fn connect(api: &ExtensionApi) -> ResultCode {
+///    fn create_schema(args: &[&str]) -> &'static str {
 ///        let sql = "CREATE TABLE csv_data(
 ///            name TEXT,
 ///            age TEXT,
 ///            city TEXT
-///        )";
-///        api.declare_virtual_table(Self::NAME, sql)
+///        )"
 ///    }
 ///    /// Open the virtual table and return a cursor
 ///  fn open() -> Self::VCursor {
@@ -377,6 +382,22 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///  fn eof(cursor: &Self::VCursor) -> bool {
 ///      cursor.index >= cursor.rows.len()
 ///  }
+///
+/// /// **Optional** methods for non-readonly tables:
+///
+///  /// Update the row with the provided values, return the new rowid
+///  fn update(&mut self, rowid: i64, args: &[Value]) -> Result<Option<i64>, Self::Error> {
+///      Ok(None)// return Ok(None) for read-only
+///  }
+///  /// Insert a new row with the provided values, return the new rowid
+///  fn insert(&mut self, args: &[Value]) -> Result<(), Self::Error> {
+///      Ok(()) //
+///  }
+///  /// Delete the row with the provided rowid
+///  fn delete(&mut self, rowid: i64) -> Result<(), Self::Error> {
+///    Ok(())
+/// }
+///
 ///  #[derive(Debug)]
 /// struct CsvCursor {
 ///   rows: Vec<Vec<String>>,
@@ -384,7 +405,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///
 /// impl CsvCursor {
 ///   /// Returns the value for a given column index.
-///   fn column(&self, idx: u32) -> Value {
+///   fn column(&self, idx: u32) -> Result<Value, Self::Error> {
 ///       let row = &self.rows[self.index];
 ///       if (idx as usize) < row.len() {
 ///           Value::from_text(&row[idx as usize])
@@ -413,36 +434,47 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let struct_name = &ast.ident;
 
     let register_fn_name = format_ident!("register_{}", struct_name);
-    let connect_fn_name = format_ident!("connect_{}", struct_name);
+    let create_schema_fn_name = format_ident!("create_schema_{}", struct_name);
     let open_fn_name = format_ident!("open_{}", struct_name);
     let filter_fn_name = format_ident!("filter_{}", struct_name);
     let column_fn_name = format_ident!("column_{}", struct_name);
     let next_fn_name = format_ident!("next_{}", struct_name);
     let eof_fn_name = format_ident!("eof_{}", struct_name);
+    let update_fn_name = format_ident!("update_{}", struct_name);
+    let rowid_fn_name = format_ident!("rowid_{}", struct_name);
 
     let expanded = quote! {
         impl #struct_name {
             #[no_mangle]
-            unsafe extern "C" fn #connect_fn_name(
-                db: *const ::std::ffi::c_void,
-            ) -> ::limbo_ext::ResultCode {
-                if db.is_null() {
-                    return ::limbo_ext::ResultCode::Error;
-                }
-                let api = unsafe { &*(db as *const ExtensionApi) };
-                <#struct_name as ::limbo_ext::VTabModule>::connect(api)
+            unsafe extern "C" fn #create_schema_fn_name(
+                argv: *const ::limbo_ext::Value, argc: i32
+            ) -> *mut ::std::ffi::c_char {
+                let args = if argv.is_null() {
+                    &Vec::new()
+                } else {
+                    ::std::slice::from_raw_parts(argv, argc as usize)
+                };
+                let sql = <#struct_name as ::limbo_ext::VTabModule>::create_schema(&args);
+                ::std::ffi::CString::new(sql).unwrap().into_raw()
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(
-            ) -> *mut ::std::ffi::c_void {
-                let cursor = <#struct_name as ::limbo_ext::VTabModule>::open();
-                Box::into_raw(Box::new(cursor)) as *mut ::std::ffi::c_void
+            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void) -> *const ::std::ffi::c_void {
+                if ctx.is_null() {
+                    return ::std::ptr::null();
+                }
+                let ctx  = ctx as *const #struct_name;
+                let ctx: &#struct_name = &*ctx;
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx) {
+                    return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *const ::std::ffi::c_void;
+                } else {
+                    return ::std::ptr::null();
+                }
             }
 
             #[no_mangle]
             unsafe extern "C" fn #filter_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
                 argc: i32,
                 argv: *const ::limbo_ext::Value,
             ) -> ::limbo_ext::ResultCode {
@@ -450,42 +482,106 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     return ::limbo_ext::ResultCode::Error;
                 }
                 let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
-                let args = std::slice::from_raw_parts(argv, argc as usize);
-                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, argc, args)
+                let args = ::std::slice::from_raw_parts(argv, argc as usize);
+                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, args)
             }
 
             #[no_mangle]
             unsafe extern "C" fn #column_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
                 idx: u32,
             ) -> ::limbo_ext::Value {
                 if cursor.is_null() {
-                    return ::limbo_ext::Value::error(ResultCode::Error);
+                    return ::limbo_ext::Value::error(::limbo_ext::ResultCode::Error);
                 }
                 let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
-                <#struct_name as ::limbo_ext::VTabModule>::column(cursor, idx)
+                match <#struct_name as ::limbo_ext::VTabModule>::column(cursor, idx) {
+                    Ok(val) => val,
+                    Err(e) => ::limbo_ext::Value::error_with_message(e.to_string())
+                }
             }
 
             #[no_mangle]
             unsafe extern "C" fn #next_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
             ) -> ::limbo_ext::ResultCode {
                 if cursor.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
-                let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
+                let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
                 <#struct_name as ::limbo_ext::VTabModule>::next(cursor)
             }
 
             #[no_mangle]
             unsafe extern "C" fn #eof_fn_name(
-                cursor: *mut ::std::ffi::c_void,
+                cursor: *const ::std::ffi::c_void,
             ) -> bool {
                 if cursor.is_null() {
                     return true;
                 }
-                let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
+                let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
                 <#struct_name as ::limbo_ext::VTabModule>::eof(cursor)
+            }
+
+            #[no_mangle]
+            unsafe extern "C" fn #update_fn_name(
+                vtab: *const ::std::ffi::c_void,
+                argc: i32,
+                argv: *const ::limbo_ext::Value,
+                p_out_rowid: *mut i64,
+            ) -> ::limbo_ext::ResultCode {
+                if vtab.is_null() {
+                    return ::limbo_ext::ResultCode::Error;
+                }
+
+                let vtab = &mut *(vtab as *mut #struct_name);
+                let args = ::std::slice::from_raw_parts(argv, argc as usize);
+
+                let old_rowid = match args.get(0).map(|v| v.value_type()) {
+                    Some(::limbo_ext::ValueType::Integer) => args.get(0).unwrap().to_integer(),
+                    _ => None,
+                };
+                let new_rowid = match args.get(1).map(|v| v.value_type()) {
+                    Some(::limbo_ext::ValueType::Integer) => args.get(1).unwrap().to_integer(),
+                    _ => None,
+                };
+                let columns = &args[2..];
+                match (old_rowid, new_rowid) {
+                    // DELETE: old_rowid provided, no new_rowid
+                    (Some(old), None) => {
+                     if <#struct_name as VTabModule>::delete(vtab, old).is_err() {
+                            return ::limbo_ext::ResultCode::Error;
+                      }
+                            return ::limbo_ext::ResultCode::OK;
+                    }
+                    // UPDATE: old_rowid provided and new_rowid may exist
+                    (Some(old), Some(new)) => {
+                        if <#struct_name as VTabModule>::update(vtab, old, &columns).is_err() {
+                            return ::limbo_ext::ResultCode::Error;
+                        }
+                        return ::limbo_ext::ResultCode::OK;
+                    }
+                    // INSERT: no old_rowid (old_rowid = None)
+                    (None, _) => {
+                        if let Ok(rowid) = <#struct_name as VTabModule>::insert(vtab, &columns) {
+                            if !p_out_rowid.is_null() {
+                                *p_out_rowid = rowid;
+                                 return ::limbo_ext::ResultCode::RowID;
+                            }
+                            return ::limbo_ext::ResultCode::OK;
+                        }
+                    }
+                }
+                return ::limbo_ext::ResultCode::Error;
+            }
+
+            #[no_mangle]
+            pub unsafe extern "C" fn #rowid_fn_name(ctx: *const ::std::ffi::c_void) -> i64 {
+                if ctx.is_null() {
+                    return -1;
+                }
+                let cursor = &*(ctx as *const <#struct_name as ::limbo_ext::VTabModule>::VCursor);
+                <<#struct_name as ::limbo_ext::VTabModule>::VCursor as ::limbo_ext::VTabCursor>::rowid(cursor)
             }
 
             #[no_mangle]
@@ -495,23 +591,23 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 if api.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
-
                 let api = &*api;
                 let name = <#struct_name as ::limbo_ext::VTabModule>::NAME;
-                // name needs to be a c str FFI compatible, NOT CString
-                let name_c = std::ffi::CString::new(name).unwrap();
-
+                let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
+                let table_instance = ::std::boxed::Box::into_raw(::std::boxed::Box::new(#struct_name::default()));
                 let module = ::limbo_ext::VTabModuleImpl {
-                    name: name_c.as_ptr(),
-                    connect: Self::#connect_fn_name,
+                    ctx: table_instance as *const ::std::ffi::c_void,
+                    name: name_c,
+                    create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
                     filter: Self::#filter_fn_name,
                     column: Self::#column_fn_name,
                     next: Self::#next_fn_name,
                     eof: Self::#eof_fn_name,
+                    update: Self::#update_fn_name,
+                    rowid: Self::#rowid_fn_name,
                 };
-
-                (api.register_module)(api.ctx, name_c.as_ptr(), module)
+                (api.register_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }
         }
     };
@@ -589,11 +685,8 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
         quote! {
             {
                 let result = unsafe{ #vtab_ident::#register_fn(api)};
-                if result == ::limbo_ext::ResultCode::OK {
-                    let result = <#vtab_ident as ::limbo_ext::VTabModule>::connect(api);
-                    if !result.is_ok() {
-                        return result;
-                     }
+                if !result.is_ok() {
+                    return result;
                 }
             }
         }

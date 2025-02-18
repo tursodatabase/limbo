@@ -220,6 +220,13 @@ pub enum Insn {
     /// Await for the completion of open cursor for a virtual table.
     VOpenAwait,
 
+    /// Create a new virtual table.
+    VCreate {
+        module_name: usize, // P1: Name of the module that contains the virtual table implementation
+        table_name: usize,  // P2: Name of the virtual table
+        args_reg: Option<usize>,
+    },
+
     /// Initialize the position of the virtual table cursor.
     VFilter {
         cursor_id: CursorID,
@@ -233,6 +240,15 @@ pub enum Insn {
         cursor_id: CursorID,
         column: usize,
         dest: usize,
+    },
+
+    /// `VUpdate`: Virtual Table Insert/Update/Delete Instruction
+    VUpdate {
+        cursor_id: usize,     // P1: Virtual table cursor number
+        arg_count: usize,     // P2: Number of arguments in argv[]
+        start_reg: usize,     // P3: Start register for argv[]
+        vtab_ptr: usize,      // P4: vtab pointer
+        conflict_action: u16, // P5: Conflict resolution flags
     },
 
     /// Advance the virtual table cursor to the next row.

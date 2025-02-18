@@ -25,7 +25,7 @@ pub fn translate_delete(
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
         num_cursors: 1,
-        approx_num_insns: estimate_num_instructions(&delete),
+        approx_num_insns: estimate_num_instructions(delete),
         approx_num_labels: 0,
     });
     emit_program(&mut program, delete_plan, syms)?;
@@ -42,10 +42,17 @@ pub fn prepare_delete_plan(
         Some(table) => table,
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", tbl_name),
     };
-
+    let table = if let Some(table) = table.virtual_table() {
+        Table::Virtual(table.clone())
+    } else if let Some(table) = table.btree() {
+        Table::BTree(table.clone())
+    } else {
+        crate::bail_corrupt_error!("Table is neither a virtual table nor a btree table");
+    };
+    let name = tbl_name.name.0.as_str().to_string();
     let table_references = vec![TableReference {
-        table: Table::BTree(table.clone()),
-        identifier: table.name.clone(),
+        table,
+        identifier: name,
         op: Operation::Scan { iter_dir: None },
         join_info: None,
     }];

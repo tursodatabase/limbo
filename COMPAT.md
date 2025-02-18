@@ -572,14 +572,14 @@ Modifiers:
 | Trace          | No     |         |
 | Transaction    | Yes    |         |
 | VBegin         | No     |         |
-| VColumn        | No     |         |
-| VCreate        | No     |         |
+| VColumn        | Yes    |         |
+| VCreate        | Yes    |         |
 | VDestroy       | No     |         |
-| VFilter        | No     |         |
-| VNext          | No     |         |
-| VOpen          | No     |         |
+| VFilter        | Yes    |         |
+| VNext          | Yes    |         |
+| VOpen          | Yes    |VOpenAsync|
 | VRename        | No     |         |
-| VUpdate        | No     |         |
+| VUpdate        | Yes    |         |
 | Vacuum         | No     |         |
 | Variable       | No     |         |
 | VerifyCookie   | No     |         |

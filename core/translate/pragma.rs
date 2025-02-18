@@ -218,7 +218,7 @@ fn query_pragma(
             program.alloc_register();
             program.alloc_register();
             if let Some(table) = table {
-                for (i, column) in table.columns.iter().enumerate() {
+                for (i, column) in table.columns().iter().enumerate() {
                     // cid
                     program.emit_int(i as i64, base_reg);
                     // name

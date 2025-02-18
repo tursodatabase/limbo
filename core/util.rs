@@ -3,7 +3,7 @@ use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
-    Result, Statement, StepResult, IO,
+    Result, Statement, StepResult, SymbolTable, IO,
 };
 
 // https://sqlite.org/lang_keywords.html
@@ -28,6 +28,7 @@ pub fn parse_schema_rows(
     rows: Option<Statement>,
     schema: &mut Schema,
     io: Arc<dyn IO>,
+    syms: &SymbolTable,
 ) -> Result<()> {
     if let Some(mut rows) = rows {
         let mut automatic_indexes = Vec::new();
@@ -36,15 +37,21 @@ pub fn parse_schema_rows(
                 StepResult::Row => {
                     let row = rows.row().unwrap();
                     let ty = row.get::<&str>(0)?;
-                    if ty != "table" && ty != "index" {
+                    if !["table", "index"].contains(&ty) {
                         continue;
                     }
                     match ty {
                         "table" => {
                             let root_page: i64 = row.get::<i64>(3)?;
                             let sql: &str = row.get::<&str>(4)?;
-                            let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
-                            schema.add_table(Rc::new(table));
+                            if root_page == 0 && sql.to_lowercase().contains("virtual") {
+                                let name: &str = row.get::<&str>(1)?;
+                                let vtab = syms.vtabs.get(name).unwrap().clone();
+                                schema.add_virtual_table(vtab);
+                            } else {
+                                let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
+                                schema.add_btree_table(Rc::new(table));
+                            }
                         }
                         "index" => {
                             let root_page: i64 = row.get::<i64>(3)?;
@@ -83,7 +90,7 @@ pub fn parse_schema_rows(
         }
         for (index_name, table_name, root_page) in automatic_indexes {
             // We need to process these after all tables are loaded into memory due to the schema.get_table() call
-            let table = schema.get_table(&table_name).unwrap();
+            let table = schema.get_btree_table(&table_name).unwrap();
             let index =
                 schema::Index::automatic_from_primary_key(&table, &index_name, root_page as usize)?;
             schema.add_index(Rc::new(index));
@@ -307,9 +314,11 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
-pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<Column>, ()> {
+pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Result<Vec<Column>> {
     let CreateTableBody::ColumnsAndConstraints { columns, .. } = body else {
-        return Err(());
+        return Err(crate::LimboError::ParseError(
+            "CREATE TABLE body must contain columns and constraints".to_string(),
+        ));
     };
 
     Ok(columns
@@ -322,7 +331,7 @@ pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<
                 }
             }
             let column = Column {
-                name: Some(name.0),
+                name: Some(name.0.clone()),
                 ty: match column_def.col_type {
                     Some(ref data_type) => {
                         // https://www.sqlite.org/datatype3.html
@@ -378,6 +387,35 @@ pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<
             Some(column)
         })
         .collect::<Vec<_>>())
+}
+
+// for TVF's we need these at planning time so we cannot emit translate_expr
+pub fn vtable_args(args: &[ast::Expr]) -> Vec<limbo_ext::Value> {
+    let mut vtable_args = Vec::new();
+    for arg in args {
+        match arg {
+            Expr::Literal(lit) => match lit {
+                Literal::Numeric(i) => {
+                    if i.contains('.') {
+                        vtable_args.push(limbo_ext::Value::from_float(i.parse().unwrap()));
+                    } else {
+                        vtable_args.push(limbo_ext::Value::from_integer(i.parse().unwrap()));
+                    }
+                }
+                Literal::String(s) => {
+                    vtable_args.push(limbo_ext::Value::from_text(s.clone()));
+                }
+                Literal::Blob(b) => {
+                    vtable_args.push(limbo_ext::Value::from_blob(b.as_bytes().into()));
+                }
+                _ => {
+                    vtable_args.push(limbo_ext::Value::null());
+                }
+            },
+            _ => vtable_args.push(limbo_ext::Value::null()),
+        }
+    }
+    vtable_args
 }
 
 #[cfg(test)]
