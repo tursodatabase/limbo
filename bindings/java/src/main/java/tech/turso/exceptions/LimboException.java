@@ -3,7 +3,7 @@ package tech.turso.exceptions;
 import java.sql.SQLException;
 import tech.turso.LimboErrorCode;
 
-public class LimboException extends SQLException {
+public final class LimboException extends SQLException {
   private final LimboErrorCode resultCode;
 
   public LimboException(String message, LimboErrorCode resultCode) {

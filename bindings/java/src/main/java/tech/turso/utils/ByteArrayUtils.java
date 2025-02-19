@@ -3,7 +3,7 @@ package tech.turso.utils;
 import java.nio.charset.StandardCharsets;
 import tech.turso.annotations.Nullable;
 
-public class ByteArrayUtils {
+public final class ByteArrayUtils {
   @Nullable
   public static String utf8ByteBufferToString(@Nullable byte[] buffer) {
     if (buffer == null) {

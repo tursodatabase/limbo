@@ -15,7 +15,7 @@ import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
 
-public class JDBC4DatabaseMetaData implements DatabaseMetaData {
+public final class JDBC4DatabaseMetaData implements DatabaseMetaData {
 
   private static final Logger logger = LoggerFactory.getLogger(JDBC4DatabaseMetaData.class);
 
