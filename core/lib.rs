@@ -14,6 +14,7 @@ mod schema;
 mod storage;
 mod translate;
 mod types;
+#[allow(dead_code)]
 mod util;
 mod vdbe;
 mod vector;
