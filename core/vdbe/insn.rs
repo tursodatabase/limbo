@@ -669,6 +669,11 @@ pub enum Insn {
         dest: usize,
         cookie: Cookie,
     },
+    /// Add the value in p2 to the value in p1 and then store back in p1
+    AddImm {
+        reg: usize,
+        value: i64,
+    },
 }
 
 // TODO: Add remaining cookies.
