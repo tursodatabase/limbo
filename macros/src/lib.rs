@@ -924,8 +924,6 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
             syn::Ident::new(&format!("register_static_{}", vfs_ident), vfs_ident.span());
         quote! {
             {
-                // the api is null when static extensions are loaded before a database connection.
-                // so we only register the vfs if the api is not null, otherwise it will be done twice
                     let result = api.add_builtin_vfs(unsafe { #static_register()});
                     if !result.is_ok() {
                         return result;

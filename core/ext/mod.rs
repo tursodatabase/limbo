@@ -86,7 +86,7 @@ unsafe extern "C" fn register_vfs(
     if ctx.is_null() || name.is_null() || vfs.is_null() {
         return ResultCode::Error;
     }
-    let c_str = unsafe { CStr::from_ptr(name) };
+    let c_str = unsafe { CString::from_raw(name as *mut i8) };
     let name_str = match c_str.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,
