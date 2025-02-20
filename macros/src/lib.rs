@@ -620,6 +620,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     let derive_input = parse_macro_input!(input as DeriveInput);
     let struct_name = &derive_input.ident;
     let register_fn_name = format_ident!("register_{}", struct_name);
+    let register_static = format_ident!("register_static_{}", struct_name);
     let open_fn_name = format_ident!("{}_open", struct_name);
     let close_fn_name = format_ident!("{}_close", struct_name);
     let read_fn_name = format_ident!("{}_read", struct_name);
@@ -633,12 +634,37 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     let get_current_time_fn_name = format_ident!("{}_get_current_time", struct_name);
 
     let expanded = quote! {
+        #[allow(non_snake_case)]
+        pub unsafe extern "C" fn #register_static() -> *const ::limbo_ext::VfsImpl {
+            let ctx = #struct_name::default();
+            let ctx = ::std::boxed::Box::into_raw(::std::boxed::Box::new(ctx)) as *const ::std::ffi::c_void;
+            let name = ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().into_raw();
+            let vfs_mod = ::limbo_ext::VfsImpl {
+                vfs: ctx,
+                name,
+                open: #open_fn_name,
+                close: #close_fn_name,
+                read: #read_fn_name,
+                write: #write_fn_name,
+                lock: #lock_fn_name,
+                unlock: #unlock_fn_name,
+                sync: #sync_fn_name,
+                size: #size_fn_name,
+                run_once: #run_once_fn_name,
+                gen_random_number: #generate_random_number_fn_name,
+                current_time: #get_current_time_fn_name,
+            };
+            ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl
+        }
+
         #[no_mangle]
         pub unsafe extern "C" fn #register_fn_name(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
             let ctx = #struct_name::default();
             let ctx = ::std::boxed::Box::into_raw(::std::boxed::Box::new(ctx)) as *const ::std::ffi::c_void;
+            let name = ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().into_raw();
             let vfs_mod = ::limbo_ext::VfsImpl {
                 vfs: ctx,
+                name,
                 open: #open_fn_name,
                 close: #close_fn_name,
                 read: #read_fn_name,
@@ -652,7 +678,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 current_time: #get_current_time_fn_name,
             };
             let vfsimpl = ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
-            (api.register_vfs)(api.ctx, ::std::ffi::CString::new(<#struct_name as ::limbo_ext::VfsExtension>::NAME).unwrap().as_ptr(), vfsimpl)
+            (api.register_vfs)(api.ctx, name, vfsimpl)
         }
 
         #[no_mangle]
@@ -797,6 +823,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
         pub unsafe extern "C" fn #get_current_time_fn_name() -> *const ::std::ffi::c_char {
             let obj = #struct_name::default();
             let time = <#struct_name as ::limbo_ext::VfsExtension>::get_current_time(&obj);
+            // release ownership of the string to core
             ::std::ffi::CString::new(time).unwrap().into_raw() as *const ::std::ffi::c_char
         }
     };
@@ -892,10 +919,23 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
             }
         }
     });
+    let static_vfs = vfs_modules.iter().map(|vfs_ident| {
+        let static_register =
+            syn::Ident::new(&format!("register_static_{}", vfs_ident), vfs_ident.span());
+        quote! {
+            {
+                // the api is null when static extensions are loaded before a database connection.
+                // so we only register the vfs if the api is not null, otherwise it will be done twice
+                    let result = api.add_builtin_vfs(unsafe { #static_register()});
+                    if !result.is_ok() {
+                        return result;
+                }
+            }
+        }
+    });
     let static_aggregates = aggregate_calls.clone();
     let static_scalars = scalar_calls.clone();
     let static_vtabs = vtab_calls.clone();
-    let static_vfs = vfs_calls.clone();
 
     let expanded = quote! {
     #[cfg(not(target_family = "wasm"))]
@@ -904,7 +944,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
     static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
             #[cfg(feature = "static")]
-            pub unsafe extern "C" fn register_extension_static(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
+            pub unsafe extern "C" fn register_extension_static(api: &mut ::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
                 #(#static_scalars)*
 
                 #(#static_aggregates)*

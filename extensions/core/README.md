@@ -307,16 +307,28 @@ impl VfsExtension for ExampleFS {
     }
 
     fn run_once(&self) -> Result<()> {
-    // method to cycle/advance IO, if your extension is asynchronous
+    // (optional) method to cycle/advance IO, if your extension is asynchronous
         Ok(())
     }
 
     fn close(&self, file: Self::File) -> Result<()> {
-        drop(file);
+    // (optional) method to close or drop the file
         Ok(())
     }
 
+    fn generate_random_number(&self) -> i64 {
+    // (optional) method to generate random number. Used for testing
+        let mut buf = [0u8; 8];
+        getrandom::fill(&mut buf).unwrap();
+        i64::from_ne_bytes(buf)
+    }
+
+   fn get_current_time(&self) -> String {
+    // (optional) method to generate random number. Used for testing
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
 }
+
 impl VfsFile for ExampleFile {
     fn read(
         &mut self,
@@ -348,10 +360,12 @@ impl VfsFile for ExampleFile {
     }
 
     fn lock(&self, _exclusive: bool) -> Result<()> {
+        // (optional) method to lock the file
         Ok(())
     }
 
     fn unlock(&self) -> Result<()> {
+       // (optional) method to lock the file
         Ok(())
     }
 

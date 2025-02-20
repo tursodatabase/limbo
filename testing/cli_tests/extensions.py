@@ -398,26 +398,32 @@ def test_kv():
 
 def test_vfs():
     limbo = TestLimboShell()
-    ext_path = "./target/debug/liblimbo_testfs"
-    limbo.run_test_fn(".vfslist", lambda res: "testfs" not in res, "testfs not loaded")
+    ext_path = "./target/debug/liblimbo_testvfs"
+    limbo.run_test_fn(
+        ".vfslist", lambda res: "testvfs" not in res, "testvfs not loaded"
+    )
     limbo.execute_dot(f".load {ext_path}")
-    limbo.execute_dot(".open testing/vfs_extension.db testfs")
+    limbo.execute_dot(".open testing/vfs_extension.db testvfs")
     limbo.run_test_fn(
-        ".vfslist", lambda res: "testfs" in res, "testfs extension loaded"
+        ".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded"
     )
-    limbo.execute_dot(test_data)
+    limbo.execute_dot("create table test (id integer primary key, value float);")
+    for _ in range(50):
+        limbo.execute_dot("insert into test (value) values (randomblob(32*1024));")
     limbo.run_test_fn(
-        "SELECT * FROM numbers;",
-        lambda res: res == "1|1.0\n2|2.0\n3|3.0\n4|4.0\n5|5.0\n6|6.0\n7|7.0",
-        "testfs extension works",
+        "SELECT count(*) FROM test;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
     )
-    limbo.run_test_fn(
-        "SELECT * FROM test where value = 20.0;",
-        lambda res: "20.0|25" in res,
-        "testfs extension works",
-    )
-    limbo.execute_dot("insert into test values (randomblob(1024*1024));")
     print("Tested large write to testfs")
+    cleanup()
+
+
+def cleanup():
+    if os.path.exists("testing/vfs_extension.db"):
+        os.remove("testing/vfs_extension.db")
+    if os.path.exists("testing/vfs_extension.db-wal"):
+        os.remove("testing/vfs_extension.db-wal")
 
 
 if __name__ == "__main__":
@@ -431,5 +437,6 @@ if __name__ == "__main__":
         test_vfs()
     except Exception as e:
         print(f"Test FAILED: {e}")
+        cleanup()
         exit(1)
     print("All tests passed successfully.")

@@ -1624,6 +1624,7 @@ dependencies = [
  "limbo_regexp",
  "limbo_series",
  "limbo_sqlite3_parser",
+ "limbo_testvfs",
  "limbo_time",
  "limbo_uuid",
  "miette",
@@ -1667,6 +1668,8 @@ dependencies = [
 name = "limbo_ext"
 version = "0.0.15"
 dependencies = [
+ "chrono",
+ "getrandom 0.3.1",
  "limbo_macros",
 ]
 
@@ -1766,7 +1769,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_testfs"
+name = "limbo_testvfs"
 version = "0.0.15"
 dependencies = [
  "chrono",
