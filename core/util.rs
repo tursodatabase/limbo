@@ -1,8 +1,10 @@
+use core::num::IntErrorKind;
 use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
 use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
+    types::OwnedValue,
     Result, Statement, StepResult, IO,
 };
 
@@ -380,6 +382,147 @@ pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<
         .collect::<Vec<_>>())
 }
 
+#[derive(Debug, PartialEq)]
+/// Reference:
+/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L798
+pub enum CastTextToIntResultCode {
+    NotInt = -1,
+    Success = 0,
+    ExcessSpace = 1,
+    TooLargeOrMalformed = 2,
+    #[allow(dead_code)]
+    SpecialCase = 3,
+}
+
+pub fn text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
+    let text = text.trim();
+    if text.is_empty() {
+        return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
+    }
+    let mut accum = String::new();
+    let mut sign = false;
+    let mut has_digit = false;
+    let mut excess_space = false;
+
+    let chars = text.chars();
+
+    for c in chars {
+        match c {
+            '0'..='9' => {
+                has_digit = true;
+                accum.push(c);
+            }
+            '+' | '-' if !has_digit && !sign => {
+                sign = true;
+                accum.push(c);
+            }
+            _ => {
+                excess_space = true;
+                break;
+            }
+        }
+    }
+
+    match accum.parse::<i64>() {
+        Ok(num) => {
+            if excess_space {
+                return (
+                    OwnedValue::Integer(num),
+                    CastTextToIntResultCode::ExcessSpace,
+                );
+            }
+
+            return (OwnedValue::Integer(num), CastTextToIntResultCode::Success);
+        }
+        Err(e) => match e.kind() {
+            IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => (
+                OwnedValue::Integer(0),
+                CastTextToIntResultCode::TooLargeOrMalformed,
+            ),
+            _ => (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
+        },
+    }
+}
+
+#[derive(Debug, PartialEq)]
+/// Reference
+/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L529
+pub enum CastTextToRealResultCode {
+    PureInt = 1,
+    HasDecimal = 2,
+    NotValid = 0,
+    NotValidButPrefix = -1,
+}
+
+pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
+    let text = text.trim();
+    if text.is_empty() {
+        return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
+    }
+    let mut accum = String::new();
+    let mut has_decimal_separator = false;
+    let mut sign = false;
+    let mut exp_sign = false;
+    let mut has_exponent = false;
+    let mut has_digit = false;
+    let mut has_decimal_digit = false;
+    let mut excess_space = false;
+
+    let chars = text.chars();
+
+    for c in chars {
+        match c {
+            '0'..='9' if !has_decimal_separator => {
+                has_digit = true;
+                accum.push(c);
+            }
+            '0'..='9' => {
+                has_decimal_digit = true;
+                accum.push(c);
+            }
+            '+' | '-' if !has_digit && !sign => {
+                sign = true;
+                accum.push(c);
+            }
+            '+' | '-' if has_exponent && !exp_sign => {
+                exp_sign = true;
+                accum.push(c);
+            }
+            '.' if !has_decimal_separator => {
+                has_decimal_separator = true;
+                accum.push(c);
+            }
+            'E' | 'e' if !has_decimal_separator || has_decimal_digit => {
+                has_exponent = true;
+                accum.push(c);
+            }
+            _ => {
+                excess_space = true;
+                break;
+            }
+        }
+    }
+
+    if let Ok(num) = accum.parse::<f64>() {
+        if !has_decimal_separator && !exp_sign && !has_exponent {
+            return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
+        }
+
+        if excess_space {
+            // TODO see if this branch satisfies: not a valid number, but has a valid prefix which
+            // includes a decimal point and/or an eNNN clause
+            return (
+                OwnedValue::Float(num),
+                CastTextToRealResultCode::NotValidButPrefix,
+            );
+        }
+
+        return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
+    }
+
+    return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -634,5 +777,197 @@ pub mod tests {
         assert!(check_ident_equivalency("\"foo\"", "`FOO`"));
         assert!(!check_ident_equivalency("\"foo\"", "[bar]"));
         assert!(!check_ident_equivalency("foo", "\"bar\""));
+    }
+
+    #[test]
+    fn test_text_to_integer() {
+        let pairs = vec![
+            (
+                text_to_integer("1"),
+                (OwnedValue::Integer(1), CastTextToIntResultCode::Success),
+            ),
+            (
+                text_to_integer("-1"),
+                (OwnedValue::Integer(-1), CastTextToIntResultCode::Success),
+            ),
+            (
+                text_to_integer("10000000"),
+                (
+                    OwnedValue::Integer(10000000),
+                    CastTextToIntResultCode::Success,
+                ),
+            ),
+            (
+                text_to_integer("-10000000"),
+                (
+                    OwnedValue::Integer(-10000000),
+                    CastTextToIntResultCode::Success,
+                ),
+            ),
+            (
+                text_to_integer("xxx"),
+                (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
+            ),
+            (
+                text_to_integer("123xxx"),
+                (
+                    OwnedValue::Integer(123),
+                    CastTextToIntResultCode::ExcessSpace,
+                ),
+            ),
+            (
+                text_to_integer("9223372036854775807"),
+                (
+                    OwnedValue::Integer(i64::MAX),
+                    CastTextToIntResultCode::Success,
+                ),
+            ),
+            (
+                text_to_integer("9223372036854775808"),
+                (
+                    OwnedValue::Integer(0),
+                    CastTextToIntResultCode::TooLargeOrMalformed,
+                ),
+            ),
+            (
+                text_to_integer("-9223372036854775808"),
+                (
+                    OwnedValue::Integer(i64::MIN),
+                    CastTextToIntResultCode::Success,
+                ),
+            ),
+            (
+                text_to_integer("-9223372036854775809"),
+                (
+                    OwnedValue::Integer(0),
+                    CastTextToIntResultCode::TooLargeOrMalformed,
+                ),
+            ),
+        ];
+
+        for (left, right) in pairs {
+            assert_eq!(left, right);
+        }
+    }
+
+    #[test]
+    fn test_text_to_real() {
+        let pairs = vec![
+            (
+                text_to_real("1"),
+                (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+            ),
+            (
+                text_to_real("-1"),
+                (OwnedValue::Float(-1.0), CastTextToRealResultCode::PureInt),
+            ),
+            (
+                text_to_real("1.0"),
+                (OwnedValue::Float(1.0), CastTextToRealResultCode::HasDecimal),
+            ),
+            (
+                text_to_real("-1.0"),
+                (
+                    OwnedValue::Float(-1.0),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1e10"),
+                (
+                    OwnedValue::Float(1e10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1e10"),
+                (
+                    OwnedValue::Float(-1e10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1e-10"),
+                (
+                    OwnedValue::Float(1e-10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1e-10"),
+                (
+                    OwnedValue::Float(-1e-10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1.123e10"),
+                (
+                    OwnedValue::Float(1.123e10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1.123e10"),
+                (
+                    OwnedValue::Float(-1.123e10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1.123e-10"),
+                (
+                    OwnedValue::Float(1.123e-10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1.123e-10"),
+                (
+                    OwnedValue::Float(-1.123e-10),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1-282584294928"),
+                (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+            ),
+            (
+                text_to_real("xxx"),
+                (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid),
+            ),
+            (
+                text_to_real("1.7976931348623157e308"),
+                (
+                    OwnedValue::Float(f64::MAX),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("1.7976931348623157e309"),
+                (
+                    OwnedValue::Float(f64::INFINITY),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1.7976931348623157e308"),
+                (
+                    OwnedValue::Float(f64::MIN),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+            (
+                text_to_real("-1.7976931348623157e309"),
+                (
+                    OwnedValue::Float(f64::NEG_INFINITY),
+                    CastTextToRealResultCode::HasDecimal,
+                ),
+            ),
+        ];
+
+        for (left, right) in pairs {
+            assert_eq!(left, right);
+        }
     }
 }
