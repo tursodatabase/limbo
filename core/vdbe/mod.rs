@@ -2104,7 +2104,7 @@ impl Program {
                             }
                             ScalarFunc::Like => {
                                 let pattern = &state.registers[*start_reg];
-                                let text = &state.registers[*start_reg + 1];
+                                let text = exec_cast(&state.registers[*start_reg + 1], "TEXT");
 
                                 let result = match (pattern, text) {
                                     (OwnedValue::Text(pattern), OwnedValue::Text(text))
