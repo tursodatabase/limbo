@@ -97,8 +97,8 @@ unsafe extern "C" fn register_vfs(
 
 /// Get pointers to all the vfs extensions that need to be built in at compile time.
 /// any other types that are defined in the same extension will not be registered
-/// until the database is opened and `register_builtins` is called.
-pub fn register_builtin_vfs_extensions(
+/// until the database file is opened and `register_builtins` is called.
+pub fn add_builtin_vfs_extensions(
     api: Option<ExtensionApi>,
 ) -> crate::Result<Vec<(String, *const VfsImpl)>> {
     let mut vfslist: Vec<*const VfsImpl> = Vec::new();
@@ -117,7 +117,7 @@ pub fn register_builtin_vfs_extensions(
             api
         }
     };
-    add_static_vfs_modules(&mut api);
+    register_static_vfs_modules(&mut api);
     let mut vfslist = Vec::with_capacity(api.builtin_vfs_count as usize);
     let slice =
         unsafe { std::slice::from_raw_parts_mut(api.builtin_vfs, api.builtin_vfs_count as usize) };
@@ -139,7 +139,7 @@ pub fn register_builtin_vfs_extensions(
     Ok(vfslist)
 }
 
-fn add_static_vfs_modules(_api: &mut ExtensionApi) {
+fn register_static_vfs_modules(_api: &mut ExtensionApi) {
     #[cfg(feature = "testvfs")]
     unsafe {
         limbo_testvfs::register_extension_static(_api);
@@ -149,7 +149,7 @@ fn add_static_vfs_modules(_api: &mut ExtensionApi) {
 impl Database {
     /// Open a new database, using a VFS registered in the current symbol table
     #[cfg(feature = "fs")]
-    #[allow(clippy::arc_with_non_send_sync)]
+    #[allow(clippy::arc_with_non_send_sync, dead_code)]
     pub fn open_with_vfs(
         &self,
         path: &str,
@@ -158,15 +158,8 @@ impl Database {
         let io: Arc<dyn IO> = match vfs {
             "memory" => Arc::new(MemoryIO::new()?),
             "syscall" => Arc::new(PlatformIO::new()?),
-            "io_uring" => {
-                if cfg!(all(target_os = "linux", feature = "io_uring")) {
-                    Arc::new(UringIO::new()?)
-                } else {
-                    return Err(LimboError::ExtensionError(
-                        "io_uring not enabled".to_string(),
-                    ));
-                }
-            }
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            "io_uring" => Arc::new(UringIO::new()?),
             other => {
                 let syms = self.syms.borrow();
                 let vfs = syms.vfs_modules.iter().find(|v| v.0 == vfs);
@@ -265,7 +258,7 @@ impl Database {
     }
 
     pub fn register_builtins(&self) -> Result<(), String> {
-        #[allow(unused_variables)]
+        #[allow(unused_variables, unused_mut)]
         let mut ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]
         if unsafe { !limbo_uuid::register_extension_static(&mut ext_api).is_ok() } {
@@ -291,7 +284,7 @@ impl Database {
         if unsafe { !limbo_series::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register series extension".to_string());
         }
-        let vfslist = register_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
+        let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
         for (name, vfs) in vfslist {
             self.register_vfs_impl(name, vfs);
         }

@@ -1,6 +1,7 @@
 use crate::app::Opts;
 use clap::ValueEnum;
 use std::{
+    fmt::{Display, Formatter},
     io::{self, Write},
     sync::Arc,
 };
@@ -11,6 +12,7 @@ pub enum DbLocation {
     Path,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug)]
 pub enum Io {
     Syscall,
@@ -20,13 +22,14 @@ pub enum Io {
     Memory,
 }
 
-impl ToString for Io {
-    fn to_string(&self) -> String {
+impl Display for Io {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Io::Memory => "memory".to_string(),
-            Io::Syscall => "syscall".to_string(),
-            Io::IoUring => "io_uring".to_string(),
-            Io::External(str) => str.clone(),
+            Io::Memory => write!(f, "memory"),
+            Io::Syscall => write!(f, "syscall"),
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Io::IoUring => write!(f, "io_uring"),
+            Io::External(str) => write!(f, "{}", str),
         }
     }
 }
@@ -61,8 +64,8 @@ pub enum OutputMode {
     Pretty,
 }
 
-impl std::fmt::Display for OutputMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for OutputMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.to_possible_value()
             .expect("no values are skipped")
             .get_name()
@@ -104,8 +107,8 @@ impl From<&Opts> for Settings {
     }
 }
 
-impl std::fmt::Display for Settings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Settings {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "Settings:\nOutput mode: {}\nDB: {}\nOutput: {}\nNull value: {}\nCWD: {}\nEcho: {}",

@@ -22,8 +22,8 @@ mod vector;
 #[cfg(not(target_family = "wasm"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-use ext::register_builtin_vfs_extensions;
+#[cfg(feature = "fs")]
+use ext::add_builtin_vfs_extensions;
 use fallible_iterator::FallibleIterator;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
@@ -214,21 +214,14 @@ impl Database {
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
-        let vfsmods = register_builtin_vfs_extensions(None)?;
+        let vfsmods = add_builtin_vfs_extensions(None)?;
         let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1) {
             Some(ref vfs) => Arc::new(*vfs),
             None => match vfs.trim() {
                 "memory" => Arc::new(MemoryIO::new()?),
                 "syscall" => Arc::new(PlatformIO::new()?),
-                "io_uring" => {
-                    if cfg!(all(target_os = "linux", feature = "io_uring")) {
-                        Arc::new(UringIO::new()?)
-                    } else {
-                        return Err(LimboError::ExtensionError(
-                            "io_uring not enabled".to_string(),
-                        ));
-                    }
-                }
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Arc::new(UringIO::new()?),
                 other => {
                     return Err(LimboError::InvalidArgument(format!(
                         "no such VFS: {}",
@@ -435,6 +428,7 @@ impl Connection {
         self.pager.cacheflush()
     }
 
+    #[cfg(feature = "fs")]
     pub fn open_new(&self, path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
         Database::open_with_vfs(&self.db, path, vfs)
     }
