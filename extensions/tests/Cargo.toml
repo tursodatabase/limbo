@@ -1,5 +1,5 @@
 [package]
-name = "limbo_testfs"
+name = "limbo_testvfs"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -18,4 +18,4 @@ getrandom = "0.3.1"
 limbo_ext = { path = "../core", features = ["static"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "*", default-features = false }
+mimalloc = { version = "0.1", default-features = false }

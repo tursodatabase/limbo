@@ -12,4 +12,6 @@ default = []
 static = []
 
 [dependencies]
+chrono = "0.4.39"
+getrandom = "0.3.1"
 limbo_macros = { workspace = true }

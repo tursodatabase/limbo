@@ -1,9 +1,10 @@
-use limbo_ext::{register_extension, Result, ResultCode, VfsDerive, VfsExtension, VfsFile};
+use limbo_ext::{register_extension, scalar, Result, ResultCode, VfsDerive, VfsExtension, VfsFile};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 register_extension! {
     vfs: { TestFS },
+    scalars: { test_scalar },
 }
 
 struct TestFile {
@@ -13,10 +14,16 @@ struct TestFile {
 #[derive(VfsDerive, Default)]
 struct TestFS;
 
-impl VfsExtension for TestFS {
-    const NAME: &'static str = "testfs";
-    type File = TestFile;
+// Test that we can have additional extension types in the same file
+// and still register the vfs at comptime if linking staticly
+#[scalar(name = "test_scalar")]
+fn test_scalar(_args: limbo_ext::Value) -> limbo_ext::Value {
+    limbo_ext::Value::from_integer(42)
+}
 
+impl VfsExtension for TestFS {
+    const NAME: &'static str = "testvfs";
+    type File = TestFile;
     fn open_file(&self, path: &str, flags: i32, _direct: bool) -> Result<Self::File> {
         let file = OpenOptions::new()
             .read(true)
@@ -25,25 +32,6 @@ impl VfsExtension for TestFS {
             .open(path)
             .map_err(|_| ResultCode::Error)?;
         Ok(TestFile { file })
-    }
-
-    fn run_once(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn close(&self, file: Self::File) -> Result<()> {
-        drop(file);
-        Ok(())
-    }
-
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
-    }
-
-    fn generate_random_number(&self) -> i64 {
-        let mut buf = [0u8; 8];
-        getrandom::fill(&mut buf).unwrap();
-        i64::from_ne_bytes(buf)
     }
 }
 
@@ -70,14 +58,6 @@ impl VfsFile for TestFile {
 
     fn sync(&self) -> Result<()> {
         self.file.sync_all().map_err(|_| ResultCode::Error)
-    }
-
-    fn lock(&mut self, _exclusive: bool) -> Result<()> {
-        Ok(())
-    }
-
-    fn unlock(&self) -> Result<()> {
-        Ok(())
     }
 
     fn size(&self) -> i64 {

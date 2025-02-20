@@ -11,11 +11,24 @@ pub enum DbLocation {
     Path,
 }
 
-#[derive(Copy, Clone, ValueEnum)]
+#[derive(Clone, Debug)]
 pub enum Io {
     Syscall,
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     IoUring,
+    External(String),
+    Memory,
+}
+
+impl ToString for Io {
+    fn to_string(&self) -> String {
+        match self {
+            Io::Memory => "memory".to_string(),
+            Io::Syscall => "syscall".to_string(),
+            Io::IoUring => "io_uring".to_string(),
+            Io::External(str) => str.clone(),
+        }
+    }
 }
 
 impl Default for Io {
@@ -79,7 +92,14 @@ impl From<&Opts> for Settings {
                 .database
                 .as_ref()
                 .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
-            io: opts.io,
+            io: match opts.vfs.as_ref().unwrap_or(&String::new()).as_str() {
+                "memory" => Io::Memory,
+                "syscall" => Io::Syscall,
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Io::IoUring,
+                "" => Io::default(),
+                vfs => Io::External(vfs.to_string()),
+            },
         }
     }
 }
@@ -118,12 +138,13 @@ pub fn get_writer(output: &str) -> Box<dyn Write> {
     }
 }
 
-pub fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
+pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
     Ok(match db_location {
         DbLocation::Memory => Arc::new(limbo_core::MemoryIO::new()?),
         DbLocation::Path => {
             match io_choice {
-                Io::Syscall => {
+                "memory" => Arc::new(limbo_core::MemoryIO::new()?),
+                "syscall" => {
                     // We are building for Linux/macOS and syscall backend has been selected
                     #[cfg(target_family = "unix")]
                     {
@@ -137,7 +158,8 @@ pub fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn 
                 }
                 // We are building for Linux and io_uring backend has been selected
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                Io::IoUring => Arc::new(limbo_core::UringIO::new()?),
+                "io_uring" => Arc::new(limbo_core::UringIO::new()?),
+                _ => Arc::new(limbo_core::PlatformIO::new()?),
             }
         }
     })
@@ -151,18 +173,19 @@ In addition to standard SQL commands, the following special commands are availab
 
 Special Commands:
 -----------------
-.quit                      Stop interpreting input stream and exit.
-.show                      Display current settings.
-.open <database_file>      Open and connect to a database file.
-.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'.
-.schema <table_name>       Show the schema of the specified table.
-.tables <pattern>          List names of tables matching LIKE pattern TABLE
-.opcodes                   Display all the opcodes defined by the virtual machine
-.cd <directory>            Change the current working directory.
-.nullvalue <string>        Set the value to be displayed for null values.
-.echo on|off               Toggle echo mode to repeat commands before execution.
-.import --csv FILE TABLE   Import csv data from FILE into TABLE
-.help                      Display this help message.
+.quit                       Stop interpreting input stream and exit.
+.show                       Display current settings.
+.open <database_file><vfs?> Open and connect to a database file using the specified VFS.
+.mode <mode>                Change the output mode. Available modes are 'list' and 'pretty'.
+.schema <table_name>        Show the schema of the specified table.
+.tables <pattern>           List names of tables matching LIKE pattern TABLE
+.opcodes                    Display all the opcodes defined by the virtual machine
+.cd <directory>             Change the current working directory.
+.nullvalue <string>         Set the value to be displayed for null values.
+.echo on|off                Toggle echo mode to repeat commands before execution.
+.import --csv FILE TABLE    Import csv data from FILE into TABLE
+.vfslist                    List all available VFS modules.
+.help                       Display this help message.
 
 Usage Examples:
 ---------------

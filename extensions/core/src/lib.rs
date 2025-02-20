@@ -8,6 +8,8 @@ pub type Result<T> = std::result::Result<T, ResultCode>;
 #[repr(C)]
 pub struct ExtensionApi {
     pub ctx: *mut c_void,
+    pub builtin_vfs: *mut *const VfsImpl,
+    pub builtin_vfs_count: i32,
 
     pub register_scalar_function: unsafe extern "C" fn(
         ctx: *mut c_void,
@@ -43,19 +45,53 @@ pub struct ExtensionApi {
     ) -> ResultCode,
 }
 
+impl ExtensionApi {
+    /// Since we want the option to build in extensions at compile time as well,
+    /// we add a slice of VfsImpls to the extension API, and this is called with any
+    /// libraries that we load staticly that will add their VFS implementations to the list.
+    pub fn add_builtin_vfs(&mut self, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() || self.builtin_vfs.is_null() {
+            return ResultCode::Error;
+        }
+        let mut new = unsafe {
+            let slice =
+                std::slice::from_raw_parts_mut(self.builtin_vfs, self.builtin_vfs_count as usize);
+            Vec::from(slice)
+        };
+        new.push(vfs);
+        self.builtin_vfs = Box::into_raw(new.into_boxed_slice()) as *mut *const VfsImpl;
+        self.builtin_vfs_count += 1;
+        ResultCode::OK
+    }
+}
+
 pub trait VfsExtension: Default {
     const NAME: &'static str;
     type File: VfsFile;
     fn open_file(&self, path: &str, flags: i32, direct: bool) -> Result<Self::File>;
-    fn close(&self, file: Self::File) -> Result<()>;
-    fn run_once(&self) -> Result<()>;
-    fn generate_random_number(&self) -> i64;
-    fn get_current_time(&self) -> String;
+    fn close(&self, _file: Self::File) -> Result<()> {
+        Ok(())
+    }
+    fn run_once(&self) -> Result<()> {
+        Ok(())
+    }
+    fn generate_random_number(&self) -> i64 {
+        let mut buf = [0u8; 8];
+        getrandom::fill(&mut buf).unwrap();
+        i64::from_ne_bytes(buf)
+    }
+    fn get_current_time(&self) -> String {
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
 }
 
 pub trait VfsFile: Sized {
-    fn lock(&mut self, exclusive: bool) -> Result<()>;
-    fn unlock(&self) -> Result<()>;
+    fn lock(&mut self, _exclusive: bool) -> Result<()> {
+        Ok(())
+    }
+    fn unlock(&self) -> Result<()> {
+        Ok(())
+    }
     fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> Result<i32>;
     fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> Result<i32>;
     fn sync(&self) -> Result<()>;
@@ -64,6 +100,7 @@ pub trait VfsFile: Sized {
 
 #[repr(C)]
 pub struct VfsImpl {
+    pub name: *const c_char,
     pub vfs: *const c_void,
     pub open: VfsOpen,
     pub close: VfsClose,
@@ -119,6 +156,18 @@ impl VfsFileImpl {
             return Err(ResultCode::Error);
         }
         Ok(Self { file, vfs })
+    }
+}
+
+impl Drop for VfsFileImpl {
+    fn drop(&mut self) {
+        if self.vfs.is_null() {
+            return;
+        }
+        let vfs = unsafe { &*self.vfs };
+        unsafe {
+            (vfs.close)(self.file);
+        }
     }
 }
 
