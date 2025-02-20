@@ -1,0 +1,15 @@
+[package]
+name = "ruby-limbo"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "limbo"
+crate-type = ["cdylib"]
+
+[dependencies]
+magnus = "0.7"
+limbo_core = { workspace = true, features = ["io_uring"] }
