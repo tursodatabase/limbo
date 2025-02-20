@@ -398,15 +398,13 @@ def test_kv():
 
 def test_vfs():
     limbo = TestLimboShell()
-    ext_path = "./target/debug/liblimbo_testvfs"
-    limbo.run_test_fn(
-        ".vfslist", lambda res: "testvfs" not in res, "testvfs not loaded"
-    )
+    ext_path = "target/debug/liblimbo_testvfs"
+    limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
     limbo.execute_dot(f".load {ext_path}")
-    limbo.execute_dot(".open testing/vfs_extension.db testvfs")
     limbo.run_test_fn(
         ".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded"
     )
+    limbo.execute_dot(".open testing/vfs_extension.db testvfs")
     limbo.execute_dot("create table test (id integer primary key, value float);")
     for _ in range(50):
         limbo.execute_dot("insert into test (value) values (randomblob(32*1024));")
