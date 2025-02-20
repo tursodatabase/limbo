@@ -469,26 +469,28 @@ def test_series(pipe):
 
 
 def test_vfs(pipe):
-    ext_path = "./target/debug/liblimbo_testfs"
-    run_test(pipe, ".vfslist", lambda res: "testfs" not in res, "testfs not loaded")
+    ext_path = "./target/debug/liblimbo_testvfs"
+    run_test(pipe, ".vfslist", lambda res: "testvfs" not in res, "testvfs not loaded")
     write_to_pipe(pipe, f".load {ext_path}")
-    write_to_pipe(pipe, ".open testing/vfs_extension.db testfs")
-    run_test(pipe, ".vfslist", lambda res: "testfs" in res, "testfs extension loaded")
+    write_to_pipe(pipe, ".open testing/vfs_extension.db testvfs")
+    run_test(pipe, ".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded")
     write_to_pipe(pipe, test_data)
     run_test(
         pipe,
         "SELECT * FROM numbers;",
         lambda res: res == "1|1.0\n2|2.0\n3|3.0\n4|4.0\n5|5.0\n6|6.0\n7|7.0",
-        "testfs extension works",
+        "testvfs extension works",
     )
     run_test(
         pipe,
         "SELECT * FROM test where value = 20.0;",
         lambda res: "20.0|25" in res,
-        "testfs extension works",
+        "testvfs extension works",
     )
     write_to_pipe(pipe, "insert into test values (randomblob(1024*1024));")
     print("Tested large write to testfs")
+    os.remove("testing/vfs_extension.db")
+    os.remove("testing/vfs_extension.db-wal")
 
 
 def main():
@@ -503,7 +505,12 @@ def main():
 
     except Exception as e:
         print(f"Test FAILED: {e}")
-        pipe.terminate()
+        if pipe:
+            pipe.terminate()
+        if os.stat("testing/vfs_extension.db"):
+            os.remove("testing/vfs_extension.db")
+        if os.stat("testing/vfs_extension.db-wal"):
+            os.remove("testing/vfs_extension.db-wal")
         exit(1)
     pipe.terminate()
     print("All tests passed successfully.")
