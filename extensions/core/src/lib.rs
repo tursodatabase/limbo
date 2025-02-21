@@ -37,6 +37,7 @@ impl ExtensionApi {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub trait VfsExtension: Default {
     const NAME: &'static str;
     type File: VfsFile;
@@ -49,7 +50,7 @@ pub trait VfsExtension: Default {
     }
     fn generate_random_number(&self) -> i64 {
         let mut buf = [0u8; 8];
-        getrandom::fill(&mut buf).unwrap();
+        getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
     fn get_current_time(&self) -> String {
@@ -57,6 +58,7 @@ pub trait VfsExtension: Default {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub trait VfsFile: Sized {
     fn lock(&mut self, _exclusive: bool) -> Result<()> {
         Ok(())

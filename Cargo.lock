@@ -1669,7 +1669,7 @@ name = "limbo_ext"
 version = "0.0.15"
 dependencies = [
  "chrono",
- "getrandom 0.3.1",
+ "getrandom 0.2.15",
  "limbo_macros",
 ]
 
