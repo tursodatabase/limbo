@@ -259,9 +259,9 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
         impl #struct_name {
             #[no_mangle]
             pub extern "C" fn #init_fn_name() -> *mut ::limbo_ext::AggCtx {
-                let state = Box::new(<#struct_name as ::limbo_ext::AggFunc>::State::default());
-                let ctx = Box::new(::limbo_ext::AggCtx {
-                    state: Box::into_raw(state) as *mut ::std::os::raw::c_void,
+                let state = ::std::boxed::Box::new(<#struct_name as ::limbo_ext::AggFunc>::State::default());
+                let ctx = ::std::boxed::Box::new(::limbo_ext::AggCtx {
+                    state: ::std::boxed::Box::into_raw(state) as *mut ::std::os::raw::c_void,
                 });
                 Box::into_raw(ctx)
             }
@@ -275,7 +275,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
                 unsafe {
                     let ctx = &mut *ctx;
                     let state = &mut *(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
-                    let args = std::slice::from_raw_parts(argv, argc as usize);
+                    let args = ::std::slice::from_raw_parts(argv, argc as usize);
                     <#struct_name as ::limbo_ext::AggFunc>::step(state, args);
                 }
             }
@@ -286,7 +286,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
             ) -> ::limbo_ext::Value {
                 unsafe {
                     let ctx = &mut *ctx;
-                    let state = Box::from_raw(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
+                    let state = ::std::boxed::Box::from_raw(ctx.state as *mut <#struct_name as ::limbo_ext::AggFunc>::State);
                     <#struct_name as ::limbo_ext::AggFunc>::finalize(*state)
                 }
             }
@@ -437,7 +437,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             unsafe extern "C" fn #open_fn_name(
             ) -> *mut ::std::ffi::c_void {
                 let cursor = <#struct_name as ::limbo_ext::VTabModule>::open();
-                Box::into_raw(Box::new(cursor)) as *mut ::std::ffi::c_void
+                std::boxed::Box::into_raw(std::boxed::Box::new(cursor)) as *mut ::std::ffi::c_void
             }
 
             #[no_mangle]
@@ -616,7 +616,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
             let vfs_instance = &*(vfs_file.vfs as *const #struct_name);
 
             // this time we need to own it so we can drop it
-            let file: Box<<#struct_name as ::limbo_ext::VfsExtension>::File> =
+            let file: ::std::boxed::Box<<#struct_name as ::limbo_ext::VfsExtension>::File> =
              ::std::boxed::Box::from_raw(vfs_file.file as *mut <#struct_name as ::limbo_ext::VfsExtension>::File);
             if let Err(e) = <#struct_name as ::limbo_ext::VfsExtension>::close(vfs_instance, *file) {
                 return e;
@@ -856,6 +856,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
                 #(#static_vtabs)*
 
+                #[cfg(not(target_family = "wasm"))]
                 #(#static_vfs)*
 
                 ::limbo_ext::ResultCode::OK
@@ -870,6 +871,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
                 #(#vtab_calls)*
 
+                #[cfg(not(target_family = "wasm"))]
                 #(#vfs_calls)*
 
                 ::limbo_ext::ResultCode::OK
