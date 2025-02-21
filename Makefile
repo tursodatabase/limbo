@@ -67,7 +67,7 @@ test: limbo test-compat test-vector test-sqlite3 test-shell test-extensions
 
 test-extensions: limbo
 	cargo build --package limbo_regexp
-	./testing/extensions.py
+	./testing/cli_tests/extensions.py
 .PHONY: test-extensions
 
 test-shell: limbo 
