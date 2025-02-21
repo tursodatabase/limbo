@@ -1,0 +1,19 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "limbo_completion"
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+limbo_ext = { path = "../core", features = ["static"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+static = ["limbo_ext/static"]
