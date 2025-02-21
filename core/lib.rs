@@ -21,13 +21,14 @@ mod vector;
 #[cfg(not(target_family = "wasm"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
+#[cfg(feature = "fs")]
+use ext::add_builtin_vfs_extensions;
 use fallible_iterator::FallibleIterator;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{ExtensionApi, ExtensionEntryPoint};
-use limbo_ext::{ResultCode, VTabModuleImpl, Value as ExtValue};
+use limbo_ext::{ResultCode, VTabModuleImpl, Value as ExtValue, VfsImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
@@ -98,7 +99,6 @@ impl Database {
     #[cfg(feature = "fs")]
     pub fn open_file(io: Arc<dyn IO>, path: &str) -> Result<Arc<Database>> {
         use storage::wal::WalFileShared;
-
         let file = io.open_file(path, OpenFlags::Create, true)?;
         maybe_init_database_file(&file, &io)?;
         let page_io = Rc::new(FileStorage::new(file));
@@ -209,6 +209,31 @@ impl Database {
                 "Extension registration failed".to_string(),
             ))
         }
+    }
+
+    /// Open a new database file with a specified VFS without an existing database
+    /// connection and symbol table to register extensions.
+    #[cfg(feature = "fs")]
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
+        let vfsmods = add_builtin_vfs_extensions(None)?;
+        let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1) {
+            Some(ref vfs) => Arc::new(*vfs),
+            None => match vfs.trim() {
+                "memory" => Arc::new(MemoryIO::new()?),
+                "syscall" => Arc::new(PlatformIO::new()?),
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Arc::new(UringIO::new()?),
+                other => {
+                    return Err(LimboError::InvalidArgument(format!(
+                        "no such VFS: {}",
+                        other
+                    )));
+                }
+            },
+        };
+        let db = Self::open_file(io.clone(), path)?;
+        Ok((io, db))
     }
 }
 
@@ -411,6 +436,11 @@ impl Connection {
         self.pager.cacheflush()
     }
 
+    #[cfg(feature = "fs")]
+    pub fn open_new(&self, path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
+        Database::open_with_vfs(&self.db, path, vfs)
+    }
+
     pub fn clear_page_cache(&self) -> Result<()> {
         self.pager.clear_page_cache();
         Ok(())
@@ -457,6 +487,33 @@ impl Connection {
 
     pub fn total_changes(&self) -> i64 {
         self.total_changes.get()
+    }
+
+    pub fn list_vfs(&self) -> Vec<String> {
+        let mut all_vfs = vec![String::from("memory")];
+        #[cfg(feature = "fs")]
+        {
+            #[cfg(all(feature = "fs", target_family = "unix"))]
+            {
+                all_vfs.push("syscall".to_string());
+            }
+            #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
+            {
+                all_vfs.push("io_uring".to_string());
+            }
+        }
+        let ext: Vec<String> = self
+            .db
+            .syms
+            .borrow()
+            .vfs_modules
+            .iter()
+            .map(|v| v.0.clone())
+            .collect();
+        if !ext.is_empty() {
+            all_vfs.extend(ext);
+        }
+        all_vfs
     }
 }
 
@@ -587,6 +644,7 @@ pub(crate) struct SymbolTable {
     #[cfg(not(target_family = "wasm"))]
     extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtabs: HashMap<String, VirtualTable>,
+    pub vfs_modules: Vec<(String, *const VfsImpl)>,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -631,6 +689,7 @@ impl SymbolTable {
             vtabs: HashMap::new(),
             #[cfg(not(target_family = "wasm"))]
             extensions: Vec::new(),
+            vfs_modules: Vec::new(),
         }
     }
 

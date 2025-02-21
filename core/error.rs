@@ -55,6 +55,12 @@ pub enum LimboError {
     IntegerOverflow,
 }
 
+impl From<limbo_ext::ResultCode> for LimboError {
+    fn from(code: limbo_ext::ResultCode) -> Self {
+        Self::ExtensionError(code.to_string())
+    }
+}
+
 #[macro_export]
 macro_rules! bail_parse_error {
     ($($arg:tt)*) => {
