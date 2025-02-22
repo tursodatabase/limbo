@@ -654,6 +654,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
         aggregates,
         scalars,
         vtabs,
+        types,
     } = input_ast;
 
     let scalar_calls = scalars.iter().map(|scalar_ident| {

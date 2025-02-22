@@ -1,7 +1,7 @@
 use limbo_ext::{register_extension, scalar, ResultCode, Value, ValueType};
 
 register_extension! {
-    scalars: {uuid4_str, uuid4_blob, uuid7_str, uuid7, uuid7_ts, uuid_str, uuid_blob },
+    scalars: {uuid4_str, uuid4_blob, uuid7_str, uuid7, uuid7_ts, uuid_str, uuid_blob }
 }
 
 #[scalar(name = "uuid4_str", alias = "gen_random_uuid")]
@@ -89,7 +89,7 @@ fn uuid7_ts(args: &[Value]) -> Value {
             let Some(text) = args[0].to_text() else {
                 return Value::null();
             };
-            let Ok(uuid) = uuid::Uuid::parse_str(&text) else {
+            let Ok(uuid) = uuid::Uuid::parse_str(text) else {
                 return Value::null();
             };
             let unix = uuid_to_unix(uuid.as_bytes());
@@ -118,7 +118,7 @@ fn uuid_blob(&self, args: &[Value]) -> Value {
     let Some(text) = args[0].to_text() else {
         return Value::null();
     };
-    match uuid::Uuid::parse_str(&text) {
+    match uuid::Uuid::parse_str(text) {
         Ok(uuid) => Value::from_blob(uuid.as_bytes().to_vec()),
         Err(_) => Value::null(),
     }
