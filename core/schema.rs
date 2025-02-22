@@ -1,3 +1,4 @@
+use crate::ext::extern_types::TypeRegistry;
 use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -145,12 +146,16 @@ impl BTreeTable {
         None
     }
 
-    pub fn from_sql(sql: &str, root_page: usize) -> Result<BTreeTable> {
+    pub fn from_sql(
+        sql: &str,
+        root_page: usize,
+        type_registry: &TypeRegistry,
+    ) -> Result<BTreeTable> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         match cmd {
             Some(Cmd::Stmt(Stmt::CreateTable { tbl_name, body, .. })) => {
-                create_table(tbl_name, *body, root_page)
+                create_table(tbl_name, *body, root_page, type_registry)
             }
             _ => todo!("Expected CREATE TABLE statement"),
         }
@@ -219,6 +224,7 @@ fn create_table(
     tbl_name: QualifiedName,
     body: CreateTableBody,
     root_page: usize,
+    type_registry: &TypeRegistry,
 ) -> Result<BTreeTable> {
     let table_name = normalize_ident(&tbl_name.name.0);
     trace!("Creating table {}", table_name);
@@ -293,8 +299,10 @@ fn create_table(
                             || type_name.contains("DOUB")
                         {
                             (Type::Real, ty_str)
+                        } else if let Some(ext_type) = type_registry.get(&ty_str) {
+                            (ext_type.type_of(), ty_str)
                         } else {
-                            (Type::Numeric, ty_str)
+                            (Type::External, ty_str)
                         }
                     }
                     None => (Type::Null, "".to_string()),
@@ -390,6 +398,9 @@ impl Column {
     pub fn affinity(&self) -> Affinity {
         affinity(&self.ty_str)
     }
+    pub fn is_external(&self) -> bool {
+        matches!(self.ty, Type::External)
+    }
 }
 
 /// 3.1. Determination Of Column Affinity
@@ -440,6 +451,7 @@ pub enum Type {
     Integer,
     Real,
     Blob,
+    External,
 }
 
 /// Each column in an SQLite 3 database is assigned one of the following type affinities:

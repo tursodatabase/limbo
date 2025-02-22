@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    ext::extern_types::ExternType,
     parameters::Parameters,
     schema::{BTreeTable, Index, PseudoTable},
     storage::sqlite3_ondisk::DatabaseHeader,

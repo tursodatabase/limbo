@@ -1,3 +1,4 @@
+pub mod extern_types;
 use crate::{function::ExternalFunc, util::columns_from_create_table_body, Database, VirtualTable};
 use fallible_iterator::FallibleIterator;
 use limbo_ext::{ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabModuleImpl};

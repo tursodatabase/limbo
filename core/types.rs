@@ -42,6 +42,18 @@ pub enum OwnedValueType {
     Error,
 }
 
+impl Into<crate::schema::Type> for OwnedValueType {
+    fn into(self) -> crate::schema::Type {
+        match self {
+            OwnedValueType::Integer => crate::schema::Type::Integer,
+            OwnedValueType::Float => crate::schema::Type::Real,
+            OwnedValueType::Blob => crate::schema::Type::Blob,
+            OwnedValueType::Text => crate::schema::Type::Text,
+            _ => crate::schema::Type::Null,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextSubtype {
     Text,

@@ -1,5 +1,7 @@
 mod types;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
+pub use limbo_macros::{
+    register_extension, scalar, AggregateDerive, CustomTypeDerive, VTabModuleDerive,
+};
 use std::os::raw::{c_char, c_void};
 pub use types::{ResultCode, Value, ValueType};
 
@@ -33,6 +35,9 @@ pub struct ExtensionApi {
         name: *const c_char,
         sql: *const c_char,
     ) -> ResultCode,
+
+    pub register_extension_type:
+        unsafe extern "C" fn(ctx: *mut c_void, module: *const CustomTypeImpl) -> ResultCode,
 }
 
 impl ExtensionApi {
@@ -121,3 +126,20 @@ pub trait VTabCursor: Sized {
 pub struct VTabImpl {
     pub module: VTabModuleImpl,
 }
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct CustomTypeImpl {
+    pub name: *const c_char,
+    pub type_of: ValueType,
+    pub generate: CustomTypeGenerateFn,
+}
+
+pub trait CustomType: Default + Sized {
+    const NAME: &'static str;
+    const TYPE: ValueType;
+    fn generate(col_name: Option<&str>, insert_val: Option<&Value>) -> Value;
+}
+
+pub type CustomTypeGenerateFn =
+    unsafe extern "C" fn(col_name: *const c_char, insert_val: *const Value) -> Value;

@@ -127,6 +127,7 @@ pub fn translate_insert(
                 true,
                 rowid_reg,
                 &resolver,
+                syms.type_registry,
             )?;
             program.emit_insn(Insn::Yield {
                 yield_reg,
@@ -406,6 +407,10 @@ fn populate_column_registers(
                 program.emit_insn(Insn::SoftNull { reg: target_reg });
             }
         } else {
+            if mapping.column.is_external() {
+                match mapping.column.
+                program.emit_insn(Insn::)
+            }
             // Column was not specified - use NULL if it is nullable, otherwise error
             // Rowid alias columns can be NULL because we will autogenerate a rowid in that case.
             let is_nullable = !mapping.column.primary_key || mapping.column.is_rowid_alias;

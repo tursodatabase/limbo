@@ -22,6 +22,7 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use ext::extern_types::{ExternType, TypeRegistry};
 use fallible_iterator::FallibleIterator;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
@@ -587,6 +588,7 @@ pub(crate) struct SymbolTable {
     #[cfg(not(target_family = "wasm"))]
     extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtabs: HashMap<String, VirtualTable>,
+    pub type_registry: TypeRegistry,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -631,6 +633,7 @@ impl SymbolTable {
             vtabs: HashMap::new(),
             #[cfg(not(target_family = "wasm"))]
             extensions: Vec::new(),
+            type_registry: Vec::new(),
         }
     }
 
