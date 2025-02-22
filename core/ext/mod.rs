@@ -179,6 +179,10 @@ impl Database {
         if unsafe { !limbo_series::register_extension_static(&ext_api).is_ok() } {
             return Err("Failed to register series extension".to_string());
         }
+        #[cfg(feature = "completion")]
+        if unsafe { !limbo_completion::register_extension_static(&ext_api).is_ok() } {
+            return Err("Failed to register completion extension".to_string());
+        }
         Ok(())
     }
 }

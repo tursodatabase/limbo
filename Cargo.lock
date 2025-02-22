@@ -1638,6 +1638,7 @@ dependencies = [
  "julian_day_converter",
  "libc",
  "libloading",
+ "limbo_completion",
  "limbo_crypto",
  "limbo_ext",
  "limbo_macros",

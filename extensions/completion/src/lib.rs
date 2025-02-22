@@ -1,3 +1,6 @@
+//! Reference for implementation
+//! https://github.com/sqlite/sqlite/blob/a80089c5167856f0aadc9c878bd65843df724c06/ext/misc/completion.c
+
 mod keywords;
 
 use keywords::KEYWORDS;
@@ -21,7 +24,6 @@ macro_rules! try_option {
 #[derive(Debug, Default, PartialEq, Clone)]
 enum CompletionPhase {
     #[default]
-    FirstPhase = 0,
     Keywords = 1,
     Pragmas = 2,
     Functions = 3,
@@ -39,7 +41,6 @@ impl Into<i64> for CompletionPhase {
     fn into(self) -> i64 {
         use self::CompletionPhase::*;
         match self {
-            FirstPhase => 0,
             Keywords => 1,
             Pragmas => 2,
             Functions => 3,
@@ -91,7 +92,37 @@ impl VTabModule for CompletionVTab {
     }
 
     fn filter(cursor: &mut Self::VCursor, arg_count: i32, args: &[Value]) -> ResultCode {
-        todo!()
+        if arg_count == 0 || arg_count > 2 {
+            return ResultCode::InvalidArgs;
+        }
+        cursor.reset();
+        let prefix = try_option!(args[0].to_text(), ResultCode::InvalidArgs);
+
+        let wholeline = args.get(1).map(|v| v.to_text().unwrap_or("")).unwrap_or("");
+
+        cursor.line = wholeline.to_string();
+        cursor.prefix = prefix.to_string();
+
+        // Currently best index is not implemented so the correct arg parsing is not done here
+        if !cursor.line.is_empty() && cursor.prefix.is_empty() {
+            let mut i = cursor.line.len();
+            while let Some(ch) = cursor.line.chars().next() {
+                if i > 0 && (ch.is_alphanumeric() || ch == '_') {
+                    i -= 1;
+                } else {
+                    break;
+                }
+            }
+            if cursor.line.len() - i > 0 {
+                // TODO see if need to inclusive range
+                cursor.prefix = cursor.line[..i].to_string();
+            }
+        }
+
+        cursor.rowid = 0;
+        cursor.phase = CompletionPhase::Keywords;
+
+        Self::next(cursor)
     }
 }
 
@@ -108,35 +139,56 @@ struct CompletionCursor {
     // conn: Connection
 }
 
-impl CompletionCursor {}
+impl CompletionCursor {
+    fn reset(&mut self) {
+        self.line.clear();
+        self.prefix.clear();
+        self.inter_phase_counter = 0;
+    }
+}
 
 impl VTabCursor for CompletionCursor {
     type Error = ResultCode;
 
     fn next(&mut self) -> ResultCode {
-        let mut curr_col = -1 as isize;
         self.rowid += 1;
-        let mut next_phase = CompletionPhase::FirstPhase;
 
         while self.phase != CompletionPhase::Eof {
+            // dbg!(&self.phase, &self.prefix, &self.curr_row);
             match self.phase {
                 CompletionPhase::Keywords => {
                     if self.inter_phase_counter >= KEYWORDS.len() {
                         self.curr_row.clear();
-                        self.phase = CompletionPhase::Databases;
+                        self.phase = CompletionPhase::Eof;
                     } else {
-                        self.inter_phase_counter += 1;
+                        self.curr_row.clear();
                         self.curr_row.push_str(KEYWORDS[self.inter_phase_counter]);
+                        self.inter_phase_counter += 1;
                     }
                 }
-                CompletionPhase::Databases => {
-                    // TODO implement this when
-                    // self.stmt = self.conn.prepare("PRAGMA database_list")
-                    curr_col = 1;
-                    next_phase = CompletionPhase::Tables;
+
+                // CompletionPhase::Databases => {
+                //     // TODO implement this when db conn is available
+                //     // self.stmt = self.conn.prepare("PRAGMA database_list")
+                //     curr_col = 1;
+                //     next_phase = CompletionPhase::Tables;
+                //     self.phase = CompletionPhase::Eof; // for now skip other phases
+                // }
+                _ => {
+                    return ResultCode::EOF;
                 }
-                _ => (),
             }
+            if self.prefix.is_empty() {
+                break;
+            }
+            if self.prefix.len() <= self.curr_row.len()
+                && self.prefix == self.curr_row.to_lowercase()[..self.prefix.len()]
+            {
+                break;
+            }
+        }
+        if self.phase == CompletionPhase::Eof {
+            return ResultCode::EOF;
         }
         ResultCode::OK
     }
