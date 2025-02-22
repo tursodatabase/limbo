@@ -25,15 +25,16 @@ macro_rules! try_option {
 enum CompletionPhase {
     #[default]
     Keywords = 1,
-    Pragmas = 2,
-    Functions = 3,
-    Collations = 4,
-    Indexes = 5,
-    Triggers = 6,
-    Databases = 7,
-    Tables = 8, // Also VIEWs and TRIGGERs
-    Columns = 9,
-    Modules = 10,
+    // TODO other options now implemented for now
+    // Pragmas = 2,
+    // Functions = 3,
+    // Collations = 4,
+    // Indexes = 5,
+    // Triggers = 6,
+    // Databases = 7,
+    // Tables = 8, // Also VIEWs and TRIGGERs
+    // Columns = 9,
+    // Modules = 10,
     Eof = 11,
 }
 
@@ -42,15 +43,15 @@ impl Into<i64> for CompletionPhase {
         use self::CompletionPhase::*;
         match self {
             Keywords => 1,
-            Pragmas => 2,
-            Functions => 3,
-            Collations => 4,
-            Indexes => 5,
-            Triggers => 6,
-            Databases => 7,
-            Tables => 8,
-            Columns => 9,
-            Modules => 10,
+            // Pragmas => 2,
+            // Functions => 3,
+            // Collations => 4,
+            // Indexes => 5,
+            // Triggers => 6,
+            // Databases => 7,
+            // Tables => 8,
+            // Columns => 9,
+            // Modules => 10,
             Eof => 11,
         }
     }
@@ -166,9 +167,9 @@ impl VTabCursor for CompletionCursor {
                         self.inter_phase_counter += 1;
                     }
                 }
-
+                // TODO implement this when db conn is available
                 // CompletionPhase::Databases => {
-                //     // TODO implement this when db conn is available
+                //
                 //     // self.stmt = self.conn.prepare("PRAGMA database_list")
                 //     curr_col = 1;
                 //     next_phase = CompletionPhase::Tables;
@@ -182,7 +183,7 @@ impl VTabCursor for CompletionCursor {
                 break;
             }
             if self.prefix.len() <= self.curr_row.len()
-                && self.prefix == self.curr_row.to_lowercase()[..self.prefix.len()]
+                && self.prefix.to_lowercase() == self.curr_row.to_lowercase()[..self.prefix.len()]
             {
                 break;
             }
