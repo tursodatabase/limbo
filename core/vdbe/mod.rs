@@ -3713,7 +3713,7 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
     // sqlite will parse the first N digits of a string to numeric value, then determine
     // whether _that_ value is more likely a real or integer value. e.g.
     // '-100234-2344.23e14' evaluates to -100234 instead of -100234.0
-    let bytes = text.as_bytes();
+    let bytes = text.trim().as_bytes();
     let mut end = 0;
     let mut has_decimal = false;
     let mut has_exponent = false;

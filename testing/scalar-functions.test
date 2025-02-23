@@ -848,6 +848,18 @@ do_execsql_test cast-small-float-to-numeric {
   SELECT typeof(CAST('1.23' AS NUMERIC)), CAST('1.23' AS NUMERIC);
 } {real|1.23}
 
+do_execsql_test cast-signed-edgecase-int-to-numeric {
+  SELECT typeof(CAST('-1230-23.40e24' AS NUMERIC)), CAST('-1230-23.40e24' AS NUMERIC);
+} {integer|-1230}
+
+do_execsql_test cast-edgecase-int-to-numeric {
+  SELECT typeof(CAST('1230-23.40e24' AS NUMERIC)), CAST('1230-23.40e24' AS NUMERIC);
+} {integer|1230}
+
+do_execsql_test cast-edgecase-int-to-numeric {
+  SELECT typeof(CAST('123023.4024' AS NUMERIC)), CAST('123023.4024' AS NUMERIC);
+} {real|123023.4024}
+
 do_execsql_test_regex sqlite-version-should-return-valid-output {
   SELECT sqlite_version();
 } {\d+\.\d+\.\d+}
