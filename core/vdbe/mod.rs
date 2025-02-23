@@ -190,9 +190,6 @@ macro_rules! call_external_function {
             }
             let argv_ptr = ext_values.as_ptr();
             let result_c_value: ExtValue = unsafe { ($func_ptr)($arg_count as i32, argv_ptr) };
-            for arg in ext_values {
-                unsafe { arg.free() };
-            }
             match OwnedValue::from_ffi(result_c_value) {
                 Ok(result_ov) => {
                     $state.registers[$dest_register] = result_ov;
