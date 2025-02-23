@@ -687,14 +687,22 @@ pub enum Cookie {
     /// The "user version" as read and set by the user_version pragma.
     UserVersion = 6,
 }
-
 fn cast_text_to_numerical(value: &str) -> OwnedValue {
     if let Ok(x) = value.parse::<i64>() {
         OwnedValue::Integer(x)
     } else if let Ok(x) = value.parse::<f64>() {
         OwnedValue::Float(x)
     } else {
-        OwnedValue::Integer(0)
+        let idx = value
+            .chars()
+            .enumerate()
+            .find_map(|(i, c)| match i {
+                i if i == 0 && c == '-' => None,
+                i if i > 0 && !c.is_ascii_digit() => Some(i),
+                _ => None,
+            })
+            .unwrap_or(0);
+        OwnedValue::Integer(value[0..idx].parse::<i64>().unwrap_or(0))
     }
 }
 

@@ -3637,16 +3637,16 @@ fn cast_text_to_integer(text: &str) -> OwnedValue {
     if let Ok(i) = text.parse::<i64>() {
         return OwnedValue::Integer(i);
     }
-    // Try to find longest valid prefix that parses as an integer
-    // TODO: inefficient
-    let mut end_index = text.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
-            return OwnedValue::Integer(i);
-        }
-        end_index -= 1;
-    }
-    OwnedValue::Integer(0)
+    let idx = text
+        .chars()
+        .enumerate()
+        .find_map(|(i, c)| match i {
+            i if i == 0 && c == '-' => None,
+            i if i > 0 && !c.is_ascii_digit() => Some(i),
+            _ => None,
+        })
+        .unwrap_or(0);
+    OwnedValue::Integer(text[0..idx].parse::<i64>().unwrap_or(0))
 }
 
 /// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
