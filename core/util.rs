@@ -47,7 +47,7 @@ pub fn parse_schema_rows(
                             let table = schema::BTreeTable::from_sql(
                                 sql,
                                 root_page as usize,
-                                &syms.type_registry,
+                                Some(&syms.type_registry),
                             )?;
                             schema.add_table(Rc::new(table));
                         }
