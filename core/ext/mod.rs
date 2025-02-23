@@ -1,4 +1,5 @@
 use crate::{function::ExternalFunc, Connection};
+pub mod foreign_types;
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
 };
