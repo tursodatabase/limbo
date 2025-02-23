@@ -454,17 +454,17 @@ fn handle_inserted_external_value(
 ) -> Result<()> {
     // argv[0] = column name
     // argv[1] = ?inserted value
-    let args_start = program.alloc_registers(2);
+    let args_start = program.alloc_registers(1);
     if let Some(name) = mapping.column.name.as_ref() {
         // if column has a name, copy it to the second argument register
         program.emit_insn(Insn::String8 {
             value: name.to_string(),
-            dest: args_start + 1,
+            dest: args_start,
         });
     } else {
         program.emit_insn(Insn::Null {
-            dest: args_start + 1,
-            dest_end: Some(args_start + 2),
+            dest: args_start,
+            dest_end: None,
         });
     }
 

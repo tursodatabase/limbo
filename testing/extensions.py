@@ -183,7 +183,7 @@ def test_uuid(pipe):
     )
     run_test(pipe, "CREATE TABLE users2 (id uuid, name TEXT);", returns_null)
     run_test(pipe, "INSERT INTO users2 (name) values ('test');", returns_null)
-    run_test(pipe, "SELECT id from users;", validate_string_uuid)
+    run_test(pipe, "SELECT id from users2;", validate_string_uuid)
     run_test(
         pipe,
         "INSERT INTO users2 (id, name) values (unixepoch(), 'next');",
@@ -192,7 +192,7 @@ def test_uuid(pipe):
     run_test(pipe, "SELECT id from users2 where name = 'next';", validate_string_uuid)
     run_test(
         pipe,
-        "SELECT uuid7_timestamp_ms(id) / 1000 from users where name = 'next';",
+        "SELECT uuid7_timestamp_ms(id) / 1000 from users2 where name = 'next';",
         validate_ts,
     )
 

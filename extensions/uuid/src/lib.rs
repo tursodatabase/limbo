@@ -147,12 +147,10 @@ impl CustomType for UUID {
     fn generate(_col_name: Option<&str>, insert_val: Option<&Value>) -> Value {
         // if value inserted is a unix timestamp, store a uuidv7. otherwise store a uuidv4
         if let Some(val) = insert_val {
-            if val.value_type() == ValueType::Integer {
-                let maybe_ts = val.to_integer().unwrap_or(0);
-                let ctx = uuid::ContextV7::new();
-                let ts = uuid::Timestamp::from_unix(ctx, maybe_ts as u64, 0);
-                return Value::from_text(uuid::Uuid::new_v7(ts).to_string());
-            }
+            let maybe_ts = val.to_integer().unwrap_or(0);
+            let ctx = uuid::ContextV7::new();
+            let ts = uuid::Timestamp::from_unix(ctx, maybe_ts as u64, 0);
+            return Value::from_text(uuid::Uuid::new_v7(ts).to_string());
         }
         Value::from_text(uuid::Uuid::new_v4().to_string())
     }
