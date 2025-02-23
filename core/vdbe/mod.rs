@@ -3665,37 +3665,10 @@ fn cast_text_to_real(text: &str) -> OwnedValue {
     if let Ok(num) = trimmed.parse::<f64>() {
         return OwnedValue::Float(num);
     }
-    let bytes = text.as_bytes();
-    let mut end = 0;
-    let mut has_decimal = false;
-    let mut has_exponent = false;
-
-    if bytes[0] == b'-' {
-        end = 1;
-    }
-    while end < bytes.len() {
-        match bytes[end] {
-            b'0'..=b'9' => end += 1,
-            b'.' if !has_decimal && !has_exponent => {
-                has_decimal = true;
-                end += 1;
-            }
-            b'e' | b'E' if !has_exponent => {
-                has_exponent = true;
-                end += 1;
-                // allow exponent sign
-                if end < bytes.len() && (bytes[end] == b'+' || bytes[end] == b'-') {
-                    end += 1;
-                }
-            }
-            _ => break,
-        }
-    }
-    if end == 0 || (end == 1 && bytes[0] == b'-') {
+    let Ok((_, _, text)) = parse_numeric_str(trimmed) else {
         return OwnedValue::Float(0.0);
-    }
-    text[..end]
-        .parse::<f64>()
+    };
+    text.parse::<f64>()
         .map_or(OwnedValue::Float(0.0), OwnedValue::Float)
 }
 
@@ -3713,7 +3686,20 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
     // sqlite will parse the first N digits of a string to numeric value, then determine
     // whether _that_ value is more likely a real or integer value. e.g.
     // '-100234-2344.23e14' evaluates to -100234 instead of -100234.0
-    let bytes = text.trim().as_bytes();
+    let (has_decimal, has_exponent, text) = parse_numeric_str(text)?;
+    if !has_decimal && !has_exponent {
+        Ok(text
+            .parse::<i64>()
+            .map_or(OwnedValue::Integer(0), OwnedValue::Integer))
+    } else {
+        Ok(text
+            .parse::<f64>()
+            .map_or(OwnedValue::Float(0.0), OwnedValue::Float))
+    }
+}
+
+fn parse_numeric_str(text: &str) -> Result<(bool, bool, &str), ()> {
+    let bytes = text.trim_start().as_bytes();
     let mut end = 0;
     let mut has_decimal = false;
     let mut has_exponent = false;
@@ -3741,16 +3727,7 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
     if end == 0 || (end == 1 && bytes[0] == b'-') {
         return Err(());
     }
-    let text = &text[..end];
-    if !has_decimal && !has_exponent {
-        Ok(text
-            .parse::<i64>()
-            .map_or(OwnedValue::Integer(0), OwnedValue::Integer))
-    } else {
-        Ok(text
-            .parse::<f64>()
-            .map_or(OwnedValue::Float(0.0), OwnedValue::Float))
-    }
+    Ok((has_decimal, has_exponent, &text[..end]))
 }
 
 // try casting to numeric if not possible return integer 0
