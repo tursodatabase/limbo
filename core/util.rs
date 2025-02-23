@@ -3,7 +3,7 @@ use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
-    Result, Statement, StepResult, IO,
+    Result, Statement, StepResult, SymbolTable, IO,
 };
 
 // https://sqlite.org/lang_keywords.html
@@ -28,6 +28,7 @@ pub fn parse_schema_rows(
     rows: Option<Statement>,
     schema: &mut Schema,
     io: Arc<dyn IO>,
+    syms: &SymbolTable,
 ) -> Result<()> {
     if let Some(mut rows) = rows {
         let mut automatic_indexes = Vec::new();
@@ -43,7 +44,11 @@ pub fn parse_schema_rows(
                         "table" => {
                             let root_page: i64 = row.get::<i64>(3)?;
                             let sql: &str = row.get::<&str>(4)?;
-                            let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
+                            let table = schema::BTreeTable::from_sql(
+                                sql,
+                                root_page as usize,
+                                Some(&syms.type_registry),
+                            )?;
                             schema.add_table(Rc::new(table));
                         }
                         "index" => {
@@ -307,7 +312,10 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
-pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<Column>, ()> {
+pub fn columns_from_create_table_body(
+    body: ast::CreateTableBody,
+    syms: &SymbolTable,
+) -> Result<Vec<Column>, ()> {
     let CreateTableBody::ColumnsAndConstraints { columns, .. } = body else {
         return Err(());
     };
@@ -341,6 +349,8 @@ pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<
                             || type_name.contains("DOUB")
                         {
                             Type::Real
+                        } else if let Some(ext_type) = syms.type_registry.get(&type_name) {
+                            ext_type.type_of().into()
                         } else {
                             Type::Numeric
                         }

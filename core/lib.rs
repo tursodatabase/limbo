@@ -22,6 +22,7 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use ext::extern_types::TypeRegistry;
 use fallible_iterator::FallibleIterator;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
@@ -169,7 +170,7 @@ impl Database {
         });
         let rows = conn.query("SELECT * FROM sqlite_schema")?;
         let mut schema = schema.borrow_mut();
-        parse_schema_rows(rows, &mut schema, io)?;
+        parse_schema_rows(rows, &mut schema, io, &db.syms.borrow())?;
         Ok(db)
     }
 
@@ -587,6 +588,7 @@ pub(crate) struct SymbolTable {
     #[cfg(not(target_family = "wasm"))]
     extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtabs: HashMap<String, VirtualTable>,
+    pub type_registry: TypeRegistry,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -631,6 +633,7 @@ impl SymbolTable {
             vtabs: HashMap::new(),
             #[cfg(not(target_family = "wasm"))]
             extensions: Vec::new(),
+            type_registry: TypeRegistry::new(),
         }
     }
 
