@@ -135,6 +135,10 @@ def assert_specific_time(result):
     return result == "1736720789"
 
 
+def validate_ts(res):
+    return res.isnumeric() and int(res) > 0
+
+
 def test_uuid(pipe):
     specific_time = "01945ca0-3189-76c0-9a8f-caf310fc8b8e"
     # these are built into the binary, so we just test they work
@@ -164,6 +168,32 @@ def test_uuid(pipe):
         "SELECT gen_random_uuid();",
         validate_string_uuid,
         "scalar alias's are registered properly",
+    )
+    run_test(pipe, "CREATE TABLE users (id UUID, name TEXT);", returns_null)
+    run_test(pipe, "INSERT INTO USERS (name) values ('test');", returns_null)
+    run_test(pipe, "SELECT id from users;", validate_string_uuid)
+    run_test(
+        pipe, "INSERT INTO USERS (id, name) values (unixepoch(), 'next');", returns_null
+    )
+    run_test(pipe, "SELECT id from users where name = 'next';", validate_string_uuid)
+    run_test(
+        pipe,
+        "SELECT uuid7_timestamp_ms(id) / 1000 from users where name = 'next';",
+        validate_ts,
+    )
+    run_test(pipe, "CREATE TABLE users2 (id uuid, name TEXT);", returns_null)
+    run_test(pipe, "INSERT INTO users2 (name) values ('test');", returns_null)
+    run_test(pipe, "SELECT id from users;", validate_string_uuid)
+    run_test(
+        pipe,
+        "INSERT INTO users2 (id, name) values (unixepoch(), 'next');",
+        returns_null,
+    )
+    run_test(pipe, "SELECT id from users2 where name = 'next';", validate_string_uuid)
+    run_test(
+        pipe,
+        "SELECT uuid7_timestamp_ms(id) / 1000 from users where name = 'next';",
+        validate_ts,
     )
 
 
