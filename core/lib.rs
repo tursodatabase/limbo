@@ -497,7 +497,7 @@ impl Statement {
     }
 
     pub fn bind_at(&mut self, index: NonZero<usize>, value: OwnedValue) {
-        self.state.bind_at(index, value.into());
+        self.state.bind_at(index, value);
     }
 
     pub fn reset(&mut self) {

@@ -1,3 +1,4 @@
+pub mod foreign_types;
 use crate::{function::ExternalFunc, Database};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
