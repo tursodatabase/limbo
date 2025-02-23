@@ -24,7 +24,7 @@ pub mod likeop;
 pub mod sorter;
 
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
-use crate::ext::ExtValue;
+use crate::ext::{foreign_types::ForeignTypeOp, ExtValue};
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,

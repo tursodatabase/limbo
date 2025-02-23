@@ -11,6 +11,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
  - [] **VFS Modules** 
+ - [] **Custom Types**: Create a custom type alias to define columns and handle insert behavior.
 ---
 
 ## Installation
