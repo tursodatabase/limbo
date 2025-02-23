@@ -300,9 +300,9 @@ fn create_table(
                         {
                             (Type::Real, ty_str)
                         } else if let Some(ext_type) = type_registry.get(&ty_str) {
-                            (ext_type.type_of(), ty_str)
+                            (ext_type.type_of().into(), ty_str)
                         } else {
-                            (Type::External, ty_str)
+                            (Type::Numeric, ty_str)
                         }
                     }
                     None => (Type::Null, "".to_string()),
@@ -398,9 +398,6 @@ impl Column {
     pub fn affinity(&self) -> Affinity {
         affinity(&self.ty_str)
     }
-    pub fn is_external(&self) -> bool {
-        matches!(self.ty, Type::External)
-    }
 }
 
 /// 3.1. Determination Of Column Affinity
@@ -451,7 +448,6 @@ pub enum Type {
     Integer,
     Real,
     Blob,
-    External,
 }
 
 /// Each column in an SQLite 3 database is assigned one of the following type affinities:

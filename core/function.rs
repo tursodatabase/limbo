@@ -3,6 +3,7 @@ use std::fmt;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
+use crate::ext::extern_types::TsFunc;
 use crate::LimboError;
 
 pub struct ExternalFunc {
@@ -430,6 +431,7 @@ pub enum Func {
     #[cfg(feature = "json")]
     Json(JsonFunc),
     External(Rc<ExternalFunc>),
+    ForeignType(TsFunc),
 }
 
 impl Display for Func {
@@ -442,6 +444,7 @@ impl Display for Func {
             #[cfg(feature = "json")]
             Self::Json(json_func) => write!(f, "{}", json_func),
             Self::External(generic_func) => write!(f, "{}", generic_func),
+            Self::ForeignType(ts) => write!(f, "{}", ts),
         }
     }
 }

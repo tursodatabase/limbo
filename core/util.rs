@@ -312,7 +312,10 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
-pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<Column>, ()> {
+pub fn columns_from_create_table_body(
+    body: ast::CreateTableBody,
+    syms: &SymbolTable,
+) -> Result<Vec<Column>, ()> {
     let CreateTableBody::ColumnsAndConstraints { columns, .. } = body else {
         return Err(());
     };
@@ -346,7 +349,9 @@ pub fn columns_from_create_table_body(body: ast::CreateTableBody) -> Result<Vec<
                             || type_name.contains("DOUB")
                         {
                             Type::Real
-                        } else if let Some(ext_type) = type_registry.get(type_name) {
+                        } else if let Some(ext_type) = syms.type_registry.get(&type_name) {
+                            ext_type.type_of().into()
+                        } else {
                             Type::Numeric
                         }
                     }

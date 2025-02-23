@@ -24,6 +24,7 @@ pub mod likeop;
 pub mod sorter;
 
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
+use crate::ext::extern_types::TsFuncOp;
 use crate::ext::ExtValue;
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
@@ -2399,6 +2400,19 @@ impl Program {
                             }
                             _ => unreachable!("aggregate called in scalar context"),
                         },
+                        crate::function::Func::ForeignType(ts) => match ts.op {
+                            TsFuncOp::Generate => {
+                                let col_name = state.registers[*start_reg].to_text();
+                                let insert_val = &state.registers[*start_reg + 1];
+                                let insert_val = if let OwnedValue::Null = insert_val {
+                                    None
+                                } else {
+                                    Some(insert_val)
+                                };
+                                let result = ts.ext_type.generate(col_name, insert_val.cloned())?;
+                                state.registers[*dest] = result;
+                            }
+                        },
                         crate::function::Func::Math(math_func) => match math_func.arity() {
                             MathFuncArity::Nullary => match math_func {
                                 MathFunc::Pi => {
@@ -2726,7 +2740,12 @@ impl Program {
                     ))?;
                     let mut schema = RefCell::borrow_mut(&conn.schema);
                     // TODO: This function below is synchronous, make it not async
-                    parse_schema_rows(Some(stmt), &mut schema, conn.pager.io.clone())?;
+                    parse_schema_rows(
+                        Some(stmt),
+                        &mut schema,
+                        conn.pager.io.clone(),
+                        &conn.db.syms.borrow(),
+                    )?;
                     state.pc += 1;
                 }
                 Insn::ReadCookie { db, dest, cookie } => {
