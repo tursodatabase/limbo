@@ -9,7 +9,8 @@ members = [
     "bindings/rust",
     "bindings/wasm",
     "cli",
-    "core",
+    "core", 
+    "extensions/completion",
     "extensions/core",
     "extensions/crypto",
     "extensions/percentile",
@@ -41,6 +42,7 @@ limbo_regexp = { path = "extensions/regexp", version = "0.0.15" }
 limbo_series = { path = "extensions/series", version = "0.0.15" }
 limbo_time = { path = "extensions/time", version = "0.0.15" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.15" }
+limbo_completion = { path = "extensions/completion", version = "0.0.15" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.15" }
 
 # Config for 'cargo dist'
