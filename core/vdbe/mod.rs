@@ -2573,9 +2573,12 @@ impl Program {
                             ),
                         },
                         OwnedValue::Text(text) => {
-                            match checked_cast_text_to_numeric(&text.as_str()) {
+                            match checked_cast_text_to_numeric(text.as_str()) {
                                 Ok(OwnedValue::Integer(i)) => {
                                     state.registers[*reg] = OwnedValue::Integer(i)
+                                }
+                                Ok(OwnedValue::Float(f)) => {
+                                    state.registers[*reg] = OwnedValue::Integer(f as i64)
                                 }
                                 _ => crate::bail_parse_error!(
                                     "MustBeInt: the value in register cannot be cast to integer"
@@ -3637,16 +3640,17 @@ fn cast_text_to_integer(text: &str) -> OwnedValue {
     if let Ok(i) = text.parse::<i64>() {
         return OwnedValue::Integer(i);
     }
-    // Try to find longest valid prefix that parses as an integer
-    // TODO: inefficient
-    let mut end_index = text.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
-            return OwnedValue::Integer(i);
-        }
-        end_index -= 1;
+    let bytes = text.as_bytes();
+    let mut end = 0;
+    if bytes[0] == b'-' {
+        end = 1;
     }
-    OwnedValue::Integer(0)
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    text[..end]
+        .parse::<i64>()
+        .map_or(OwnedValue::Integer(0), OwnedValue::Integer)
 }
 
 /// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
@@ -3661,16 +3665,11 @@ fn cast_text_to_real(text: &str) -> OwnedValue {
     if let Ok(num) = trimmed.parse::<f64>() {
         return OwnedValue::Float(num);
     }
-    // Try to find longest valid prefix that parses as a float
-    // TODO: inefficient
-    let mut end_index = trimmed.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(num) = trimmed[..=end_index as usize].parse::<f64>() {
-            return OwnedValue::Float(num);
-        }
-        end_index -= 1;
-    }
-    OwnedValue::Float(0.0)
+    let Ok((_, _, text)) = parse_numeric_str(trimmed) else {
+        return OwnedValue::Float(0.0);
+    };
+    text.parse::<f64>()
+        .map_or(OwnedValue::Float(0.0), OwnedValue::Float)
 }
 
 /// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
@@ -3683,21 +3682,52 @@ fn cast_text_to_real(text: &str) -> OwnedValue {
 /// IEEE 754 64-bit float and thus provides a 1-bit of margin for the text-to-float conversion operation.)
 /// Any text input that describes a value outside the range of a 64-bit signed integer yields a REAL result.
 /// Casting a REAL or INTEGER value to NUMERIC is a no-op, even if a real value could be losslessly converted to an integer.
-fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, ()> {
-    if !text.contains('.') && !text.contains('e') && !text.contains('E') {
-        // Looks like an integer
-        if let Ok(i) = text.parse::<i64>() {
-            return Ok(OwnedValue::Integer(i));
+pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, ()> {
+    // sqlite will parse the first N digits of a string to numeric value, then determine
+    // whether _that_ value is more likely a real or integer value. e.g.
+    // '-100234-2344.23e14' evaluates to -100234 instead of -100234.0
+    let (has_decimal, has_exponent, text) = parse_numeric_str(text)?;
+    if !has_decimal && !has_exponent {
+        Ok(text
+            .parse::<i64>()
+            .map_or(OwnedValue::Integer(0), OwnedValue::Integer))
+    } else {
+        Ok(text
+            .parse::<f64>()
+            .map_or(OwnedValue::Float(0.0), OwnedValue::Float))
+    }
+}
+
+fn parse_numeric_str(text: &str) -> Result<(bool, bool, &str), ()> {
+    let bytes = text.trim_start().as_bytes();
+    let mut end = 0;
+    let mut has_decimal = false;
+    let mut has_exponent = false;
+    if bytes[0] == b'-' {
+        end = 1;
+    }
+    while end < bytes.len() {
+        match bytes[end] {
+            b'0'..=b'9' => end += 1,
+            b'.' if !has_decimal && !has_exponent => {
+                has_decimal = true;
+                end += 1;
+            }
+            b'e' | b'E' if !has_exponent => {
+                has_exponent = true;
+                end += 1;
+                // allow exponent sign
+                if end < bytes.len() && (bytes[end] == b'+' || bytes[end] == b'-') {
+                    end += 1;
+                }
+            }
+            _ => break,
         }
     }
-    // Try as float
-    if let Ok(f) = text.parse::<f64>() {
-        return match cast_real_to_integer(f) {
-            Ok(i) => Ok(OwnedValue::Integer(i)),
-            Err(_) => Ok(OwnedValue::Float(f)),
-        };
+    if end == 0 || (end == 1 && bytes[0] == b'-') {
+        return Err(());
     }
-    Err(())
+    Ok((has_decimal, has_exponent, &text[..end]))
 }
 
 // try casting to numeric if not possible return integer 0
