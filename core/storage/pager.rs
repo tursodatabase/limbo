@@ -56,6 +56,10 @@ impl Page {
         unsafe { &mut *self.inner.get() }
     }
 
+    pub fn get_contents(&self) -> &mut PageContent {
+        self.get().contents.as_mut().unwrap()
+    }
+
     pub fn is_uptodate(&self) -> bool {
         self.get().flags.load(Ordering::SeqCst) & PAGE_UPTODATE != 0
     }
