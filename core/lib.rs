@@ -570,7 +570,7 @@ impl VirtualTable {
 
     pub fn column(&self, cursor: &VTabOpaqueCursor, column: usize) -> Result<OwnedValue> {
         let val = unsafe { (self.implementation.column)(cursor.as_ptr(), column as u32) };
-        OwnedValue::from_ffi(&val)
+        OwnedValue::from_ffi(val)
     }
 
     pub fn next(&self, cursor: &VTabOpaqueCursor) -> Result<bool> {
