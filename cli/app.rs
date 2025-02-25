@@ -27,7 +27,7 @@ pub struct Opts {
     pub database: Option<PathBuf>,
     #[clap(index = 2, help = "Optional SQL command to execute")]
     pub sql: Option<String>,
-    #[clap(short = 'm', long, default_value_t = OutputMode::List)]
+    #[clap(short = 'm', long, default_value_t = OutputMode::Pretty)]
     pub output_mode: OutputMode,
     #[clap(short, long, default_value = "")]
     pub output: String,
