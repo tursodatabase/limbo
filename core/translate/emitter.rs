@@ -292,7 +292,7 @@ pub fn emit_query<'a>(
 
 fn emit_program_for_delete(
     program: &mut ProgramBuilder,
-    mut plan: DeletePlan,
+    plan: DeletePlan,
     syms: &SymbolTable,
 ) -> Result<()> {
     let (mut t_ctx, init_label, start_offset) = prologue(
@@ -304,6 +304,7 @@ fn emit_program_for_delete(
 
     // No rows will be read from source table loops if there is a constant false condition eg. WHERE 0
     let after_main_loop_label = program.allocate_label();
+    t_ctx.label_main_loop_end = Some(after_main_loop_label);
     if plan.contains_constant_false_condition {
         program.emit_insn(Insn::Goto {
             target_pc: after_main_loop_label,
@@ -322,10 +323,9 @@ fn emit_program_for_delete(
     open_loop(
         program,
         &mut t_ctx,
-        &mut plan.table_references,
+        &plan.table_references,
         &plan.where_clause,
     )?;
-
     emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.limit)?;
 
     // Clean up and close the main execution loop
@@ -364,8 +364,27 @@ fn emit_delete_insns(
         cursor_id,
         dest: key_reg,
     });
-    program.emit_insn(Insn::DeleteAsync { cursor_id });
-    program.emit_insn(Insn::DeleteAwait { cursor_id });
+
+    if let Some(vtab) = table_reference.virtual_table() {
+        let conflict_action = 0u16;
+        let start_reg = key_reg;
+
+        let new_rowid_reg = program.alloc_register();
+        program.emit_insn(Insn::Null {
+            dest: new_rowid_reg,
+            dest_end: None,
+        });
+        program.emit_insn(Insn::VUpdate {
+            cursor_id,
+            arg_count: 2,
+            start_reg,
+            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
+            conflict_action,
+        });
+    } else {
+        program.emit_insn(Insn::DeleteAsync { cursor_id });
+        program.emit_insn(Insn::DeleteAwait { cursor_id });
+    }
     if let Some(limit) = limit {
         let limit_reg = program.alloc_register();
         program.emit_insn(Insn::Integer {

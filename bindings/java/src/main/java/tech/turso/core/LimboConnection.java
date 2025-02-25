@@ -10,7 +10,7 @@ import tech.turso.utils.LimboExceptionUtils;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
 
-public class LimboConnection {
+public final class LimboConnection {
   private static final Logger logger = LoggerFactory.getLogger(LimboConnection.class);
 
   private final String url;

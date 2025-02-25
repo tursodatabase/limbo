@@ -41,7 +41,10 @@ use crate::translate::plan::{ResultSetColumn, TableReference};
 use crate::types::{
     AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, Record, SeekKey, SeekOp,
 };
-use crate::util::parse_schema_rows;
+use crate::util::{
+    cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
+    checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
+};
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
@@ -170,13 +173,11 @@ macro_rules! call_external_function {
     ) => {{
         if $arg_count == 0 {
             let result_c_value: ExtValue = unsafe { ($func_ptr)(0, std::ptr::null()) };
-            match OwnedValue::from_ffi(&result_c_value) {
+            match OwnedValue::from_ffi(result_c_value) {
                 Ok(result_ov) => {
                     $state.registers[$dest_register] = result_ov;
-                    unsafe { result_c_value.free() };
                 }
                 Err(e) => {
-                    unsafe { result_c_value.free() };
                     return Err(e);
                 }
             }
@@ -189,13 +190,14 @@ macro_rules! call_external_function {
             }
             let argv_ptr = ext_values.as_ptr();
             let result_c_value: ExtValue = unsafe { ($func_ptr)($arg_count as i32, argv_ptr) };
-            match OwnedValue::from_ffi(&result_c_value) {
+            for arg in ext_values {
+                unsafe { arg.free() };
+            }
+            match OwnedValue::from_ffi(result_c_value) {
                 Ok(result_ov) => {
                     $state.registers[$dest_register] = result_ov;
-                    unsafe { result_c_value.free() };
                 }
                 Err(e) => {
-                    unsafe { result_c_value.free() };
                     return Err(e);
                 }
             }
@@ -305,14 +307,19 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-pub struct VTabOpaqueCursor(*mut c_void);
+pub struct VTabOpaqueCursor(*const c_void);
 
 impl VTabOpaqueCursor {
-    pub fn new(cursor: *mut c_void) -> Self {
-        Self(cursor)
+    pub fn new(cursor: *const c_void) -> Result<Self> {
+        if cursor.is_null() {
+            return Err(LimboError::InternalError(
+                "VTabOpaqueCursor: cursor is null".into(),
+            ));
+        }
+        Ok(Self(cursor))
     }
 
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub fn as_ptr(&self) -> *const c_void {
         self.0
     }
 }
@@ -867,11 +874,52 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VOpenAsync on non-virtual table cursor");
                     };
-                    let cursor = virtual_table.open();
+                    let cursor = virtual_table.open()?;
                     state
                         .cursors
                         .borrow_mut()
                         .insert(*cursor_id, Some(Cursor::Virtual(cursor)));
+                    state.pc += 1;
+                }
+                Insn::VCreate {
+                    module_name,
+                    table_name,
+                    args_reg,
+                } => {
+                    let module_name = state.registers[*module_name].to_string();
+                    let table_name = state.registers[*table_name].to_string();
+                    let args = if let Some(args_reg) = args_reg {
+                        if let OwnedValue::Record(rec) = &state.registers[*args_reg] {
+                            rec.get_values().iter().map(|v| v.to_ffi()).collect()
+                        } else {
+                            return Err(LimboError::InternalError(
+                                "VCreate: args_reg is not a record".to_string(),
+                            ));
+                        }
+                    } else {
+                        vec![]
+                    };
+                    let Some(conn) = self.connection.upgrade() else {
+                        return Err(crate::LimboError::ExtensionError(
+                            "Failed to upgrade Connection".to_string(),
+                        ));
+                    };
+                    let table = crate::VirtualTable::from_args(
+                        Some(&table_name),
+                        &module_name,
+                        args,
+                        &conn.db.syms.borrow(),
+                        limbo_ext::VTabKind::VirtualTable,
+                        None,
+                    )?;
+                    {
+                        conn.db
+                            .syms
+                            .as_ref()
+                            .borrow_mut()
+                            .vtabs
+                            .insert(table_name, table.clone());
+                    }
                     state.pc += 1;
                 }
                 Insn::VOpenAwait => {
@@ -913,6 +961,59 @@ impl Program {
                     let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
                     state.registers[*dest] = virtual_table.column(cursor, *column)?;
                     state.pc += 1;
+                }
+                Insn::VUpdate {
+                    cursor_id,
+                    arg_count,
+                    start_reg,
+                    conflict_action,
+                    ..
+                } => {
+                    let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                    let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                        panic!("VUpdate on non-virtual table cursor");
+                    };
+
+                    if *arg_count < 2 {
+                        return Err(LimboError::InternalError(
+                            "VUpdate: arg_count must be at least 2 (rowid and insert_rowid)"
+                                .to_string(),
+                        ));
+                    }
+                    let mut argv = Vec::with_capacity(*arg_count);
+                    for i in 0..*arg_count {
+                        if let Some(value) = state.registers.get(*start_reg + i) {
+                            argv.push(value.clone());
+                        } else {
+                            return Err(LimboError::InternalError(format!(
+                                "VUpdate: register out of bounds at {}",
+                                *start_reg + i
+                            )));
+                        }
+                    }
+                    let result = virtual_table.update(&argv);
+                    match result {
+                        Ok(Some(new_rowid)) => {
+                            if *conflict_action == 5 {
+                                // ResolveType::Replace
+                                if let Some(conn) = self.connection.upgrade() {
+                                    conn.update_last_rowid(new_rowid as u64);
+                                }
+                            }
+                            state.pc += 1;
+                        }
+                        Ok(None) => {
+                            // no-op or successful update without rowid return
+                            state.pc += 1;
+                        }
+                        Err(e) => {
+                            // virtual table update failed
+                            return Err(LimboError::ExtensionError(format!(
+                                "Virtual table update failed: {}",
+                                e
+                            )));
+                        }
+                    }
                 }
                 Insn::VNext {
                     cursor_id,
@@ -1176,20 +1277,18 @@ impl Program {
                         } else {
                             conn.auto_commit.replace(*auto_commit);
                         }
+                    } else if !*auto_commit {
+                        return Err(LimboError::TxError(
+                            "cannot start a transaction within a transaction".to_string(),
+                        ));
+                    } else if *rollback {
+                        return Err(LimboError::TxError(
+                            "cannot rollback - no transaction is active".to_string(),
+                        ));
                     } else {
-                        if !*auto_commit {
-                            return Err(LimboError::TxError(
-                                "cannot start a transaction within a transaction".to_string(),
-                            ));
-                        } else if *rollback {
-                            return Err(LimboError::TxError(
-                                "cannot rollback - no transaction is active".to_string(),
-                            ));
-                        } else {
-                            return Err(LimboError::TxError(
-                                "cannot commit - no transaction is active".to_string(),
-                            ));
-                        }
+                        return Err(LimboError::TxError(
+                            "cannot commit - no transaction is active".to_string(),
+                        ));
                     }
                     return self.halt(pager);
                 }
@@ -1254,11 +1353,30 @@ impl Program {
                         }
                     }
 
-                    let cursor = get_cursor_as_table_mut(&mut cursors, *cursor_id);
-                    if let Some(ref rowid) = cursor.rowid()? {
-                        state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                    if let Some(Cursor::Table(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        if let Some(ref rowid) = btree_cursor.rowid()? {
+                            state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
+                    } else if let Some(Cursor::Virtual(virtual_cursor)) =
+                        cursors.get_mut(*cursor_id).unwrap()
+                    {
+                        let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                        let CursorType::VirtualTable(virtual_table) = cursor_type else {
+                            panic!("VUpdate on non-virtual table cursor");
+                        };
+                        let rowid = virtual_table.rowid(virtual_cursor);
+                        if rowid != 0 {
+                            state.registers[*dest] = OwnedValue::Integer(rowid);
+                        } else {
+                            state.registers[*dest] = OwnedValue::Null;
+                        }
                     } else {
-                        state.registers[*dest] = OwnedValue::Null;
+                        return Err(LimboError::InternalError(
+                            "RowId: cursor is not a table or virtual cursor".to_string(),
+                        ));
                     }
                     state.pc += 1;
                 }
@@ -1741,6 +1859,9 @@ impl Program {
                                 }
                                 let argv_ptr = ext_values.as_ptr();
                                 unsafe { step_fn(state_ptr, argc as i32, argv_ptr) };
+                                for ext_value in ext_values {
+                                    unsafe { ext_value.free() };
+                                }
                             }
                         }
                     };
@@ -2037,7 +2158,7 @@ impl Program {
                                     unreachable!("Cast with non-text type");
                                 };
                                 let result =
-                                    exec_cast(&reg_value_argument, &reg_value_type.as_str());
+                                    exec_cast(&reg_value_argument, reg_value_type.as_str());
                                 state.registers[*dest] = result;
                             }
                             ScalarFunc::Changes => {
@@ -2075,8 +2196,8 @@ impl Program {
                                         };
                                         OwnedValue::Integer(exec_glob(
                                             cache,
-                                            &pattern.as_str(),
-                                            &text.as_str(),
+                                            pattern.as_str(),
+                                            text.as_str(),
                                         )
                                             as i64)
                                     }
@@ -2104,12 +2225,22 @@ impl Program {
                             }
                             ScalarFunc::Like => {
                                 let pattern = &state.registers[*start_reg];
-                                let text = &state.registers[*start_reg + 1];
+                                let match_expression = &state.registers[*start_reg + 1];
 
-                                let result = match (pattern, text) {
-                                    (OwnedValue::Text(pattern), OwnedValue::Text(text))
-                                        if arg_count == 3 =>
-                                    {
+                                let pattern = match pattern {
+                                    OwnedValue::Text(_) => pattern,
+                                    _ => &exec_cast(pattern, "TEXT"),
+                                };
+                                let match_expression = match match_expression {
+                                    OwnedValue::Text(_) => match_expression,
+                                    _ => &exec_cast(match_expression, "TEXT"),
+                                };
+
+                                let result = match (pattern, match_expression) {
+                                    (
+                                        OwnedValue::Text(pattern),
+                                        OwnedValue::Text(match_expression),
+                                    ) if arg_count == 3 => {
                                         let escape = match construct_like_escape_arg(
                                             &state.registers[*start_reg + 2],
                                         ) {
@@ -2118,13 +2249,16 @@ impl Program {
                                         };
 
                                         OwnedValue::Integer(exec_like_with_escape(
-                                            &pattern.as_str(),
-                                            &text.as_str(),
+                                            pattern.as_str(),
+                                            match_expression.as_str(),
                                             escape,
                                         )
                                             as i64)
                                     }
-                                    (OwnedValue::Text(pattern), OwnedValue::Text(text)) => {
+                                    (
+                                        OwnedValue::Text(pattern),
+                                        OwnedValue::Text(match_expression),
+                                    ) => {
                                         let cache = if *constant_mask > 0 {
                                             Some(&mut state.regex_cache.like)
                                         } else {
@@ -2132,13 +2266,16 @@ impl Program {
                                         };
                                         OwnedValue::Integer(exec_like(
                                             cache,
-                                            &pattern.as_str(),
-                                            &text.as_str(),
+                                            pattern.as_str(),
+                                            match_expression.as_str(),
                                         )
                                             as i64)
                                     }
+                                    (OwnedValue::Null, _) | (_, OwnedValue::Null) => {
+                                        OwnedValue::Null
+                                    }
                                     _ => {
-                                        unreachable!("Like on non-text registers");
+                                        unreachable!("Like failed");
                                     }
                                 };
 
@@ -2573,9 +2710,12 @@ impl Program {
                             ),
                         },
                         OwnedValue::Text(text) => {
-                            match checked_cast_text_to_numeric(&text.as_str()) {
+                            match checked_cast_text_to_numeric(text.as_str()) {
                                 Ok(OwnedValue::Integer(i)) => {
                                     state.registers[*reg] = OwnedValue::Integer(i)
+                                }
+                                Ok(OwnedValue::Float(f)) => {
+                                    state.registers[*reg] = OwnedValue::Integer(f as i64)
                                 }
                                 _ => crate::bail_parse_error!(
                                     "MustBeInt: the value in register cannot be cast to integer"
@@ -2725,8 +2865,13 @@ impl Program {
                         where_clause
                     ))?;
                     let mut schema = RefCell::borrow_mut(&conn.schema);
-                    // TODO: This function below is synchronous, make it not async
-                    parse_schema_rows(Some(stmt), &mut schema, conn.pager.io.clone())?;
+                    // TODO: This function below is synchronous, make it async
+                    parse_schema_rows(
+                        Some(stmt),
+                        &mut schema,
+                        conn.pager.io.clone(),
+                        &conn.db.syms.borrow(),
+                    )?;
                     state.pc += 1;
                 }
                 Insn::ReadCookie { db, dest, cookie } => {
@@ -2803,7 +2948,7 @@ impl Program {
             .expect("only weak ref to connection?");
         let auto_commit = *connection.auto_commit.borrow();
         tracing::trace!("Halt auto_commit {}", auto_commit);
-        return if auto_commit {
+        if auto_commit {
             let current_state = connection.transaction_state.borrow().clone();
             if current_state == TransactionState::Read {
                 pager.end_read_tx()?;
@@ -2827,8 +2972,8 @@ impl Program {
                     conn.set_changes(self.n_change.get());
                 }
             }
-            return Ok(StepResult::Done);
-        };
+            Ok(StepResult::Done)
+        }
     }
 }
 
@@ -3429,30 +3574,35 @@ fn exec_unicode(reg: &OwnedValue) -> OwnedValue {
 
 fn _to_float(reg: &OwnedValue) -> f64 {
     match reg {
-        OwnedValue::Text(x) => x.as_str().parse().unwrap_or(0.0),
+        OwnedValue::Text(x) => match cast_text_to_numeric(x.as_str()) {
+            OwnedValue::Integer(i) => i as f64,
+            OwnedValue::Float(f) => f,
+            _ => unreachable!(),
+        },
         OwnedValue::Integer(x) => *x as f64,
         OwnedValue::Float(x) => *x,
+        OwnedValue::Agg(ctx) => _to_float(ctx.final_value()),
         _ => 0.0,
     }
 }
 
 fn exec_round(reg: &OwnedValue, precision: Option<OwnedValue>) -> OwnedValue {
-    let precision = match precision {
-        Some(OwnedValue::Text(x)) => x.as_str().parse().unwrap_or(0.0),
-        Some(OwnedValue::Integer(x)) => x as f64,
-        Some(OwnedValue::Float(x)) => x,
-        Some(OwnedValue::Null) => return OwnedValue::Null,
-        _ => 0.0,
+    let reg = _to_float(reg);
+    let round = |reg: f64, f: f64| {
+        let precision = if f < 1.0 { 0.0 } else { f };
+        OwnedValue::Float(reg.round_to_precision(precision as i32))
     };
-
-    let reg = match reg {
-        OwnedValue::Agg(ctx) => _to_float(ctx.final_value()),
-        _ => _to_float(reg),
-    };
-
-    let precision = if precision < 1.0 { 0.0 } else { precision };
-    let multiplier = 10f64.powi(precision as i32);
-    OwnedValue::Float(((reg * multiplier).round()) / multiplier)
+    match precision {
+        Some(OwnedValue::Text(x)) => match cast_text_to_numeric(x.as_str()) {
+            OwnedValue::Integer(i) => round(reg, i as f64),
+            OwnedValue::Float(f) => round(reg, f),
+            _ => unreachable!(),
+        },
+        Some(OwnedValue::Integer(i)) => round(reg, i as f64),
+        Some(OwnedValue::Float(f)) => round(reg, f),
+        None => round(reg, 0.0),
+        _ => OwnedValue::Null,
+    }
 }
 
 // Implements TRIM pattern matching.
@@ -3619,99 +3769,6 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
         }
         _ => unreachable!("text cast should never fail"),
     }
-}
-
-/// When casting a TEXT value to INTEGER, the longest possible prefix of the value that can be interpreted as an integer number
-/// is extracted from the TEXT value and the remainder ignored. Any leading spaces in the TEXT value when converting from TEXT to INTEGER are ignored.
-/// If there is no prefix that can be interpreted as an integer number, the result of the conversion is 0.
-/// If the prefix integer is greater than +9223372036854775807 then the result of the cast is exactly +9223372036854775807.
-/// Similarly, if the prefix integer is less than -9223372036854775808 then the result of the cast is exactly -9223372036854775808.
-/// When casting to INTEGER, if the text looks like a floating point value with an exponent, the exponent will be ignored
-/// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
-/// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
-fn cast_text_to_integer(text: &str) -> OwnedValue {
-    let text = text.trim();
-    if text.is_empty() {
-        return OwnedValue::Integer(0);
-    }
-    if let Ok(i) = text.parse::<i64>() {
-        return OwnedValue::Integer(i);
-    }
-    // Try to find longest valid prefix that parses as an integer
-    // TODO: inefficient
-    let mut end_index = text.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
-            return OwnedValue::Integer(i);
-        }
-        end_index -= 1;
-    }
-    OwnedValue::Integer(0)
-}
-
-/// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
-/// as a real number is extracted from the TEXT value and the remainder ignored. Any leading spaces in
-/// the TEXT value are ignored when converging from TEXT to REAL.
-/// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
-fn cast_text_to_real(text: &str) -> OwnedValue {
-    let trimmed = text.trim_start();
-    if trimmed.is_empty() {
-        return OwnedValue::Float(0.0);
-    }
-    if let Ok(num) = trimmed.parse::<f64>() {
-        return OwnedValue::Float(num);
-    }
-    // Try to find longest valid prefix that parses as a float
-    // TODO: inefficient
-    let mut end_index = trimmed.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(num) = trimmed[..=end_index as usize].parse::<f64>() {
-            return OwnedValue::Float(num);
-        }
-        end_index -= 1;
-    }
-    OwnedValue::Float(0.0)
-}
-
-/// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
-/// If the input text looks like an integer (there is no decimal point nor exponent) and the value
-/// is small enough to fit in a 64-bit signed integer, then the result will be INTEGER.
-/// Input text that looks like floating point (there is a decimal point and/or an exponent)
-/// and the text describes a value that can be losslessly converted back and forth between IEEE 754
-/// 64-bit float and a 51-bit signed integer, then the result is INTEGER. (In the previous sentence,
-/// a 51-bit integer is specified since that is one bit less than the length of the mantissa of an
-/// IEEE 754 64-bit float and thus provides a 1-bit of margin for the text-to-float conversion operation.)
-/// Any text input that describes a value outside the range of a 64-bit signed integer yields a REAL result.
-/// Casting a REAL or INTEGER value to NUMERIC is a no-op, even if a real value could be losslessly converted to an integer.
-fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, ()> {
-    if !text.contains('.') && !text.contains('e') && !text.contains('E') {
-        // Looks like an integer
-        if let Ok(i) = text.parse::<i64>() {
-            return Ok(OwnedValue::Integer(i));
-        }
-    }
-    // Try as float
-    if let Ok(f) = text.parse::<f64>() {
-        return match cast_real_to_integer(f) {
-            Ok(i) => Ok(OwnedValue::Integer(i)),
-            Err(_) => Ok(OwnedValue::Float(f)),
-        };
-    }
-    Err(())
-}
-
-// try casting to numeric if not possible return integer 0
-fn cast_text_to_numeric(text: &str) -> OwnedValue {
-    checked_cast_text_to_numeric(text).unwrap_or(OwnedValue::Integer(0))
-}
-
-// Check if float can be losslessly converted to 51-bit integer
-fn cast_real_to_integer(float: f64) -> std::result::Result<i64, ()> {
-    let i = float as i64;
-    if float == i as f64 && i.abs() < (1i64 << 51) {
-        return Ok(i);
-    }
-    Err(())
 }
 
 fn execute_sqlite_version(version_integer: i64) -> String {

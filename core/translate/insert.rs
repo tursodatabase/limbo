@@ -1,15 +1,15 @@
 use std::ops::Deref;
+use std::rc::Rc;
 
 use limbo_sqlite3_parser::ast::{
-    DistinctNames, Expr, InsertBody, QualifiedName, ResolveType, ResultColumn, With,
+    DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
 };
 
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
-use crate::schema::BTreeTable;
+use crate::schema::Table;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
 use crate::vdbe::BranchOffset;
-use crate::Result;
 use crate::{
     schema::{Column, Schema},
     translate::expr::translate_expr,
@@ -19,6 +19,7 @@ use crate::{
     },
     SymbolTable,
 };
+use crate::{Result, VirtualTable};
 
 use super::emitter::Resolver;
 
@@ -46,32 +47,45 @@ pub fn translate_insert(
     if on_conflict.is_some() {
         crate::bail_parse_error!("ON CONFLICT clause is not supported");
     }
+
+    let table_name = &tbl_name.name;
+    let table = match schema.get_table(table_name.0.as_str()) {
+        Some(table) => table,
+        None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
+    };
     let resolver = Resolver::new(syms);
+    if let Some(virtual_table) = &table.virtual_table() {
+        translate_virtual_table_insert(
+            &mut program,
+            virtual_table.clone(),
+            columns,
+            body,
+            on_conflict,
+            &resolver,
+        )?;
+        return Ok(program);
+    }
     let init_label = program.allocate_label();
     program.emit_insn(Insn::Init {
         target_pc: init_label,
     });
     let start_offset = program.offset();
 
-    // open table
-    let table_name = &tbl_name.name;
-
-    let table = match schema.get_table(table_name.0.as_str()) {
-        Some(table) => table,
-        None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
+    let Some(btree_table) = table.btree() else {
+        crate::bail_corrupt_error!("Parse error: no such table: {}", table_name);
     };
-    if !table.has_rowid {
+    if !btree_table.has_rowid {
         crate::bail_parse_error!("INSERT into WITHOUT ROWID table is not supported");
     }
 
     let cursor_id = program.alloc_cursor_id(
         Some(table_name.0.clone()),
-        CursorType::BTreeTable(table.clone()),
+        CursorType::BTreeTable(btree_table.clone()),
     );
-    let root_page = table.root_page;
+    let root_page = btree_table.root_page;
     let values = match body {
         InsertBody::Select(select, None) => match &select.body.select.deref() {
-            limbo_sqlite3_parser::ast::OneSelect::Values(values) => values,
+            OneSelect::Values(values) => values,
             _ => todo!(),
         },
         _ => todo!(),
@@ -79,9 +93,9 @@ pub fn translate_insert(
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
-    let rowid_alias_index = table.columns.iter().position(|c| c.is_rowid_alias);
+    let rowid_alias_index = btree_table.columns.iter().position(|c| c.is_rowid_alias);
     let has_user_provided_rowid = {
-        assert_eq!(column_mappings.len(), table.columns.len());
+        assert_eq!(column_mappings.len(), btree_table.columns.len());
         if let Some(index) = rowid_alias_index {
             column_mappings[index].value_index.is_some()
         } else {
@@ -91,7 +105,7 @@ pub fn translate_insert(
 
     // allocate a register for each column in the table. if not provided by user, they will simply be set as null.
     // allocate an extra register for rowid regardless of whether user provided a rowid alias column.
-    let num_cols = table.columns.len();
+    let num_cols = btree_table.columns.len();
     let rowid_reg = program.alloc_registers(num_cols + 1);
     let column_registers_start = rowid_reg + 1;
     let rowid_alias_reg = {
@@ -217,7 +231,7 @@ pub fn translate_insert(
             target_pc: make_record_label,
         });
         let rowid_column_name = if let Some(index) = rowid_alias_index {
-            &table
+            btree_table
                 .columns
                 .get(index)
                 .unwrap()
@@ -302,7 +316,7 @@ struct ColumnMapping<'a> {
 ///    - Named columns map to their corresponding value index
 ///    - Unspecified columns map to None
 fn resolve_columns_for_insert<'a>(
-    table: &'a BTreeTable,
+    table: &'a Table,
     columns: &Option<DistinctNames>,
     values: &[Vec<Expr>],
 ) -> Result<Vec<ColumnMapping<'a>>> {
@@ -310,7 +324,7 @@ fn resolve_columns_for_insert<'a>(
         crate::bail_parse_error!("no values to insert");
     }
 
-    let table_columns = &table.columns;
+    let table_columns = &table.columns();
 
     // Case 1: No columns specified - map values to columns in order
     if columns.is_none() {
@@ -318,7 +332,7 @@ fn resolve_columns_for_insert<'a>(
         if num_values > table_columns.len() {
             crate::bail_parse_error!(
                 "table {} has {} columns but {} values were supplied",
-                &table.name,
+                &table.get_name(),
                 table_columns.len(),
                 num_values
             );
@@ -361,7 +375,11 @@ fn resolve_columns_for_insert<'a>(
         });
 
         if table_index.is_none() {
-            crate::bail_parse_error!("table {} has no column named {}", &table.name, column_name);
+            crate::bail_parse_error!(
+                "table {} has no column named {}",
+                &table.get_name(),
+                column_name
+            );
         }
 
         mappings[table_index.unwrap()].value_index = Some(value_index);
@@ -423,5 +441,102 @@ fn populate_column_registers(
             }
         }
     }
+    Ok(())
+}
+
+fn translate_virtual_table_insert(
+    program: &mut ProgramBuilder,
+    virtual_table: Rc<VirtualTable>,
+    columns: &Option<DistinctNames>,
+    body: &InsertBody,
+    on_conflict: &Option<ResolveType>,
+    resolver: &Resolver,
+) -> Result<()> {
+    let init_label = program.allocate_label();
+    program.emit_insn(Insn::Init {
+        target_pc: init_label,
+    });
+    let start_offset = program.offset();
+
+    let values = match body {
+        InsertBody::Select(select, None) => match &select.body.select.deref() {
+            OneSelect::Values(values) => values,
+            _ => crate::bail_parse_error!("Virtual tables only support VALUES clause in INSERT"),
+        },
+        InsertBody::DefaultValues => &vec![],
+        _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
+    };
+
+    let table = Table::Virtual(virtual_table.clone());
+    let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
+
+    let value_registers_start = program.alloc_registers(values[0].len());
+    for (i, expr) in values[0].iter().enumerate() {
+        translate_expr(program, None, expr, value_registers_start + i, resolver)?;
+    }
+    /* *
+     * Inserts for virtual tables are done in a single step.
+     * argv[0] = (NULL for insert)
+     * argv[1] = (NULL for insert)
+     * argv[2..] = column values
+     * */
+
+    let rowid_reg = program.alloc_registers(column_mappings.len() + 3);
+    let insert_rowid_reg = rowid_reg + 1; // argv[1] = insert_rowid
+    let data_start_reg = rowid_reg + 2; // argv[2..] = column values
+
+    program.emit_insn(Insn::Null {
+        dest: rowid_reg,
+        dest_end: None,
+    });
+    program.emit_insn(Insn::Null {
+        dest: insert_rowid_reg,
+        dest_end: None,
+    });
+
+    for (i, mapping) in column_mappings.iter().enumerate() {
+        let target_reg = data_start_reg + i;
+        if let Some(value_index) = mapping.value_index {
+            program.emit_insn(Insn::Copy {
+                src_reg: value_registers_start + value_index,
+                dst_reg: target_reg,
+                amount: 1,
+            });
+        } else {
+            program.emit_insn(Insn::Null {
+                dest: target_reg,
+                dest_end: None,
+            });
+        }
+    }
+
+    let conflict_action = on_conflict.as_ref().map(|c| c.bit_value()).unwrap_or(0) as u16;
+
+    let cursor_id = program.alloc_cursor_id(
+        Some(virtual_table.name.clone()),
+        CursorType::VirtualTable(virtual_table.clone()),
+    );
+
+    program.emit_insn(Insn::VUpdate {
+        cursor_id,
+        arg_count: column_mappings.len() + 2,
+        start_reg: rowid_reg,
+        vtab_ptr: virtual_table.implementation.as_ref().ctx as usize,
+        conflict_action,
+    });
+
+    let halt_label = program.allocate_label();
+    program.emit_insn(Insn::Halt {
+        err_code: 0,
+        description: String::new(),
+    });
+
+    program.resolve_label(halt_label, program.offset());
+    program.resolve_label(init_label, program.offset());
+
+    program.emit_insn(Insn::Goto {
+        target_pc: start_offset,
+    });
+
     Ok(())
 }

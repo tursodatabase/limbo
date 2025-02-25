@@ -443,7 +443,7 @@ def test_series(pipe):
     run_test(
         pipe,
         "SELECT * FROM generate_series(1, 10);",
-        lambda res: "Virtual table generate_series not found" in res,
+        lambda res: "Virtual table module not found: generate_series" in res,
     )
     run_test(pipe, f".load {ext_path}", returns_null)
     run_test(
@@ -468,6 +468,80 @@ def test_series(pipe):
     )
 
 
+def test_kv(pipe):
+    ext_path = "./target/debug/liblimbo_kv"
+    run_test(
+        pipe,
+        "create virtual table t using kv_store;",
+        lambda res: "Virtual table module not found: kv_store" in res,
+    )
+    run_test(pipe, f".load {ext_path}", returns_null)
+    run_test(
+        pipe,
+        "create virtual table t using kv_store;",
+        returns_null,
+        "can create kv_store vtable",
+    )
+    run_test(
+        pipe,
+        "insert into t values ('hello', 'world');",
+        returns_null,
+        "can insert into kv_store vtable",
+    )
+    run_test(
+        pipe,
+        "select value from t where key = 'hello';",
+        lambda res: "world" == res,
+        "can select from kv_store",
+    )
+    run_test(
+        pipe,
+        "delete from t where key = 'hello';",
+        returns_null,
+        "can delete from kv_store",
+    )
+    run_test(pipe, "insert into t values ('other', 'value');", returns_null)
+    run_test(
+        pipe,
+        "select value from t where key = 'hello';",
+        lambda res: "" == res,
+        "proper data is deleted",
+    )
+    run_test(
+        pipe,
+        "select * from t;",
+        lambda res: "other|value" == res,
+        "can select after deletion",
+    )
+    run_test(
+        pipe,
+        "delete from t where key = 'other';",
+        returns_null,
+        "can delete from kv_store",
+    )
+    run_test(
+        pipe,
+        "select * from t;",
+        lambda res: "" == res,
+        "can select empty table without error",
+    )
+    run_test(
+        pipe,
+        "delete from t;",
+        returns_null,
+        "can delete from empty table without error",
+    )
+    for i in range(100):
+        write_to_pipe(pipe, f"insert into t values ('key{i}', 'val{i}');")
+    run_test(
+        pipe, "select count(*) from t;", lambda res: "100" == res, "can insert 100 rows"
+    )
+    run_test(pipe, "delete from t limit 96;", returns_null, "can delete 96 rows")
+    run_test(
+        pipe, "select count(*) from t;", lambda res: "4" == res, "four rows remain"
+    )
+
+
 def main():
     pipe = init_limbo()
     try:
@@ -476,6 +550,7 @@ def main():
         test_aggregates(pipe)
         test_crypto(pipe)
         test_series(pipe)
+        test_kv(pipe)
 
     except Exception as e:
         print(f"Test FAILED: {e}")

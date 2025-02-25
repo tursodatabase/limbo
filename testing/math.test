@@ -260,9 +260,13 @@ do_execsql_test add-agg-int-agg-float {
   SELECT sum(id) + sum(price) from products
 } {689.0}
 
-do_execsql_test add-agg-int-agg-float {
-  SELECT sum(id) + sum(price) from products
-} {689.0}
+do_execsql_test add-float-text-edgecase {
+  SELECT '-123.22342-24' + '232.3x32';
+} {109.07658}
+
+do_execsql_test add-str-edgecase {
+SELECT '-1+23.22342-24' + '2-32.3x32';
+} {1}
 
 
 
@@ -298,6 +302,9 @@ do_execsql_test subtract-agg-float-agg-int {
   SELECT sum(price) - sum(id) from products
 } {557.0}
 
+do_execsql_test subtract-str-float-edgecase {
+  SELECT '-123.22342-24' - '232.3x32';
+} {-355.52342}
 
 
 do_execsql_test multiply-agg-int {
@@ -332,6 +339,9 @@ do_execsql_test multiply-agg-float-agg-int {
   SELECT sum(price) * sum(id) from products
 } {41118.0}
 
+do_execsql_test multiply-str-floats-edgecase {
+  SELECT '-123.22341-24' * '232.3x32';
+} {-28624.798143}
 
 
 do_execsql_test divide-agg-int {
@@ -557,6 +567,8 @@ foreach {testname lhs rhs ans} {
    text_float-text_int      '8.0'     '1'    4
    text_float-text_float    '8.0'     '3.0'  1
    text_float-text          '8.0'     'a'    8
+   text-int-text-edge       '123-23'  2      30
+   text-signed-text-edge    '-123'    '2xi' -31
    text-null                '8'       NULL   {}
 } {
   do_execsql_test shift-right-$testname "SELECT $lhs >> $rhs" $::ans
@@ -627,6 +639,7 @@ foreach {testname lhs ans} {
   text-int-2      '1'      0
   text-float-1    '1.0'    0
   text-float-2    '0.0'    1
+  text-float-edge '12-23.0' 0
   null            NULL     {}
 } {
   do_execsql_test boolean-not "SELECT not $lhs" $::ans

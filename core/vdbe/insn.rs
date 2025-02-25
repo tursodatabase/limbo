@@ -1,9 +1,21 @@
 use std::num::NonZero;
 
-use super::{AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
+use super::{cast_text_to_numeric, AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
 use limbo_macros::Description;
+
+macro_rules! final_agg_values {
+    ($var:ident) => {
+        if let OwnedValue::Agg(agg) = $var {
+            $var = agg.final_value();
+        }
+    };
+    ($lhs:ident, $rhs:ident) => {
+        final_agg_values!($lhs);
+        final_agg_values!($rhs);
+    };
+}
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
 #[derive(Clone, Copy, Debug, Default)]
@@ -220,6 +232,13 @@ pub enum Insn {
     /// Await for the completion of open cursor for a virtual table.
     VOpenAwait,
 
+    /// Create a new virtual table.
+    VCreate {
+        module_name: usize, // P1: Name of the module that contains the virtual table implementation
+        table_name: usize,  // P2: Name of the virtual table
+        args_reg: Option<usize>,
+    },
+
     /// Initialize the position of the virtual table cursor.
     VFilter {
         cursor_id: CursorID,
@@ -233,6 +252,15 @@ pub enum Insn {
         cursor_id: CursorID,
         column: usize,
         dest: usize,
+    },
+
+    /// `VUpdate`: Virtual Table Insert/Update/Delete Instruction
+    VUpdate {
+        cursor_id: usize,     // P1: Virtual table cursor number
+        arg_count: usize,     // P2: Number of arguments in argv[]
+        start_reg: usize,     // P3: Start register for argv[]
+        vtab_ptr: usize,      // P4: vtab pointer
+        conflict_action: u16, // P5: Conflict resolution flags
     },
 
     /// Advance the virtual table cursor to the next row.
@@ -688,23 +716,8 @@ pub enum Cookie {
     UserVersion = 6,
 }
 
-fn cast_text_to_numerical(value: &str) -> OwnedValue {
-    if let Ok(x) = value.parse::<i64>() {
-        OwnedValue::Integer(x)
-    } else if let Ok(x) = value.parse::<f64>() {
-        OwnedValue::Float(x)
-    } else {
-        OwnedValue::Integer(0)
-    }
-}
-
 pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_add(*rhs);
@@ -719,23 +732,18 @@ pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Integer(i), OwnedValue::Float(f)) => OwnedValue::Float(*f + *i as f64),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_add(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_add(&cast_text_to_numerical(text.as_str()), other)
+            exec_add(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => todo!(),
     }
 }
 
 pub fn exec_subtract(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_sub(*rhs);
@@ -750,25 +758,21 @@ pub fn exec_subtract(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(*lhs as f64 - rhs),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_subtract(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) => {
-            exec_subtract(&cast_text_to_numerical(text.as_str()), other)
+            exec_subtract(&cast_text_to_numeric(text.as_str()), other)
         }
         (other, OwnedValue::Text(text)) => {
-            exec_subtract(other, &cast_text_to_numerical(text.as_str()))
+            exec_subtract(other, &cast_text_to_numeric(text.as_str()))
         }
         _ => todo!(),
     }
 }
+
 pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_mul(*rhs);
@@ -783,11 +787,11 @@ pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Float(f), OwnedValue::Integer(i)) => OwnedValue::Float(*i as f64 * { *f }),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_multiply(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_multiply(&cast_text_to_numerical(text.as_str()), other)
+            exec_multiply(&cast_text_to_numeric(text.as_str()), other)
         }
 
         _ => todo!(),
@@ -795,12 +799,7 @@ pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
 }
 
 pub fn exec_divide(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (_, OwnedValue::Integer(0)) | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
@@ -816,26 +815,17 @@ pub fn exec_divide(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(*lhs as f64 / rhs),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_divide(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
-        (OwnedValue::Text(text), other) => {
-            exec_divide(&cast_text_to_numerical(text.as_str()), other)
-        }
-        (other, OwnedValue::Text(text)) => {
-            exec_divide(other, &cast_text_to_numerical(text.as_str()))
-        }
+        (OwnedValue::Text(text), other) => exec_divide(&cast_text_to_numeric(text.as_str()), other),
+        (other, OwnedValue::Text(text)) => exec_divide(other, &cast_text_to_numeric(text.as_str())),
         _ => todo!(),
     }
 }
 
 pub fn exec_bit_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (_, OwnedValue::Integer(0))
@@ -849,23 +839,18 @@ pub fn exec_bit_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Float(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(*lh as i64 & rh),
         (OwnedValue::Integer(lh), OwnedValue::Float(rh)) => OwnedValue::Integer(lh & *rh as i64),
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_bit_and(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_bit_and(&cast_text_to_numerical(text.as_str()), other)
+            exec_bit_and(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => todo!(),
     }
 }
 
 pub fn exec_bit_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(lh | rh),
@@ -875,23 +860,18 @@ pub fn exec_bit_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
             OwnedValue::Integer(*lh as i64 | *rh as i64)
         }
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_bit_or(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_bit_or(&cast_text_to_numerical(text.as_str()), other)
+            exec_bit_or(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => todo!(),
     }
 }
 
 pub fn exec_remainder(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, _)
         | (_, OwnedValue::Null)
@@ -932,25 +912,18 @@ pub fn exec_remainder(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue 
 }
 
 pub fn exec_bit_not(mut reg: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = reg {
-        reg = agg.final_value();
-    }
+    final_agg_values!(reg);
     match reg {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer(!i),
         OwnedValue::Float(f) => OwnedValue::Integer(!(*f as i64)),
-        OwnedValue::Text(text) => exec_bit_not(&cast_text_to_numerical(text.as_str())),
+        OwnedValue::Text(text) => exec_bit_not(&cast_text_to_numeric(text.as_str())),
         _ => todo!(),
     }
 }
 
 pub fn exec_shift_left(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
@@ -966,14 +939,14 @@ pub fn exec_shift_left(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue
             OwnedValue::Integer(compute_shl(*lh as i64, *rh as i64))
         }
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_shift_left(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) => {
-            exec_shift_left(&cast_text_to_numerical(text.as_str()), other)
+            exec_shift_left(&cast_text_to_numeric(text.as_str()), other)
         }
         (other, OwnedValue::Text(text)) => {
-            exec_shift_left(other, &cast_text_to_numerical(text.as_str()))
+            exec_shift_left(other, &cast_text_to_numeric(text.as_str()))
         }
         _ => todo!(),
     }
@@ -984,12 +957,7 @@ fn compute_shl(lhs: i64, rhs: i64) -> i64 {
 }
 
 pub fn exec_shift_right(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
@@ -1005,14 +973,14 @@ pub fn exec_shift_right(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValu
             OwnedValue::Integer(compute_shr(*lh as i64, *rh as i64))
         }
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_shift_right(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) => {
-            exec_shift_right(&cast_text_to_numerical(text.as_str()), other)
+            exec_shift_right(&cast_text_to_numeric(text.as_str()), other)
         }
         (other, OwnedValue::Text(text)) => {
-            exec_shift_right(other, &cast_text_to_numerical(text.as_str()))
+            exec_shift_right(other, &cast_text_to_numeric(text.as_str()))
         }
         _ => todo!(),
     }
@@ -1036,19 +1004,17 @@ fn compute_shr(lhs: i64, rhs: i64) -> i64 {
 }
 
 pub fn exec_boolean_not(mut reg: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = reg {
-        reg = agg.final_value();
-    }
+    final_agg_values!(reg);
     match reg {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer((*i == 0) as i64),
         OwnedValue::Float(f) => OwnedValue::Integer((*f == 0.0) as i64),
-        OwnedValue::Text(text) => exec_boolean_not(&cast_text_to_numerical(text.as_str())),
+        OwnedValue::Text(text) => exec_boolean_not(&cast_text_to_numeric(text.as_str())),
         _ => todo!(),
     }
 }
-
-pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+pub fn exec_concat(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Text(lhs_text), OwnedValue::Text(rhs_text)) => {
             OwnedValue::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
@@ -1059,10 +1025,6 @@ pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Text(lhs_text), OwnedValue::Float(rhs_float)) => {
             OwnedValue::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
         }
-        (OwnedValue::Text(lhs_text), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(
-            (lhs_text.as_str().to_string() + &rhs_agg.final_value().to_string()).as_str(),
-        ),
-
         (OwnedValue::Integer(lhs_int), OwnedValue::Text(rhs_text)) => {
             OwnedValue::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
         }
@@ -1072,10 +1034,6 @@ pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Integer(lhs_int), OwnedValue::Float(rhs_float)) => {
             OwnedValue::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
         }
-        (OwnedValue::Integer(lhs_int), OwnedValue::Agg(rhs_agg)) => {
-            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_agg.final_value().to_string()))
-        }
-
         (OwnedValue::Float(lhs_float), OwnedValue::Text(rhs_text)) => {
             OwnedValue::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
         }
@@ -1085,39 +1043,19 @@ pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Float(lhs_float), OwnedValue::Float(rhs_float)) => {
             OwnedValue::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
         }
-        (OwnedValue::Float(lhs_float), OwnedValue::Agg(rhs_agg)) => {
-            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_agg.final_value().to_string()))
-        }
-
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Text(rhs_text)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + rhs_text.as_str()))
-        }
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Integer(rhs_int)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + &rhs_int.to_string()))
-        }
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Float(rhs_float)) => {
-            OwnedValue::build_text(&(lhs_agg.final_value().to_string() + &rhs_float.to_string()))
-        }
-        (OwnedValue::Agg(lhs_agg), OwnedValue::Agg(rhs_agg)) => OwnedValue::build_text(
-            &(lhs_agg.final_value().to_string() + &rhs_agg.final_value().to_string()),
-        ),
-
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Blob(_), _) | (_, OwnedValue::Blob(_)) => {
             todo!("TODO: Handle Blob conversion to String")
         }
-        (OwnedValue::Record(_), _) | (_, OwnedValue::Record(_)) => unreachable!(),
+        (OwnedValue::Record(_), _)
+        | (_, OwnedValue::Record(_))
+        | (OwnedValue::Agg(_), _)
+        | (_, OwnedValue::Agg(_)) => unreachable!(),
     }
 }
 
 pub fn exec_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
-
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (_, OwnedValue::Integer(0))
         | (OwnedValue::Integer(0), _)
@@ -1125,24 +1063,18 @@ pub fn exec_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Float(0.0), _) => OwnedValue::Integer(0),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_and(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_and(&cast_text_to_numerical(text.as_str()), other)
+            exec_and(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => OwnedValue::Integer(1),
     }
 }
 
 pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    if let OwnedValue::Agg(agg) = lhs {
-        lhs = agg.final_value();
-    }
-    if let OwnedValue::Agg(agg) = rhs {
-        rhs = agg.final_value();
-    }
-
+    final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
         (OwnedValue::Null, OwnedValue::Null)
         | (OwnedValue::Null, OwnedValue::Float(0.0))
@@ -1154,11 +1086,11 @@ pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Float(0.0), OwnedValue::Float(0.0))
         | (OwnedValue::Integer(0), OwnedValue::Integer(0)) => OwnedValue::Integer(0),
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_or(
-            &cast_text_to_numerical(lhs.as_str()),
-            &cast_text_to_numerical(rhs.as_str()),
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_or(&cast_text_to_numerical(text.as_str()), other)
+            exec_or(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => OwnedValue::Integer(1),
     }
@@ -1240,7 +1172,7 @@ mod tests {
             ),
             (OwnedValue::Integer(0), OwnedValue::Text(Text::from_str(""))),
         ];
-        let outpus = [
+        let outputs = [
             OwnedValue::Null,
             OwnedValue::Integer(1),
             OwnedValue::Null,
@@ -1254,13 +1186,13 @@ mod tests {
 
         assert_eq!(
             inputs.len(),
-            outpus.len(),
+            outputs.len(),
             "Inputs and Outputs should have same size"
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
                 exec_or(lhs, rhs),
-                outpus[i],
+                outputs[i],
                 "Wrong OR for lhs: {}, rhs: {}",
                 lhs,
                 rhs

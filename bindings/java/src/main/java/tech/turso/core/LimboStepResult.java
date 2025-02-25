@@ -5,7 +5,7 @@ import tech.turso.annotations.NativeInvocation;
 import tech.turso.annotations.Nullable;
 
 /** Represents the step result of limbo's statement's step function. */
-public class LimboStepResult {
+public final class LimboStepResult {
   private static final int STEP_RESULT_ID_ROW = 10;
   private static final int STEP_RESULT_ID_IO = 20;
   private static final int STEP_RESULT_ID_DONE = 30;

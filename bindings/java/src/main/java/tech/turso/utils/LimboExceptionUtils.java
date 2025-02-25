@@ -7,7 +7,7 @@ import tech.turso.LimboErrorCode;
 import tech.turso.annotations.Nullable;
 import tech.turso.exceptions.LimboException;
 
-public class LimboExceptionUtils {
+public final class LimboExceptionUtils {
   /**
    * Throws formatted SQLException with error code and message.
    *

@@ -11,7 +11,7 @@ import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 
 /** Provides {@link DataSource} API for configuring Limbo database connection. */
-public class LimboDataSource implements DataSource {
+public final class LimboDataSource implements DataSource {
 
   private final LimboConfig limboConfig;
   private final String url;

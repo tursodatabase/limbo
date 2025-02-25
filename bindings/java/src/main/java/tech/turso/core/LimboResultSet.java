@@ -13,7 +13,7 @@ import tech.turso.utils.LoggerFactory;
  * <p>A {@link LimboResultSet} object is automatically closed when the {@link LimboStatement} object
  * that generated it is closed or re-executed.
  */
-public class LimboResultSet {
+public final class LimboResultSet {
 
   private static final Logger log = LoggerFactory.getLogger(LimboResultSet.class);
 

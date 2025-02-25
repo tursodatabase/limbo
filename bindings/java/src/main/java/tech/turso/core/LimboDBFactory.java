@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Factory class for managing and creating instances of {@link LimboDB}. This class ensures that
  * multiple instances of {@link LimboDB} with the same URL are not created.
  */
-public class LimboDBFactory {
+public final class LimboDBFactory {
 
   private static final ConcurrentHashMap<String, LimboDB> databaseHolder =
       new ConcurrentHashMap<>();

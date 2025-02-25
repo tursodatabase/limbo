@@ -6,7 +6,7 @@ import java.util.logging.Level;
  * A factory for {@link Logger} instances that uses SLF4J if present, falling back on a
  * java.util.logging implementation otherwise.
  */
-public class LoggerFactory {
+public final class LoggerFactory {
   static final boolean USE_SLF4J;
 
   static {

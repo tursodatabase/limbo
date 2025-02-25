@@ -12,27 +12,44 @@ use std::rc::Rc;
 use tracing::trace;
 
 pub struct Schema {
-    pub tables: HashMap<String, Rc<BTreeTable>>,
+    pub tables: HashMap<String, Rc<Table>>,
     // table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Rc<Index>>>,
 }
 
 impl Schema {
     pub fn new() -> Self {
-        let mut tables: HashMap<String, Rc<BTreeTable>> = HashMap::new();
+        let mut tables: HashMap<String, Rc<Table>> = HashMap::new();
         let indexes: HashMap<String, Vec<Rc<Index>>> = HashMap::new();
-        tables.insert("sqlite_schema".to_string(), Rc::new(sqlite_schema_table()));
+        tables.insert(
+            "sqlite_schema".to_string(),
+            Rc::new(Table::BTree(sqlite_schema_table().into())),
+        );
         Self { tables, indexes }
     }
 
-    pub fn add_table(&mut self, table: Rc<BTreeTable>) {
+    pub fn add_btree_table(&mut self, table: Rc<BTreeTable>) {
         let name = normalize_ident(&table.name);
-        self.tables.insert(name, table);
+        self.tables.insert(name, Table::BTree(table).into());
     }
 
-    pub fn get_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
+    pub fn add_virtual_table(&mut self, table: Rc<VirtualTable>) {
+        let name = normalize_ident(&table.name);
+        self.tables.insert(name, Table::Virtual(table).into());
+    }
+
+    pub fn get_table(&self, name: &str) -> Option<Rc<Table>> {
         let name = normalize_ident(name);
         self.tables.get(&name).cloned()
+    }
+
+    pub fn get_btree_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
+        let name = normalize_ident(name);
+        if let Some(table) = self.tables.get(&name) {
+            table.btree()
+        } else {
+            None
+        }
     }
 
     pub fn add_index(&mut self, index: Rc<Index>) {

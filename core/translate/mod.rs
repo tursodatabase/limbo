@@ -33,8 +33,7 @@ use crate::vdbe::builder::{CursorType, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::{builder::ProgramBuilder, insn::Insn, Program};
 use crate::{bail_parse_error, Connection, LimboError, Result, SymbolTable};
 use insert::translate_insert;
-use limbo_sqlite3_parser::ast::{self, fmt::ToTokens};
-use limbo_sqlite3_parser::ast::{Delete, Insert};
+use limbo_sqlite3_parser::ast::{self, fmt::ToTokens, CreateVirtualTable, Delete, Insert};
 use select::translate_select;
 use std::cell::RefCell;
 use std::fmt::Display;
@@ -74,8 +73,8 @@ pub fn translate(
         }
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
         ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
-        ast::Stmt::CreateVirtualTable { .. } => {
-            bail_parse_error!("CREATE VIRTUAL TABLE not supported yet")
+        ast::Stmt::CreateVirtualTable(vtab) => {
+            translate_create_virtual_table(*vtab, schema, query_mode)?
         }
         ast::Stmt::Delete(delete) => {
             let Delete {
@@ -94,7 +93,7 @@ pub fn translate(
         ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
         ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
             query_mode,
-            &schema,
+            schema,
             &name,
             body.map(|b| *b),
             database_header.clone(),
@@ -187,6 +186,7 @@ impl SchemaEntryType {
         }
     }
 }
+const SQLITE_TABLEID: &str = "sqlite_schema";
 
 fn emit_schema_entry(
     program: &mut ProgramBuilder,
@@ -209,11 +209,18 @@ fn emit_schema_entry(
     program.emit_string8_new_reg(tbl_name.to_string());
 
     let rootpage_reg = program.alloc_register();
-    program.emit_insn(Insn::Copy {
-        src_reg: root_page_reg,
-        dst_reg: rootpage_reg,
-        amount: 1,
-    });
+    if root_page_reg == 0 {
+        program.emit_insn(Insn::Integer {
+            dest: rootpage_reg,
+            value: 0, // virtual tables in sqlite always have rootpage=0
+        });
+    } else {
+        program.emit_insn(Insn::Copy {
+            src_reg: root_page_reg,
+            dst_reg: rootpage_reg,
+            amount: 1,
+        });
+    }
 
     let sql_reg = program.alloc_register();
     if let Some(sql) = sql {
@@ -455,10 +462,9 @@ fn translate_create_table(
         });
     }
 
-    let table_id = "sqlite_schema".to_string();
-    let table = schema.get_table(&table_id).unwrap();
+    let table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
     let sqlite_schema_cursor_id = program.alloc_cursor_id(
-        Some(table_id.to_owned()),
+        Some(SQLITE_TABLEID.to_owned()),
         CursorType::BTreeTable(table.clone()),
     );
     program.emit_insn(Insn::OpenWriteAsync {
@@ -545,4 +551,137 @@ fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTab
         ast::CreateTableBody::AsSelect(_select) => todo!("as select not yet supported"),
     }
     sql
+}
+
+fn create_vtable_body_to_str(vtab: &CreateVirtualTable) -> String {
+    let args = if let Some(args) = &vtab.args {
+        args.iter()
+            .map(|arg| arg.to_string())
+            .collect::<Vec<String>>()
+            .join(", ")
+    } else {
+        "".to_string()
+    };
+    let if_not_exists = if vtab.if_not_exists {
+        "IF NOT EXISTS "
+    } else {
+        ""
+    };
+    format!(
+        "CREATE VIRTUAL TABLE {} {} USING {}{}",
+        vtab.tbl_name.name.0,
+        if_not_exists,
+        vtab.module_name.0,
+        if args.is_empty() {
+            String::new()
+        } else {
+            format!("({})", args)
+        }
+    )
+}
+
+fn translate_create_virtual_table(
+    vtab: CreateVirtualTable,
+    schema: &Schema,
+    query_mode: QueryMode,
+) -> Result<ProgramBuilder> {
+    let ast::CreateVirtualTable {
+        if_not_exists,
+        tbl_name,
+        module_name,
+        args,
+    } = &vtab;
+
+    let table_name = tbl_name.name.0.clone();
+    let module_name_str = module_name.0.clone();
+    let args_vec = args.clone().unwrap_or_default();
+
+    if schema.get_table(&table_name).is_some() && *if_not_exists {
+        let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+            query_mode,
+            num_cursors: 1,
+            approx_num_insns: 5,
+            approx_num_labels: 1,
+        });
+        let init_label = program.emit_init();
+        program.emit_halt();
+        program.resolve_label(init_label, program.offset());
+        program.emit_transaction(true);
+        program.emit_constant_insns();
+        return Ok(program);
+    }
+
+    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+        query_mode,
+        num_cursors: 2,
+        approx_num_insns: 40,
+        approx_num_labels: 2,
+    });
+
+    let module_name_reg = program.emit_string8_new_reg(module_name_str.clone());
+    let table_name_reg = program.emit_string8_new_reg(table_name.clone());
+
+    let args_reg = if !args_vec.is_empty() {
+        let args_start = program.alloc_register();
+
+        // Emit string8 instructions for each arg
+        for (i, arg) in args_vec.iter().enumerate() {
+            program.emit_string8(arg.clone(), args_start + i);
+        }
+        let args_record_reg = program.alloc_register();
+
+        // VCreate expects an array of args as a record
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: args_start,
+            count: args_vec.len(),
+            dest_reg: args_record_reg,
+        });
+        Some(args_record_reg)
+    } else {
+        None
+    };
+
+    program.emit_insn(Insn::VCreate {
+        module_name: module_name_reg,
+        table_name: table_name_reg,
+        args_reg,
+    });
+
+    let table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
+    let sqlite_schema_cursor_id = program.alloc_cursor_id(
+        Some(SQLITE_TABLEID.to_owned()),
+        CursorType::BTreeTable(table.clone()),
+    );
+    program.emit_insn(Insn::OpenWriteAsync {
+        cursor_id: sqlite_schema_cursor_id,
+        root_page: 1,
+    });
+    program.emit_insn(Insn::OpenWriteAwait {});
+
+    let sql = create_vtable_body_to_str(&vtab);
+    emit_schema_entry(
+        &mut program,
+        sqlite_schema_cursor_id,
+        SchemaEntryType::Table,
+        &tbl_name.name.0,
+        &tbl_name.name.0,
+        0, // virtual tables dont have a root page
+        Some(sql),
+    );
+
+    let parse_schema_where_clause = format!("tbl_name = '{}' AND type != 'trigger'", table_name);
+    program.emit_insn(Insn::ParseSchema {
+        db: sqlite_schema_cursor_id,
+        where_clause: parse_schema_where_clause,
+    });
+
+    let init_label = program.emit_init();
+    let start_offset = program.offset();
+    program.emit_halt();
+    program.resolve_label(init_label, program.offset());
+    program.emit_transaction(true);
+    program.emit_constant_insns();
+    program.emit_goto(start_offset);
+
+    Ok(program)
 }

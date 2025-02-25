@@ -1,16 +1,19 @@
-use crate::{function::ExternalFunc, util::columns_from_create_table_body, Database, VirtualTable};
-use fallible_iterator::FallibleIterator;
-use limbo_ext::{ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabModuleImpl};
-pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
-use limbo_sqlite3_parser::{
-    ast::{Cmd, Stmt},
-    lexer::sql::Parser,
+use crate::{function::ExternalFunc, Database};
+use limbo_ext::{
+    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
 };
+pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 use std::{
-    ffi::{c_char, c_void, CStr},
+    ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
 };
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
+
+#[derive(Clone)]
+pub struct VTabImpl {
+    pub module_kind: VTabKind,
+    pub implementation: Rc<VTabModuleImpl>,
+}
 
 unsafe extern "C" fn register_scalar_function(
     ctx: *mut c_void,
@@ -53,8 +56,12 @@ unsafe extern "C" fn register_module(
     ctx: *mut c_void,
     name: *const c_char,
     module: VTabModuleImpl,
+    kind: VTabKind,
 ) -> ResultCode {
-    let c_str = unsafe { CStr::from_ptr(name) };
+    if name.is_null() || ctx.is_null() {
+        return ResultCode::Error;
+    }
+    let c_str = unsafe { CString::from_raw(name as *mut i8) };
     let name_str = match c_str.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,
@@ -64,31 +71,7 @@ unsafe extern "C" fn register_module(
     }
     let db = unsafe { &mut *(ctx as *mut Database) };
 
-    db.register_module_impl(&name_str, module)
-}
-
-unsafe extern "C" fn declare_vtab(
-    ctx: *mut c_void,
-    name: *const c_char,
-    sql: *const c_char,
-) -> ResultCode {
-    let c_str = unsafe { CStr::from_ptr(name) };
-    let name_str = match c_str.to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return ResultCode::Error,
-    };
-
-    let c_str = unsafe { CStr::from_ptr(sql) };
-    let sql_str = match c_str.to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return ResultCode::Error,
-    };
-
-    if ctx.is_null() {
-        return ResultCode::Error;
-    }
-    let db = unsafe { &mut *(ctx as *mut Database) };
-    db.declare_vtab_impl(&name_str, &sql_str)
+    db.register_module_impl(&name_str, module, kind)
 }
 
 impl Database {
@@ -113,32 +96,21 @@ impl Database {
         ResultCode::OK
     }
 
-    fn register_module_impl(&mut self, name: &str, module: VTabModuleImpl) -> ResultCode {
-        self.vtab_modules.insert(name.to_string(), Rc::new(module));
-        ResultCode::OK
-    }
-
-    fn declare_vtab_impl(&mut self, name: &str, sql: &str) -> ResultCode {
-        let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next().unwrap().unwrap();
-        let Cmd::Stmt(stmt) = cmd else {
-            return ResultCode::Error;
+    fn register_module_impl(
+        &mut self,
+        name: &str,
+        module: VTabModuleImpl,
+        kind: VTabKind,
+    ) -> ResultCode {
+        let module = Rc::new(module);
+        let vmodule = VTabImpl {
+            module_kind: kind,
+            implementation: module,
         };
-        let Stmt::CreateTable { body, .. } = stmt else {
-            return ResultCode::Error;
-        };
-        let Ok(columns) = columns_from_create_table_body(*body) else {
-            return ResultCode::Error;
-        };
-        let vtab_module = self.vtab_modules.get(name).unwrap().clone();
-
-        let vtab = VirtualTable {
-            name: name.to_string(),
-            implementation: vtab_module,
-            columns,
-            args: None,
-        };
-        self.syms.borrow_mut().vtabs.insert(name.to_string(), vtab);
+        self.syms
+            .borrow_mut()
+            .vtab_modules
+            .insert(name.to_string(), vmodule.into());
         ResultCode::OK
     }
 
@@ -148,7 +120,6 @@ impl Database {
             register_scalar_function,
             register_aggregate_function,
             register_module,
-            declare_vtab,
         }
     }
 

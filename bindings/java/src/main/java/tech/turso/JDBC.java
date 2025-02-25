@@ -9,7 +9,7 @@ import tech.turso.jdbc4.JDBC4Connection;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
 
-public class JDBC implements Driver {
+public final class JDBC implements Driver {
   private static final Logger logger = LoggerFactory.getLogger(JDBC.class);
 
   private static final String VALID_URL_PREFIX = "jdbc:sqlite:";

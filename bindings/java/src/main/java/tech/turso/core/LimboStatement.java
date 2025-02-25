@@ -14,7 +14,7 @@ import tech.turso.utils.LoggerFactory;
  * objects. All execution method in the <code>LimboStatement</code> implicitly close the current
  * <code>resultSet</code> object of the statement if an open one exists.
  */
-public class LimboStatement {
+public final class LimboStatement {
   private static final Logger log = LoggerFactory.getLogger(LimboStatement.class);
 
   private final String sql;

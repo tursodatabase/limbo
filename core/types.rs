@@ -223,8 +223,8 @@ impl OwnedValue {
         }
     }
 
-    pub fn from_ffi(v: &ExtValue) -> Result<Self> {
-        match v.value_type() {
+    pub fn from_ffi(v: ExtValue) -> Result<Self> {
+        let res = match v.value_type() {
             ExtValueType::Null => Ok(OwnedValue::Null),
             ExtValueType::Integer => {
                 let Some(int) = v.to_integer() else {
@@ -259,7 +259,11 @@ impl OwnedValue {
                     (code, None) => Err(LimboError::ExtensionError(code.to_string())),
                 }
             }
+        };
+        unsafe {
+            v.free();
         }
+        res
     }
 }
 
@@ -281,8 +285,7 @@ impl AggContext {
         if let Self::External(ext_state) = self {
             if ext_state.finalized_value.is_none() {
                 let final_value = unsafe { (ext_state.finalize_fn)(ext_state.state) };
-                ext_state.cache_final_value(OwnedValue::from_ffi(&final_value)?);
-                unsafe { final_value.free() };
+                ext_state.cache_final_value(OwnedValue::from_ffi(final_value)?);
             }
         }
         Ok(())

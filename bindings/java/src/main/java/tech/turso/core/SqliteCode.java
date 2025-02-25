@@ -16,7 +16,7 @@
 package tech.turso.core;
 
 /** Sqlite error codes. */
-public class SqliteCode {
+public final class SqliteCode {
   /** Successful result */
   public static final int SQLITE_OK = 0;
 
