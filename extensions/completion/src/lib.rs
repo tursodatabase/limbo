@@ -4,9 +4,7 @@
 mod keywords;
 
 use keywords::KEYWORDS;
-use limbo_ext::{
-    register_extension, ExtensionApi, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value,
-};
+use limbo_ext::{register_extension, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value};
 
 register_extension! {
     vtabs: { CompletionVTab }
@@ -58,29 +56,30 @@ impl Into<i64> for CompletionPhase {
 }
 
 /// A virtual table that generates a sequence of integers
-#[derive(Debug, VTabModuleDerive)]
+#[derive(Debug, Default, VTabModuleDerive)]
 struct CompletionVTab {}
 
 impl VTabModule for CompletionVTab {
     type VCursor = CompletionCursor;
     const NAME: &'static str = "completion";
+    const VTAB_KIND: limbo_ext::VTabKind = limbo_ext::VTabKind::TableValuedFunction;
+    type Error = ResultCode;
 
-    fn connect(api: &ExtensionApi) -> ResultCode {
-        // Create table schema
-        let sql = "CREATE TABLE completion(
+    fn create_schema(_args: &[Value]) -> String {
+        "CREATE TABLE completion(
             candidate TEXT,
             prefix TEXT HIDDEN,
             wholeline TEXT HIDDEN,
             phase INT HIDDEN     
-        )";
-        api.declare_virtual_table(Self::NAME, sql)
+        )"
+        .to_string()
     }
 
-    fn open() -> Self::VCursor {
-        CompletionCursor::default()
+    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+        Ok(CompletionCursor::default())
     }
 
-    fn column(cursor: &Self::VCursor, idx: u32) -> Value {
+    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, ResultCode> {
         cursor.column(idx)
     }
 
@@ -92,8 +91,8 @@ impl VTabModule for CompletionVTab {
         cursor.eof()
     }
 
-    fn filter(cursor: &mut Self::VCursor, arg_count: i32, args: &[Value]) -> ResultCode {
-        if arg_count == 0 || arg_count > 2 {
+    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode {
+        if args.len() == 0 || args.len() > 2 {
             return ResultCode::InvalidArgs;
         }
         cursor.reset();
@@ -198,14 +197,15 @@ impl VTabCursor for CompletionCursor {
         self.phase == CompletionPhase::Eof
     }
 
-    fn column(&self, idx: u32) -> Value {
-        match idx {
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        let val = match idx {
             0 => Value::from_text(self.curr_row.clone()), // COMPLETION_COLUMN_CANDIDATE
             1 => Value::from_text(self.prefix.clone()),   // COMPLETION_COLUMN_PREFIX
             2 => Value::from_text(self.line.clone()),     // COMPLETION_COLUMN_WHOLELINE
             3 => Value::from_integer(self.phase.clone().into()), // COMPLETION_COLUMN_PHASE
             _ => Value::null(),
-        }
+        };
+        Ok(val)
     }
 
     fn rowid(&self) -> i64 {
