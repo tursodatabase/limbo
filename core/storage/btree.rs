@@ -15,8 +15,7 @@ use std::rc::Rc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
-    payload_overflows, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
-    DATABASE_HEADER_SIZE,
+    write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
 };
 
 /*
@@ -714,7 +713,7 @@ impl BTreeCursor {
                     .state
                     .mut_write_info()
                     .expect("can't insert while counting");
-                write_info.state.clone()
+                write_info.state
             };
             match write_state {
                 WriteState::Start => {
@@ -778,7 +777,7 @@ impl BTreeCursor {
             };
         };
         self.state = CursorState::None;
-        return ret;
+        ret
     }
 
     /// Insert a record into a cell.
@@ -1216,7 +1215,7 @@ impl BTreeCursor {
                 let (page_type, current_idx) = {
                     let current_page = self.stack.top();
                     let contents = current_page.get().contents.as_ref().unwrap();
-                    (contents.page_type().clone(), current_page.get().id)
+                    (contents.page_type(), current_page.get().id)
                 };
 
                 parent.set_dirty();
@@ -1231,8 +1230,8 @@ impl BTreeCursor {
                     let cell = parent_contents.cell_get(
                         cell_idx,
                         self.pager.clone(),
-                        self.payload_overflow_threshold_max(page_type.clone()),
-                        self.payload_overflow_threshold_min(page_type.clone()),
+                        self.payload_overflow_threshold_max(page_type),
+                        self.payload_overflow_threshold_min(page_type),
                         self.usable_space(),
                     )?;
                     let found = match cell {
@@ -1244,8 +1243,8 @@ impl BTreeCursor {
                     if found {
                         let (start, _len) = parent_contents.cell_get_raw_region(
                             cell_idx,
-                            self.payload_overflow_threshold_max(page_type.clone()),
-                            self.payload_overflow_threshold_min(page_type.clone()),
+                            self.payload_overflow_threshold_max(page_type),
+                            self.payload_overflow_threshold_min(page_type),
                             self.usable_space(),
                         );
                         right_pointer = start;
@@ -1731,7 +1730,7 @@ impl BTreeCursor {
             write_varint_to_vec(record_buf.len() as u64, cell_payload);
         }
 
-        let payload_overflow_threshold_max = self.payload_overflow_threshold_max(page_type.clone());
+        let payload_overflow_threshold_max = self.payload_overflow_threshold_max(page_type);
         debug!(
             "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
             record_buf.len(),
@@ -2153,6 +2152,8 @@ impl BTreeCursor {
         // Get overflow info based on cell type
         let (first_overflow_page, n_overflow) = match cell {
             BTreeCell::TableLeafCell(leaf_cell) => {
+                // TODO(Krishna): Payload length is 1 byte less than SQLite payload length.
+                // Same goes for local size.
                 match self.calculate_overflow_info(leaf_cell._payload.len(), PageType::TableLeaf)? {
                     Some(n_overflow) => (leaf_cell.first_overflow_page, n_overflow),
                     None => return Ok(CursorResult::Ok(())),
@@ -2208,30 +2209,72 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(()))
     }
 
+    /// Calculates how much of a cell's payload should be stored locally vs in overflow pages
+    ///
+    /// Parameters:
+    /// - payload_len: Total length of the payload data
+    /// - page_type: Type of the B-tree page (affects local storage thresholds)
+    ///
+    /// Returns:
+    /// - A tuple of (n_local, payload_len) where:
+    ///   - n_local: Amount of payload to store locally on the page
+    ///   - payload_len: Total payload length (unchanged from input)
+    pub fn parse_cell_info(
+        &self,
+        payload_len: usize,
+        page_type: PageType,
+    ) -> Result<(usize, usize)> {
+        let max_local = self.payload_overflow_threshold_max(page_type);
+        let min_local = self.payload_overflow_threshold_min(page_type);
+
+        // This matches btreeParseCellAdjustSizeForOverflow logic
+        let n_local = if payload_len <= max_local {
+            // Common case - everything fits locally
+            payload_len
+        } else {
+            // For payloads that need overflow pages:
+            // Calculate how much should be stored locally using the following formula:
+            // surplus = min_local + (payload_len - min_local) % (usable_space - 4)
+            //
+            // This tries to minimize unused space on overflow pages while keeping
+            // the local storage between min_local and max_local thresholds.
+            // The (usable_space - 4) factor accounts for overhead in overflow pages.
+            let surplus = min_local + (payload_len - min_local) % (self.usable_space() - 4);
+            if surplus <= max_local {
+                surplus
+            } else {
+                min_local
+            }
+        };
+
+        Ok((n_local, payload_len))
+    }
+
     fn calculate_overflow_info(
         &self,
         payload_len: usize,
         page_type: PageType,
     ) -> Result<Option<usize>> {
-        let max_local = self.payload_overflow_threshold_max(page_type.clone());
-        let min_local = self.payload_overflow_threshold_min(page_type.clone());
-        let usable_size = self.usable_space();
+        let (n_local, n_payload) = self.parse_cell_info(payload_len, page_type)?;
 
-        let (_, local_size) = payload_overflows(payload_len, max_local, min_local, usable_size);
+        if n_local == n_payload {
+            return Ok(None); // No overflow pages needed
+        }
 
         assert!(
-            local_size != payload_len,
+            n_local != payload_len,
             "Trying to clear overflow pages when there are no overflow pages"
         );
 
         // Calculate expected overflow pages
         let overflow_page_size = self.usable_space() - 4;
-        let n_overflow =
-            (payload_len - local_size + overflow_page_size).div_ceil(overflow_page_size);
-        if n_overflow == 0 {
-            return Err(LimboError::Corrupt("Invalid overflow calculation".into()));
-        }
 
+        #[allow(clippy::manual_div_ceil)] // don't remove this. Ignore clippy.
+        // TODO(Krishna): payload_len - n_local + overflow_page_size - 1 -> this is off by 3 in one case.
+        // Investigate this further.
+        // For now this works similar to SQLite and obeys invariants when tested with fuzzer.
+        // using rust's div_ceil will add + 1 to result we want. Clippy will suggest us to use div_ceil but don't.
+        let n_overflow = (payload_len - n_local + overflow_page_size - 1) / (overflow_page_size);
         Ok(Some(n_overflow))
     }
 }
@@ -2368,6 +2411,7 @@ mod tests {
     use rand_chacha::rand_core::RngCore;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+    use tracing::trace;
 
     use super::*;
     use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
@@ -2684,6 +2728,98 @@ mod tests {
         btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
 
+    #[test]
+    pub fn btree_delete_fuzz_ex() {
+        // Test specific sequences that could trigger edge cases
+        for sequence in [
+            // Test deleting from a simple tree
+            &[
+                (100, 100, true), // (key, size, delete?)
+                (200, 100, true),
+                (300, 100, false), // Keep this one
+                (400, 100, true),
+            ]
+            .as_slice(),
+            &[
+                (1000, 5000, true),
+                (2000, 100, true),
+                (3000, 5000, false),
+                (4000, 100, true),
+            ]
+            .as_slice(),
+            &[
+                (10, 3000, true),
+                (20, 3000, true),
+                (30, 3000, false),
+                (40, 3000, true),
+                (50, 3000, true),
+            ]
+            .as_slice(),
+        ] {
+            let (pager, root_page) = empty_btree();
+            let mut cursor = BTreeCursor::new(pager.clone(), root_page);
+
+            // First insert all records
+            for &(key, size, _) in sequence.iter() {
+                let key = OwnedValue::Integer(key);
+                let value = Record::new(vec![OwnedValue::Blob(Rc::new(vec![0; size]))]);
+                trace!("Inserting key: {}", key);
+                cursor.insert(&key, &value, false).unwrap();
+            }
+
+            trace!(
+                "After inserts:\n{}",
+                format_btree(pager.clone(), root_page, 0)
+            );
+
+            // Then delete specified records
+            for &(key, _, should_delete) in sequence.iter() {
+                if should_delete {
+                    let seek_key = SeekKey::TableRowId(key as u64);
+                    trace!("Deleting key: {}", key);
+                    assert!(
+                        matches!(
+                            cursor.seek(seek_key.clone(), SeekOp::EQ).unwrap(),
+                            CursorResult::Ok(true)
+                        ),
+                        "key {} not found before delete",
+                        key
+                    );
+                    cursor.delete().unwrap();
+
+                    // Verify deletion
+                    assert!(
+                        matches!(
+                            cursor.seek(seek_key.clone(), SeekOp::EQ).unwrap(),
+                            CursorResult::Ok(false)
+                        ),
+                        "key {} still exists after delete",
+                        key
+                    );
+                }
+            }
+
+            for &(key, _, should_delete) in sequence.iter() {
+                let seek_key = SeekKey::TableRowId(key as u64);
+                let exists = matches!(
+                    cursor.seek(seek_key.clone(), SeekOp::EQ).unwrap(),
+                    CursorResult::Ok(true)
+                );
+                assert_eq!(
+                    !should_delete, exists,
+                    "key {} existence status is wrong after deletions",
+                    key
+                );
+            }
+
+            // TODO(Krishna): uncomment this once we have added balancing to delete.
+            // Validate btree structure
+            // if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
+            //     panic!("invalid btree after deletions");
+            // }
+        }
+    }
+
     #[allow(clippy::arc_with_non_send_sync)]
     fn setup_test_env(database_size: u32) -> (Rc<Pager>, Rc<RefCell<DatabaseHeader>>) {
         let page_size = 512;
@@ -2751,7 +2887,7 @@ mod tests {
         let usable_size = cursor.usable_space();
 
         // Create a large payload that will definitely trigger overflow
-        let large_payload = vec![b'A'; max_local + usable_size];
+        let large_payload = vec![b'A'; max_local + usable_size + 900];
 
         // Setup overflow pages (2, 3, 4) with linking
         let mut current_page = 2u32;
