@@ -15,7 +15,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 chrono = "0.4.39"
 getrandom = "0.3.1"
-limbo_ext = { path = "../core", features = ["static"] }
+limbo_ext = { workspace = true, features = ["static"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }

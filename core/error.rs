@@ -55,12 +55,6 @@ pub enum LimboError {
     IntegerOverflow,
 }
 
-impl From<limbo_ext::ResultCode> for LimboError {
-    fn from(code: limbo_ext::ResultCode) -> Self {
-        Self::ExtensionError(code.to_string())
-    }
-}
-
 #[macro_export]
 macro_rules! bail_parse_error {
     ($($arg:tt)*) => {
@@ -80,6 +74,12 @@ macro_rules! bail_constraint_error {
     ($($arg:tt)*) => {
         return Err($crate::error::LimboError::Constraint(format!($($arg)*)))
     };
+}
+
+impl From<limbo_ext::ResultCode> for LimboError {
+    fn from(code: limbo_ext::ResultCode) -> Self {
+        Self::ExtensionError(code.to_string())
+    }
 }
 
 pub const SQLITE_CONSTRAINT: usize = 19;
