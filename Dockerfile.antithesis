@@ -43,8 +43,10 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --bin limbo_stress --release --recipe-path recipe.json
 COPY --from=planner /app/bindings/rust ./bindings/rust/
 COPY --from=planner /app/core ./core/
+COPY --from=planner /app/extensions ./extensions/
 COPY --from=planner /app/macros ./macros/
 COPY --from=planner /app/stress ./stress/
+COPY --from=planner /app/vendored ./vendored/
 
 RUN if [ "$antithesis" = "true" ]; then \
         cp /opt/antithesis/libvoidstar.so /usr/lib/libvoidstar.so && \
