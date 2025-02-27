@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:0.1.68-rust-1.81.0-slim-bullseye AS chef
+FROM lukemathwalker/cargo-chef:0.1.68-rust-1.84.0-slim-bullseye AS chef
 RUN apt update \
     && apt install -y git libssl-dev pkg-config\
     && apt clean \
