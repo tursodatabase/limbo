@@ -70,4 +70,4 @@ COPY --from=builder /app/target/release/limbo_stress /bin/limbo_stress
 COPY stress/docker-entrypoint.sh /bin
 RUN chmod +x /bin/docker-entrypoint.sh
 ENTRYPOINT ["/bin/docker-entrypoint.sh"]
-CMD ["/bin/docker-runner.sh", "/bin/limbo_stress"]
+CMD ["/bin/limbo_stress"]

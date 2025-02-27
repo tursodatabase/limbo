@@ -33,4 +33,5 @@ async fn main() {
     for handle in handles {
         handle.await.unwrap();
     }
+    println!("Done.");
 }
