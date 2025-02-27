@@ -227,8 +227,8 @@ pub fn maybe_init_database_file(file: &Rc<dyn File>, io: &Arc<dyn IO>) -> Result
             btree_init_page(
                 &page1,
                 storage::sqlite3_ondisk::PageType::TableLeaf,
-                &db_header,
                 DATABASE_HEADER_SIZE,
+                db_header.page_size - db_header.reserved_space as u16,
             );
 
             let contents = page1.get().contents.as_mut().unwrap();

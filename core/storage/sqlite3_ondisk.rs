@@ -439,14 +439,14 @@ impl PageContent {
         u16::from_be_bytes([buf[self.offset + pos], buf[self.offset + pos + 1]])
     }
 
+    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
+        let buf = self.as_ptr();
+        u16::from_be_bytes([buf[pos], buf[pos + 1]])
+    }
+
     pub fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
-        u32::from_be_bytes([
-            buf[self.offset + pos],
-            buf[self.offset + pos + 1],
-            buf[self.offset + pos + 2],
-            buf[self.offset + pos + 3],
-        ])
+        read_u32(buf, self.offset + pos)
     }
 
     pub fn write_u8(&self, pos: usize, value: u8) {
@@ -459,6 +459,12 @@ impl PageContent {
         tracing::debug!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
+    }
+
+    pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
+        tracing::debug!("write_u16(pos={}, value={})", pos, value);
+        let buf = self.as_ptr();
+        buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u32(&self, pos: usize, value: u32) {
@@ -534,6 +540,16 @@ impl PageContent {
         }
     }
 
+    pub fn rightmost_pointer_raw(&self) -> Option<*mut u8> {
+        match self.page_type() {
+            PageType::IndexInterior | PageType::TableInterior => {
+                Some(unsafe { self.as_ptr().as_mut_ptr().add(self.offset + 8) })
+            }
+            PageType::IndexLeaf => None,
+            PageType::TableLeaf => None,
+        }
+    }
+
     pub fn cell_get(
         &self,
         idx: usize,
@@ -574,7 +590,7 @@ impl PageContent {
         (self.offset + header_size, self.cell_pointer_array_size())
     }
 
-    /* Get region of a cell's payload */
+    /// Get region of a cell's payload
     pub fn cell_get_raw_region(
         &self,
         idx: usize,
@@ -584,10 +600,10 @@ impl PageContent {
     ) -> (usize, usize) {
         let buf = self.as_ptr();
         let ncells = self.cell_count();
-        let cell_pointer_array_start = self.header_size();
+        let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
         assert!(idx < ncells, "cell_get: idx out of bounds");
         let cell_pointer = cell_pointer_array_start + (idx * 2); // pointers are 2 bytes each
-        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
         let start = cell_pointer;
         let len = match self.page_type() {
             PageType::IndexInterior => {
@@ -888,6 +904,7 @@ fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8
             assert!(left_to_read > 0);
             let page;
             loop {
+                // FIXME(pere): this looks terrible, what did i do lmao
                 let page_ref = pager.read_page(next_overflow as usize);
                 if let Ok(p) = page_ref {
                     page = p;
@@ -1469,6 +1486,10 @@ impl WalHeader {
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { std::mem::transmute::<&WalHeader, &[u8; size_of::<WalHeader>()]>(self) }
     }
+}
+
+pub fn read_u32(buf: &[u8], pos: usize) -> u32 {
+    u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
 }
 
 #[cfg(test)]
