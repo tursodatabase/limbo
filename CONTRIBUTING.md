@@ -184,6 +184,12 @@ Once Maturin is installed, you can build the crate and install it as a Python mo
 cd bindings/python && maturin develop
 ```
 
+## Antithesis
+
+```bash
+docker build -f Dockerfile.antithesis -t limbo-workload:antithesis-latest .
+```
+
 ## Adding Third Party Dependencies
 
 When you want to add third party dependencies, please follow these steps:
