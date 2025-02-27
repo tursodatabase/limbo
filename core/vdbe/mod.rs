@@ -1857,7 +1857,7 @@ impl Program {
                                 let argv_ptr = ext_values.as_ptr();
                                 unsafe { step_fn(state_ptr, argc as i32, argv_ptr) };
                                 for ext_value in ext_values {
-                                    unsafe { ext_value.free() };
+                                    unsafe { ext_value.__free_internal_type() };
                                 }
                             }
                         }
