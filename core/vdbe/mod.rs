@@ -1722,6 +1722,7 @@ impl Program {
                             *acc += col;
                         }
                         AggFunc::Count | AggFunc::Count0 => {
+                            let col = state.registers[*col].clone();
                             if matches!(&state.registers[*acc_reg], OwnedValue::Null) {
                                 state.registers[*acc_reg] = OwnedValue::Agg(Box::new(
                                     AggContext::Count(OwnedValue::Integer(0)),
@@ -1734,7 +1735,12 @@ impl Program {
                             let AggContext::Count(count) = agg.borrow_mut() else {
                                 unreachable!();
                             };
-                            *count += 1;
+
+                            if (matches!(func, AggFunc::Count) && matches!(col, OwnedValue::Null))
+                                == false
+                            {
+                                *count += 1;
+                            };
                         }
                         AggFunc::Max => {
                             let col = state.registers[*col].clone();
