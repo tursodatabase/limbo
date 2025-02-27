@@ -10,12 +10,22 @@ WORKDIR /app
 #
 
 FROM chef AS planner
-COPY ./Cargo.toml ./Cargo.toml
 COPY ./Cargo.lock ./Cargo.lock
-COPY ./core ./core/
-COPY ./macros ./macros/
+COPY ./Cargo.toml ./Cargo.toml
+COPY ./bindings/go ./bindings/go/
+COPY ./bindings/java ./bindings/java/
+COPY ./bindings/python ./bindings/python/
 COPY ./bindings/rust ./bindings/rust/
+COPY ./bindings/wasm ./bindings/wasm/
+COPY ./cli ./cli/
+COPY ./core ./core/
+COPY ./extensions ./extensions/
+COPY ./macros ./macros/
+COPY ./simulator ./simulator/
+COPY ./sqlite3 ./sqlite3/
+COPY ./tests ./tests/
 COPY ./stress ./stress/
+COPY ./vendored ./vendored/
 RUN cargo chef prepare --bin limbo_stress --recipe-path recipe.json
 
 #
