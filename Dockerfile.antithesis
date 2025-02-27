@@ -49,7 +49,7 @@ COPY --from=planner /app/stress ./stress/
 RUN if [ "$antithesis" = "true" ]; then \
         cp /opt/antithesis/libvoidstar.so /usr/lib/libvoidstar.so && \
         export RUSTFLAGS="-Ccodegen-units=1 -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=3 -Cllvm-args=-sanitizer-coverage-trace-pc-guard -Clink-args=-Wl,--build-id -L/usr/lib/ -lvoidstar" && \
-        cargo build --features antithesis --bin limbo_stress --release; \
+        cargo build --bin limbo_stress --release; \
     else \
         cargo build --bin limbo_stress --release; \
     fi
