@@ -108,7 +108,7 @@ impl std::fmt::Debug for Value {
 }
 
 #[repr(C)]
-pub struct TextValue {
+struct TextValue {
     text: *const u8,
     len: u32,
 }
@@ -162,7 +162,7 @@ impl TextValue {
 }
 
 #[repr(C)]
-pub struct ErrValue {
+struct ErrValue {
     code: ResultCode,
     message: *mut TextValue,
 }
@@ -186,16 +186,10 @@ impl ErrValue {
             message: Box::into_raw(Box::new(text_value)),
         }
     }
-
-    unsafe fn free(self) {
-        if !self.message.is_null() {
-            let _ = Box::from_raw(self.message); // Freed by the same library
-        }
-    }
 }
 
 #[repr(C)]
-pub struct Blob {
+struct Blob {
     data: *const u8,
     size: u64,
 }
@@ -229,10 +223,6 @@ impl Value {
     }
 
     /// Returns the value type of the Value
-    /// # Safety
-    /// This function accesses the value_type field of the union.
-    /// it is safe to call this function as long as the value was properly
-    /// constructed with one of the provided methods
     pub fn value_type(&self) -> ValueType {
         self.value_type
     }
@@ -356,8 +346,6 @@ impl Value {
     }
 
     /// Creates a new text Value from a String
-    /// This function allocates/leaks the string
-    /// and must be free'd manually
     pub fn from_text(s: String) -> Self {
         let txt_value = TextValue::new_boxed(s);
         let ptr = Box::into_raw(txt_value);
@@ -368,8 +356,6 @@ impl Value {
     }
 
     /// Creates a new error Value from a ResultCode
-    /// This function allocates/leaks the error
-    /// and must be free'd manually
     pub fn error(code: ResultCode) -> Self {
         let err_val = ErrValue::new(code);
         Self {
@@ -381,7 +367,6 @@ impl Value {
     }
 
     /// Creates a new error Value from a ResultCode and a message
-    /// This function allocates/leaks the error, must be free'd manually
     pub fn error_with_message(message: String) -> Self {
         let err_value = ErrValue::new_with_message(ResultCode::CustomError, message);
         let err_box = Box::new(err_value);
@@ -394,8 +379,6 @@ impl Value {
     }
 
     /// Creates a new blob Value from a Vec<u8>
-    /// This function allocates/leaks the blob
-    /// and must be free'd manually
     pub fn from_blob(value: Vec<u8>) -> Self {
         let boxed = Box::new(Blob::new(value.as_ptr(), value.len() as u64));
         std::mem::forget(value);
@@ -408,11 +391,18 @@ impl Value {
     }
 
     /// Extension authors should __not__ use this function.
+    /// Extensions should _not_ use this method directly. When used properly,
+    /// core will own all Value types and they should not need to be manually free'd
+    /// in any extension code. However, if you are arbitrarily creating `Value` types
+    /// that do not follow the intended control flow/API of the exposed traits, and are
+    /// not returned to `core`, your extension _will_ leak the underlying memory.
+    ///
     /// # Safety
     /// consumes the value while freeing the underlying memory with null check.
     /// however this does assume that the type was properly constructed with
     /// the appropriate value_type and value.
-    pub unsafe fn free(self) {
+    #[cfg(feature = "core_only")]
+    pub unsafe fn __free_internal_type(self) {
         match self.value_type {
             ValueType::Text => {
                 let _ = Box::from_raw(self.value.text as *mut TextValue);
@@ -422,7 +412,9 @@ impl Value {
             }
             ValueType::Error => {
                 let err_val = Box::from_raw(self.value.error as *mut ErrValue);
-                err_val.free();
+                if !err_val.message.is_null() {
+                    let _ = Box::from_raw(err_val.message);
+                }
             }
             _ => {}
         }

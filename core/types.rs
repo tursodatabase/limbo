@@ -203,9 +203,7 @@ impl OwnedValue {
                 }
             }
         };
-        unsafe {
-            v.free();
-        }
+        unsafe { v.__free_internal_type() };
         res
     }
 }
