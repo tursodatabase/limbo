@@ -5,9 +5,16 @@ use clap::Parser;
 use limbo::{Builder, Value};
 use opts::Opts;
 use std::sync::Arc;
+use serde_json::json;
 
 #[tokio::main]
 async fn main() {
+    let (num_nodes, main_id) = (1, "n-001");
+    let startup_data = json!({
+        "num_nodes": num_nodes,
+        "main_node_id": main_id,
+    });
+    lifecycle::setup_complete(&startup_data);
     antithesis_init();
 
     let opts = Opts::parse();
