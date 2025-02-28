@@ -15,7 +15,12 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
 
 ## Installation
 
-Add the crate to your `Cargo.toml`:
+On the root of the workspace run: 
+```sh
+cargo new --lib extensions/your_crate_name
+```
+
+Add the crate to your `extensions/your_crate_name/Cargo.toml`:
 
 ```toml
 
@@ -272,4 +277,52 @@ impl VTabCursor for CsvCursor {
         self.index as i64
     }
 }
+```
+
+## Cargo.toml Config
+
+Edit the workspace `Cargo.toml` to include your extension as a workspace dependency, e.g:
+
+```diff
+[workspace.dependencies]
+limbo_core = { path = "core", version = "0.0.15" }
+limbo_crypto = { path = "extensions/crypto", version = "0.0.15" }
+limbo_ext = { path = "extensions/core", version = "0.0.15" }
+limbo_macros = { path = "macros", version = "0.0.15" }
+limbo_uuid = { path = "extensions/uuid", version = "0.0.15" }
+...
++limbo_csv = { path = "extensions/csv", version = "0.0.15" }
+
+```
+
+And add your extension as a feature in `core/Cargo.toml`:
+
+```diff
+[features]
+default = ["fs", "json", "uuid", "time"]
+fs = []
+json = ["dep:jsonb", "dep:pest", "dep:pest_derive", "dep:serde", "dep:indexmap"]
+uuid = ["limbo_uuid/static"]
+...
++csv = ["limbo_csv/static"]
+```
+
+## Register Extension in Core
+
+Lastly, you have to register your extension statically in the core crate:
+
+```diff
+pub fn register_builtins(&self) -> Result<(), String> {
+        #[allow(unused_variables)]
+        let ext_api = self.build_limbo_ext();
+        #[cfg(feature = "uuid")]
+        if unsafe { !limbo_uuid::register_extension_static(&ext_api).is_ok() } {
+            return Err("Failed to register uuid extension".to_string());
+        }
++        #[cfg(feature = "csv")]
++        if unsafe { !limbo_csv::register_extension_static(&ext_api).is_ok() } {
++            return Err("Failed to register csv extension".to_string());
++        }
+        Ok(())
+    }
 ```
