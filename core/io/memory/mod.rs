@@ -42,17 +42,16 @@ impl MemoryIO {
     pub fn new() -> Result<Arc<Self>> {
         debug!("Using IO backend 'memory'");
         // INITIAL PAGES changes in CI to test for resizing of memory pages
-        let initial_pages = INITIAL_PAGES
-            .get_or_init(|| {
-                std::env::var("INITIAL_MEM_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
-                    let initial_pages = str_num.parse::<usize>().unwrap_or(DEFAULT_INITIAL_PAGES);
-                    if initial_pages == 0 {
-                        panic!("INITIAL_MEM_PAGES flag cannot be zero")
-                    }
-                    initial_pages
-                })
+        let pages = INITIAL_PAGES;
+        let initial_pages = *pages.get_or_init(|| {
+            std::env::var("INITIAL_MEM_PAGES").map_or(DEFAULT_INITIAL_PAGES, |str_num| {
+                let initial_pages = str_num.parse::<usize>().unwrap_or(DEFAULT_INITIAL_PAGES);
+                if initial_pages == 0 {
+                    panic!("INITIAL_MEM_PAGES flag cannot be zero")
+                }
+                initial_pages
             })
-            .clone();
+        });
 
         Ok(Arc::new(Self {
             size: 0.into(),
@@ -104,12 +103,7 @@ impl MemoryIO {
             // Make sure that we are accessing into a valid memory page
             assert!(end <= pages.len());
 
-            let page = &pages[start..end];
-            if page.is_empty() {
-                None
-            } else {
-                Some(page)
-            }
+            pages.get(start..end)
         }
         #[cfg(not(target_family = "unix"))]
         unsafe {

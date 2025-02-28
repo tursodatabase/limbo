@@ -65,7 +65,9 @@ impl Drop for MmapInner {
 
         // Error ignored here
         unsafe {
-            let _ = munmap(ptr, len);
+            if let Err(e) = munmap(ptr, len) {
+                tracing::error!("Munmap error: {}", e)
+            }
         };
     }
 }
