@@ -12,27 +12,44 @@ use std::rc::Rc;
 use tracing::trace;
 
 pub struct Schema {
-    pub tables: HashMap<String, Rc<BTreeTable>>,
+    pub tables: HashMap<String, Rc<Table>>,
     // table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Rc<Index>>>,
 }
 
 impl Schema {
     pub fn new() -> Self {
-        let mut tables: HashMap<String, Rc<BTreeTable>> = HashMap::new();
+        let mut tables: HashMap<String, Rc<Table>> = HashMap::new();
         let indexes: HashMap<String, Vec<Rc<Index>>> = HashMap::new();
-        tables.insert("sqlite_schema".to_string(), Rc::new(sqlite_schema_table()));
+        tables.insert(
+            "sqlite_schema".to_string(),
+            Rc::new(Table::BTree(sqlite_schema_table().into())),
+        );
         Self { tables, indexes }
     }
 
-    pub fn add_table(&mut self, table: Rc<BTreeTable>) {
+    pub fn add_btree_table(&mut self, table: Rc<BTreeTable>) {
         let name = normalize_ident(&table.name);
-        self.tables.insert(name, table);
+        self.tables.insert(name, Table::BTree(table).into());
     }
 
-    pub fn get_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
+    pub fn add_virtual_table(&mut self, table: Rc<VirtualTable>) {
+        let name = normalize_ident(&table.name);
+        self.tables.insert(name, Table::Virtual(table).into());
+    }
+
+    pub fn get_table(&self, name: &str) -> Option<Rc<Table>> {
         let name = normalize_ident(name);
         self.tables.get(&name).cloned()
+    }
+
+    pub fn get_btree_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
+        let name = normalize_ident(name);
+        if let Some(table) = self.tables.get(&name) {
+            table.btree()
+        } else {
+            None
+        }
     }
 
     pub fn add_index(&mut self, index: Rc<Index>) {
@@ -191,7 +208,7 @@ impl PseudoTable {
         self.columns.push(Column {
             name: Some(normalize_ident(name)),
             ty,
-            ty_str: ty.to_string(),
+            ty_str: ty.to_string().to_uppercase(),
             primary_key,
             is_rowid_alias: false,
             notnull: false,
@@ -386,6 +403,52 @@ pub struct Column {
     pub default: Option<Expr>,
 }
 
+impl Column {
+    pub fn affinity(&self) -> Affinity {
+        affinity(&self.ty_str)
+    }
+}
+
+/// 3.1. Determination Of Column Affinity
+/// For tables not declared as STRICT, the affinity of a column is determined by the declared type of the column, according to the following rules in the order shown:
+///
+/// If the declared type contains the string "INT" then it is assigned INTEGER affinity.
+///
+/// If the declared type of the column contains any of the strings "CHAR", "CLOB", or "TEXT" then that column has TEXT affinity. Notice that the type VARCHAR contains the string "CHAR" and is thus assigned TEXT affinity.
+///
+/// If the declared type for a column contains the string "BLOB" or if no type is specified then the column has affinity BLOB.
+///
+/// If the declared type for a column contains any of the strings "REAL", "FLOA", or "DOUB" then the column has REAL affinity.
+///
+/// Otherwise, the affinity is NUMERIC.
+///
+/// Note that the order of the rules for determining column affinity is important. A column whose declared type is "CHARINT" will match both rules 1 and 2 but the first rule takes precedence and so the column affinity will be INTEGER.
+pub fn affinity(datatype: &str) -> Affinity {
+    // Note: callers of this function must ensure that the datatype is uppercase.
+    // Rule 1: INT -> INTEGER affinity
+    if datatype.contains("INT") {
+        return Affinity::Integer;
+    }
+
+    // Rule 2: CHAR/CLOB/TEXT -> TEXT affinity
+    if datatype.contains("CHAR") || datatype.contains("CLOB") || datatype.contains("TEXT") {
+        return Affinity::Text;
+    }
+
+    // Rule 3: BLOB or empty -> BLOB affinity (historically called NONE)
+    if datatype.contains("BLOB") || datatype.is_empty() {
+        return Affinity::Blob;
+    }
+
+    // Rule 4: REAL/FLOA/DOUB -> REAL affinity
+    if datatype.contains("REAL") || datatype.contains("FLOA") || datatype.contains("DOUB") {
+        return Affinity::Real;
+    }
+
+    // Rule 5: Otherwise -> NUMERIC affinity
+    Affinity::Numeric
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Type {
     Null,
@@ -394,6 +457,60 @@ pub enum Type {
     Integer,
     Real,
     Blob,
+}
+
+/// Each column in an SQLite 3 database is assigned one of the following type affinities:
+///
+/// TEXT
+/// NUMERIC
+/// INTEGER
+/// REAL
+/// BLOB
+/// (Historical note: The "BLOB" type affinity used to be called "NONE". But that term was easy to confuse with "no affinity" and so it was renamed.)
+///
+/// A column with TEXT affinity stores all data using storage classes NULL, TEXT or BLOB. If numerical data is inserted into a column with TEXT affinity it is converted into text form before being stored.
+///
+/// A column with NUMERIC affinity may contain values using all five storage classes. When text data is inserted into a NUMERIC column, the storage class of the text is converted to INTEGER or REAL (in order of preference) if the text is a well-formed integer or real literal, respectively. If the TEXT value is a well-formed integer literal that is too large to fit in a 64-bit signed integer, it is converted to REAL. For conversions between TEXT and REAL storage classes, only the first 15 significant decimal digits of the number are preserved. If the TEXT value is not a well-formed integer or real literal, then the value is stored as TEXT. For the purposes of this paragraph, hexadecimal integer literals are not considered well-formed and are stored as TEXT. (This is done for historical compatibility with versions of SQLite prior to version 3.8.6 2014-08-15 where hexadecimal integer literals were first introduced into SQLite.) If a floating point value that can be represented exactly as an integer is inserted into a column with NUMERIC affinity, the value is converted into an integer. No attempt is made to convert NULL or BLOB values.
+///
+/// A string might look like a floating-point literal with a decimal point and/or exponent notation but as long as the value can be expressed as an integer, the NUMERIC affinity will convert it into an integer. Hence, the string '3.0e+5' is stored in a column with NUMERIC affinity as the integer 300000, not as the floating point value 300000.0.
+///
+/// A column that uses INTEGER affinity behaves the same as a column with NUMERIC affinity. The difference between INTEGER and NUMERIC affinity is only evident in a CAST expression: The expression "CAST(4.0 AS INT)" returns an integer 4, whereas "CAST(4.0 AS NUMERIC)" leaves the value as a floating-point 4.0.
+///
+/// A column with REAL affinity behaves like a column with NUMERIC affinity except that it forces integer values into floating point representation. (As an internal optimization, small floating point values with no fractional component and stored in columns with REAL affinity are written to disk as integers in order to take up less space and are automatically converted back into floating point as the value is read out. This optimization is completely invisible at the SQL level and can only be detected by examining the raw bits of the database file.)
+///
+/// A column with affinity BLOB does not prefer one storage class over another and no attempt is made to coerce data from one storage class into another.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Affinity {
+    Integer,
+    Text,
+    Blob,
+    Real,
+    Numeric,
+}
+
+pub const SQLITE_AFF_TEXT: char = 'a';
+pub const SQLITE_AFF_NONE: char = 'b'; // Historically called NONE, but it's the same as BLOB
+pub const SQLITE_AFF_NUMERIC: char = 'c';
+pub const SQLITE_AFF_INTEGER: char = 'd';
+pub const SQLITE_AFF_REAL: char = 'e';
+
+impl Affinity {
+    /// This is meant to be used in opcodes like Eq, which state:
+    ///
+    /// "The SQLITE_AFF_MASK portion of P5 must be an affinity character - SQLITE_AFF_TEXT, SQLITE_AFF_INTEGER, and so forth.
+    /// An attempt is made to coerce both inputs according to this affinity before the comparison is made.
+    /// If the SQLITE_AFF_MASK is 0x00, then numeric affinity is used.
+    /// Note that the affinity conversions are stored back into the input registers P1 and P3.
+    /// So this opcode can cause persistent changes to registers P1 and P3.""
+    pub fn aff_mask(&self) -> char {
+        match self {
+            Affinity::Integer => SQLITE_AFF_INTEGER,
+            Affinity::Text => SQLITE_AFF_TEXT,
+            Affinity::Blob => SQLITE_AFF_NONE,
+            Affinity::Real => SQLITE_AFF_REAL,
+            Affinity::Numeric => SQLITE_AFF_NUMERIC,
+        }
+    }
 }
 
 impl fmt::Display for Type {

@@ -25,7 +25,7 @@ import java.util.Calendar;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.LimboResultSet;
 
-public class JDBC4PreparedStatement extends JDBC4Statement implements PreparedStatement {
+public final class JDBC4PreparedStatement extends JDBC4Statement implements PreparedStatement {
 
   private final String sql;
 

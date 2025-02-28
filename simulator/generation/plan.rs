@@ -492,14 +492,16 @@ impl Interaction {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
                         let mut r = Vec::new();
-                        for el in row.get_values() {
-                            let v = el.to_value();
+                        for v in row.get_values() {
                             let v = match v {
-                                limbo_core::Value::Null => Value::Null,
-                                limbo_core::Value::Integer(i) => Value::Integer(i),
-                                limbo_core::Value::Float(f) => Value::Float(f),
-                                limbo_core::Value::Text(t) => Value::Text(t.to_string()),
-                                limbo_core::Value::Blob(b) => Value::Blob(b.to_vec()),
+                                limbo_core::OwnedValue::Null => Value::Null,
+                                limbo_core::OwnedValue::Integer(i) => Value::Integer(*i),
+                                limbo_core::OwnedValue::Float(f) => Value::Float(*f),
+                                limbo_core::OwnedValue::Text(t) => {
+                                    Value::Text(t.as_str().to_string())
+                                }
+                                limbo_core::OwnedValue::Blob(b) => Value::Blob(b.to_vec()),
+                                _ => unreachable!(),
                             };
                             r.push(v);
                         }

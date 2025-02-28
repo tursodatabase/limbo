@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.Properties;
 
 /** Limbo Configuration. */
-public class LimboConfig {
+public final class LimboConfig {
   private final Properties pragma;
 
   public LimboConfig(Properties properties) {

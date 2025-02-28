@@ -5,6 +5,7 @@ on:
     - cron: '0 0 * * *'  # Runs every day at midnight UTC
 
 permissions:
+  issues: read
   pull-requests: write
 
 jobs:

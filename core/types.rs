@@ -11,27 +11,6 @@ use crate::Result;
 use std::fmt::Display;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value<'a> {
-    Null,
-    Integer(i64),
-    Float(f64),
-    Text(&'a str),
-    Blob(&'a [u8]),
-}
-
-impl Display for Value<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Null => write!(f, "NULL"),
-            Self::Integer(i) => write!(f, "{}", i),
-            Self::Float(fl) => write!(f, "{}", fl),
-            Self::Text(s) => write!(f, "{}", s),
-            Self::Blob(b) => write!(f, "{:?}", b),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OwnedValueType {
     Null,
@@ -71,6 +50,10 @@ impl Text {
             value: Rc::new(value.as_bytes().to_vec()),
             subtype: TextSubtype::Json,
         }
+    }
+
+    pub fn to_string(&self) -> String {
+        self.as_str().to_string()
     }
 
     pub fn as_str(&self) -> &str {
@@ -128,46 +111,6 @@ impl OwnedValue {
             OwnedValue::Record(_) => OwnedValueType::Null, // Map Record to Null for FFI
         }
     }
-
-    pub fn to_value(&self) -> Value<'_> {
-        match self {
-            OwnedValue::Null => Value::Null,
-            OwnedValue::Integer(i) => Value::Integer(*i),
-            OwnedValue::Float(f) => Value::Float(*f),
-            OwnedValue::Text(s) => Value::Text(s.as_str()),
-            OwnedValue::Blob(b) => Value::Blob(b),
-            OwnedValue::Agg(a) => match a.as_ref() {
-                AggContext::Avg(acc, _count) => match acc {
-                    OwnedValue::Integer(i) => Value::Integer(*i),
-                    OwnedValue::Float(f) => Value::Float(*f),
-                    _ => Value::Float(0.0),
-                },
-                AggContext::Sum(acc) => match acc {
-                    OwnedValue::Integer(i) => Value::Integer(*i),
-                    OwnedValue::Float(f) => Value::Float(*f),
-                    _ => Value::Float(0.0),
-                },
-                AggContext::Count(count) => count.to_value(),
-                AggContext::Max(max) => match max {
-                    Some(max) => max.to_value(),
-                    None => Value::Null,
-                },
-                AggContext::Min(min) => match min {
-                    Some(min) => min.to_value(),
-                    None => Value::Null,
-                },
-                AggContext::GroupConcat(s) => s.to_value(),
-                AggContext::External(ext_state) => {
-                    let v = ext_state
-                        .finalized_value
-                        .as_ref()
-                        .unwrap_or(&OwnedValue::Null);
-                    v.to_value()
-                }
-            },
-            OwnedValue::Record(_) => todo!(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,8 +166,8 @@ impl OwnedValue {
         }
     }
 
-    pub fn from_ffi(v: &ExtValue) -> Result<Self> {
-        match v.value_type() {
+    pub fn from_ffi(v: ExtValue) -> Result<Self> {
+        let res = match v.value_type() {
             ExtValueType::Null => Ok(OwnedValue::Null),
             ExtValueType::Integer => {
                 let Some(int) = v.to_integer() else {
@@ -259,7 +202,11 @@ impl OwnedValue {
                     (code, None) => Err(LimboError::ExtensionError(code.to_string())),
                 }
             }
+        };
+        unsafe {
+            v.free();
         }
+        res
     }
 }
 
@@ -281,8 +228,7 @@ impl AggContext {
         if let Self::External(ext_state) = self {
             if ext_state.finalized_value.is_none() {
                 let final_value = unsafe { (ext_state.finalize_fn)(ext_state.state) };
-                ext_state.cache_final_value(OwnedValue::from_ffi(&final_value)?);
-                unsafe { final_value.free() };
+                ext_state.cache_final_value(OwnedValue::from_ffi(final_value)?);
             }
         }
         Ok(())
@@ -472,18 +418,6 @@ impl std::ops::Div<OwnedValue> for OwnedValue {
 impl std::ops::DivAssign<OwnedValue> for OwnedValue {
     fn div_assign(&mut self, rhs: OwnedValue) {
         *self = self.clone() / rhs;
-    }
-}
-
-impl From<Value<'_>> for OwnedValue {
-    fn from(value: Value<'_>) -> Self {
-        match value {
-            Value::Null => OwnedValue::Null,
-            Value::Integer(i) => OwnedValue::Integer(i),
-            Value::Float(f) => OwnedValue::Float(f),
-            Value::Text(s) => OwnedValue::Text(Text::from_str(s)),
-            Value::Blob(b) => OwnedValue::Blob(Rc::new(b.to_owned())),
-        }
     }
 }
 

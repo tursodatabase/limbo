@@ -33,7 +33,7 @@ polling = "3.7.2"
 rustix = {version = "0.38.34", default-features = true, features = ["mm"]}
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "*", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
 libloading = "0.8.6"
 
 [dependencies]
@@ -83,7 +83,7 @@ criterion = { version = "0.5", features = [
     "async_futures",
 ] }
 rstest = "0.18.2"
-rusqlite = "0.29.0"
+rusqlite = "0.33.0"
 tempfile = "3.8.0"
 quickcheck = { version = "1.0", default-features = false }
 quickcheck_macros = { version = "1.0", default-features = false }

@@ -4,7 +4,7 @@ import select
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 
 PIPE_BUF = 4096
@@ -131,6 +131,14 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
             f"Expected:\n{repr(expected)}\n"
             f"Actual:\n{repr(actual)}"
         )
+
+    def run_test_fn(
+        self, sql: str, validate: Callable[[str], bool], desc: str = ""
+    ) -> None:
+        actual = self.shell.execute(sql)
+        if desc:
+            print(f"Testing: {desc}")
+        assert validate(actual), f"Test failed\nSQL: {sql}\nActual:\n{repr(actual)}"
 
     def execute_dot(self, dot_command: str) -> None:
         self.shell._write_to_pipe(dot_command)

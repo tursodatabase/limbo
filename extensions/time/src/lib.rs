@@ -171,7 +171,6 @@ fn time_date_internal(args: &[Value]) -> Value {
     let mut minutes = 0;
     let mut seconds = 0;
     let mut nano_secs = 0;
-    let mut offset = FixedOffset::east_opt(0).unwrap();
 
     if args.len() >= 6 {
         hour = ok_tri!(args[3].to_integer());
@@ -185,9 +184,7 @@ fn time_date_internal(args: &[Value]) -> Value {
 
     if args.len() == 8 {
         let offset_sec = ok_tri!(args[7].to_integer()) as i32;
-        // TODO offset is not normalized. Maybe could just increase/decrease the number of seconds
-        // instead of relying in this offset
-        offset = ok_tri!(FixedOffset::east_opt(offset_sec));
+        seconds -= offset_sec as i64;
     }
 
     let t = Time::time_date(
@@ -198,7 +195,7 @@ fn time_date_internal(args: &[Value]) -> Value {
         minutes,
         seconds,
         nano_secs,
-        offset,
+        FixedOffset::east_opt(0).unwrap(),
     );
 
     let t = tri!(t);

@@ -76,8 +76,7 @@ pub extern "C" fn rows_get_value(ctx: *mut c_void, col_idx: usize) -> *const c_v
 
     if let Some(row) = ctx.stmt.row() {
         if let Some(value) = row.get_values().get(col_idx) {
-            let value = value.to_value();
-            return LimboValue::from_value(&value).to_ptr();
+            return LimboValue::from_value(value).to_ptr();
         }
     }
     std::ptr::null()

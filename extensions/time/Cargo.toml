@@ -5,6 +5,7 @@ license.workspace = true
 name = "limbo_time"
 repository.workspace = true
 version.workspace = true
+description = "Limbo time extension"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -13,7 +14,7 @@ crate-type = ["cdylib", "lib"]
 static = ["limbo_ext/static"]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "*", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
 
 [dependencies]
 chrono = "0.4.39"

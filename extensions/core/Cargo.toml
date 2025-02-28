@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-
+description = "Limbo extensions core"
 
 [features]
 default = []

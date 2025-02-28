@@ -1,5 +1,5 @@
 use crate::common::TempDatabase;
-use limbo_core::{StepResult, Value};
+use limbo_core::{OwnedValue, StepResult};
 
 #[test]
 fn test_statement_reset_bind() -> anyhow::Result<()> {
@@ -9,13 +9,13 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
 
     let mut stmt = conn.prepare("select ?")?;
 
-    stmt.bind_at(1.try_into()?, Value::Integer(1));
+    stmt.bind_at(1.try_into()?, OwnedValue::Integer(1));
 
     loop {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(row.get_value(0).to_value(), Value::Integer(1));
+                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
             }
             StepResult::IO => tmp_db.io.run_once()?,
             _ => break,
@@ -24,13 +24,13 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
 
     stmt.reset();
 
-    stmt.bind_at(1.try_into()?, Value::Integer(2));
+    stmt.bind_at(1.try_into()?, OwnedValue::Integer(2));
 
     loop {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(row.get_value(0).to_value(), Value::Integer(2));
+                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(2));
             }
             StepResult::IO => tmp_db.io.run_once()?,
             _ => break,
@@ -48,14 +48,14 @@ fn test_statement_bind() -> anyhow::Result<()> {
 
     let mut stmt = conn.prepare("select ?, ?1, :named, ?3, ?4")?;
 
-    stmt.bind_at(1.try_into()?, Value::Text("hello"));
+    stmt.bind_at(1.try_into()?, OwnedValue::build_text("hello"));
 
     let i = stmt.parameters().index(":named").unwrap();
-    stmt.bind_at(i, Value::Integer(42));
+    stmt.bind_at(i, OwnedValue::Integer(42));
 
-    stmt.bind_at(3.try_into()?, Value::Blob(&[0x1, 0x2, 0x3]));
+    stmt.bind_at(3.try_into()?, OwnedValue::from_blob(vec![0x1, 0x2, 0x3]));
 
-    stmt.bind_at(4.try_into()?, Value::Float(0.5));
+    stmt.bind_at(4.try_into()?, OwnedValue::Float(0.5));
 
     assert_eq!(stmt.parameters().count(), 4);
 
@@ -63,24 +63,24 @@ fn test_statement_bind() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                if let Value::Text(s) = row.get_value(0).to_value() {
-                    assert_eq!(s, "hello")
+                if let limbo_core::OwnedValue::Text(s) = row.get_value(0) {
+                    assert_eq!(s.as_str(), "hello")
                 }
 
-                if let Value::Text(s) = row.get_value(1).to_value() {
-                    assert_eq!(s, "hello")
+                if let limbo_core::OwnedValue::Text(s) = row.get_value(1) {
+                    assert_eq!(s.as_str(), "hello")
                 }
 
-                if let Value::Integer(i) = row.get_value(2).to_value() {
-                    assert_eq!(i, 42)
+                if let limbo_core::OwnedValue::Integer(i) = row.get_value(2) {
+                    assert_eq!(*i, 42)
                 }
 
-                if let Value::Blob(v) = row.get_value(3).to_value() {
-                    assert_eq!(v, &vec![0x1 as u8, 0x2, 0x3])
+                if let limbo_core::OwnedValue::Blob(v) = row.get_value(3) {
+                    assert_eq!(v.as_ref(), &vec![0x1 as u8, 0x2, 0x3])
                 }
 
-                if let Value::Float(f) = row.get_value(4).to_value() {
-                    assert_eq!(f, 0.5)
+                if let limbo_core::OwnedValue::Float(f) = row.get_value(4) {
+                    assert_eq!(*f, 0.5)
                 }
             }
             StepResult::IO => {

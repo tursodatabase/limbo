@@ -4,7 +4,7 @@ use crate::{
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
-use limbo_core::{Database, LimboError, Statement, StepResult, Value};
+use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 
 use clap::{Parser, ValueEnum};
 use rustyline::DefaultEditor;
@@ -273,12 +273,15 @@ impl<'a> Limbo<'a> {
     fn dump_table(&mut self, name: &str) -> Result<(), LimboError> {
         let query = format!("pragma table_info={}", name);
         let mut cols = vec![];
+        let mut value_types = vec![];
         query_internal!(
             self,
             query,
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let name: &str = row.get::<&str>(1)?;
                 cols.push(name.to_string());
+                let value_type: &str = row.get::<&str>(2)?;
+                value_types.push(value_type.to_string());
                 Ok(())
             }
         )?;
@@ -294,7 +297,20 @@ impl<'a> Limbo<'a> {
                 let values = row
                     .get_values()
                     .into_iter()
-                    .map(|x| x.to_string())
+                    .zip(value_types.iter())
+                    .map(|(value, value_type)| {
+                        // If the type affinity is TEXT, replace each single
+                        // quotation mark with two single quotation marks, and
+                        // wrap it with single quotation marks.
+                        if value_type.contains("CHAR")
+                            || value_type.contains("CLOB")
+                            || value_type.contains("TEXT")
+                        {
+                            format!("'{}'", value.to_string().replace("'", "''"))
+                        } else {
+                            value.to_string()
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 let _ = self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
@@ -646,19 +662,19 @@ impl<'a> Limbo<'a> {
                         Ok(StepResult::Row) => {
                             let row = rows.row().unwrap();
                             for (i, value) in row.get_values().iter().enumerate() {
-                                let value = value.to_value();
                                 if i > 0 {
                                     let _ = self.writer.write(b"|");
                                 }
                                 let _ = self.writer.write(
                                     match value {
-                                        Value::Null => self.opts.null_value.clone(),
-                                        Value::Integer(i) => format!("{}", i),
-                                        Value::Float(f) => format!("{:?}", f),
-                                        Value::Text(s) => s.to_string(),
-                                        Value::Blob(b) => {
+                                        OwnedValue::Null => self.opts.null_value.clone(),
+                                        OwnedValue::Integer(i) => format!("{}", i),
+                                        OwnedValue::Float(f) => format!("{:?}", f),
+                                        OwnedValue::Text(s) => s.to_string(),
+                                        OwnedValue::Blob(b) => {
                                             format!("{}", String::from_utf8_lossy(b))
                                         }
+                                        _ => unreachable!(),
                                     }
                                     .as_bytes(),
                                 )?;
@@ -708,17 +724,22 @@ impl<'a> Limbo<'a> {
                                 let mut row = Row::new();
                                 row.max_height(1);
                                 for value in record.get_values() {
-                                    let (content, alignment) = match value.to_value() {
-                                        Value::Null => {
+                                    let (content, alignment) = match value {
+                                        OwnedValue::Null => {
                                             (self.opts.null_value.clone(), CellAlignment::Left)
                                         }
-                                        Value::Integer(i) => (i.to_string(), CellAlignment::Right),
-                                        Value::Float(f) => (f.to_string(), CellAlignment::Right),
-                                        Value::Text(s) => (s.to_string(), CellAlignment::Left),
-                                        Value::Blob(b) => (
+                                        OwnedValue::Integer(i) => {
+                                            (i.to_string(), CellAlignment::Right)
+                                        }
+                                        OwnedValue::Float(f) => {
+                                            (f.to_string(), CellAlignment::Right)
+                                        }
+                                        OwnedValue::Text(s) => (s.to_string(), CellAlignment::Left),
+                                        OwnedValue::Blob(b) => (
                                             String::from_utf8_lossy(b).to_string(),
                                             CellAlignment::Left,
                                         ),
+                                        _ => unreachable!(),
                                     };
                                     row.add_cell(Cell::new(content).set_alignment(alignment));
                                 }
@@ -780,10 +801,8 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(Value::Text(schema)) =
-                                row.get_values().first().map(|v| v.to_value())
-                            {
-                                let _ = self.write_fmt(format_args!("{};", schema));
+                            if let Some(OwnedValue::Text(schema)) = row.get_values().first() {
+                                let _ = self.write_fmt(format_args!("{};", schema.as_str()));
                                 found = true;
                             }
                         }
@@ -840,10 +859,8 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(Value::Text(table)) =
-                                row.get_values().first().map(|v| v.to_value())
-                            {
-                                tables.push_str(table);
+                            if let Some(OwnedValue::Text(table)) = row.get_values().first() {
+                                tables.push_str(table.as_str());
                                 tables.push(' ');
                             }
                         }

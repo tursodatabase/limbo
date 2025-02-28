@@ -9,7 +9,7 @@ import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.LimboConnection;
 import tech.turso.core.LimboStatement;
 
-public class JDBC4Connection implements Connection {
+public final class JDBC4Connection implements Connection {
 
   private final LimboConnection connection;
 
@@ -87,8 +87,7 @@ public class JDBC4Connection implements Connection {
   @Override
   @SkipNullableCheck
   public DatabaseMetaData getMetaData() throws SQLException {
-    // TODO
-    return null;
+    return new JDBC4DatabaseMetaData(this);
   }
 
   @Override

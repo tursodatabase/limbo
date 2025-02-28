@@ -381,6 +381,19 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::VCreate {
+                table_name,
+                module_name,
+                args_reg,
+            } => (
+                "VCreate",
+                *table_name as i32,
+                *module_name as i32,
+                args_reg.unwrap_or(0) as i32,
+                OwnedValue::build_text(""),
+                0,
+                format!("table={}, module={}", table_name, module_name),
+            ),
             Insn::VFilter {
                 cursor_id,
                 pc_if_empty,
@@ -407,6 +420,21 @@ pub fn insn_to_str(
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
+            ),
+            Insn::VUpdate {
+                cursor_id,
+                arg_count,       // P2: Number of arguments in argv[]
+                start_reg,       // P3: Start register for argv[]
+                vtab_ptr,        // P4: vtab pointer
+                conflict_action, // P5: Conflict resolution flags
+            } => (
+                "VUpdate",
+                *cursor_id as i32,
+                *arg_count as i32,
+                *start_reg as i32,
+                OwnedValue::build_text(&format!("vtab:{}", vtab_ptr)),
+                *conflict_action,
+                format!("args=r[{}..{}]", start_reg, start_reg + arg_count - 1),
             ),
             Insn::VNext {
                 cursor_id,

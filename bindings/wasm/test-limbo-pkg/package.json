@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "limbo-wasm": "limbo-wasm@0.0.14"
+    "limbo-wasm": "limbo-wasm@0.0.15"
   },
   "scripts": {
     "dev": "vite"

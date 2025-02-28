@@ -171,7 +171,7 @@ pub fn emit_group_by<'a>(
             name: None,
             primary_key: false,
             ty,
-            ty_str: ty.to_string(),
+            ty_str: ty.to_string().to_uppercase(),
             is_rowid_alias: false,
             notnull: false,
             default: None,

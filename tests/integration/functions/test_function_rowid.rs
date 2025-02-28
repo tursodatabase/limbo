@@ -1,5 +1,5 @@
 use crate::common::{do_flush, TempDatabase};
-use limbo_core::{StepResult, Value};
+use limbo_core::StepResult;
 
 #[test]
 fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
@@ -30,8 +30,8 @@ fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    if let Value::Integer(id) = row.get_value(0).to_value() {
-                        assert_eq!(id, 1, "First insert should have rowid 1");
+                    if let limbo_core::OwnedValue::Integer(id) = row.get_value(0) {
+                        assert_eq!(*id, 1, "First insert should have rowid 1");
                     }
                 }
                 StepResult::IO => {
@@ -66,8 +66,8 @@ fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    if let Value::Integer(id) = row.get_value(0).to_value() {
-                        last_id = id;
+                    if let limbo_core::OwnedValue::Integer(id) = row.get_value(0) {
+                        last_id = *id;
                     }
                 }
                 StepResult::IO => {
@@ -112,8 +112,8 @@ fn test_integer_primary_key() -> anyhow::Result<()> {
         match select_query.step()? {
             StepResult::Row => {
                 let row = select_query.row().unwrap();
-                if let Value::Integer(id) = row.get_value(0).to_value() {
-                    rowids.push(id);
+                if let limbo_core::OwnedValue::Integer(id) = row.get_value(0) {
+                    rowids.push(*id);
                 }
             }
             StepResult::IO => tmp_db.io.run_once()?,

@@ -1,17 +1,20 @@
 pub mod params;
-mod value;
+pub mod value;
+
+pub use value::Value;
 
 pub use params::params_from_iter;
 
 use crate::params::*;
-use crate::value::*;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("SQL conversion failure: `{0}`")]
     ToSqlConversionFailure(BoxError),
+    #[error("Mutex lock error: {0}")]
+    MutexError(String),
 }
 
 impl From<limbo_core::LimboError> for Error {
@@ -51,16 +54,34 @@ pub struct Database {
     inner: Arc<limbo_core::Database>,
 }
 
+unsafe impl Send for Database {}
+unsafe impl Sync for Database {}
+
 impl Database {
-    pub fn connect(self) -> Result<Connection> {
+    pub fn connect(&self) -> Result<Connection> {
         let conn = self.inner.connect();
-        Ok(Connection { inner: conn })
+        #[allow(clippy::arc_with_non_send_sync)]
+        let connection = Connection {
+            inner: Arc::new(Mutex::new(conn)),
+        };
+        Ok(connection)
     }
 }
 
 pub struct Connection {
-    inner: Rc<limbo_core::Connection>,
+    inner: Arc<Mutex<Rc<limbo_core::Connection>>>,
 }
+
+impl Clone for Connection {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+unsafe impl Send for Connection {}
+unsafe impl Sync for Connection {}
 
 impl Connection {
     pub async fn query(&self, sql: &str, params: impl IntoParams) -> Result<Rows> {
@@ -74,21 +95,40 @@ impl Connection {
     }
 
     pub async fn prepare(&self, sql: &str) -> Result<Statement> {
-        let stmt = self.inner.prepare(sql)?;
-        Ok(Statement {
-            _inner: Rc::new(stmt),
-        })
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        let stmt = conn.prepare(sql)?;
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let statement = Statement {
+            inner: Arc::new(Mutex::new(stmt)),
+        };
+        Ok(statement)
     }
 }
 
 pub struct Statement {
-    _inner: Rc<limbo_core::Statement>,
+    inner: Arc<Mutex<limbo_core::Statement>>,
 }
+
+unsafe impl Send for Statement {}
+unsafe impl Sync for Statement {}
 
 impl Statement {
     pub async fn query(&mut self, params: impl IntoParams) -> Result<Rows> {
-        let _params = params.into_params()?;
-        todo!();
+        let params = params.into_params()?;
+        match params {
+            crate::params::Params::None => {}
+            _ => todo!(),
+        }
+        #[allow(clippy::arc_with_non_send_sync)]
+        let rows = Rows {
+            inner: Arc::clone(&self.inner),
+        };
+        Ok(rows)
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
@@ -110,19 +150,44 @@ pub enum Params {
 pub struct Transaction {}
 
 pub struct Rows {
-    _inner: Rc<limbo_core::Statement>,
+    inner: Arc<Mutex<limbo_core::Statement>>,
 }
+
+unsafe impl Send for Rows {}
+unsafe impl Sync for Rows {}
 
 impl Rows {
     pub async fn next(&mut self) -> Result<Option<Row>> {
-        todo!();
+        let mut stmt = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        match stmt.step() {
+            Ok(limbo_core::StepResult::Row) => {
+                let row = stmt.row().unwrap();
+                Ok(Some(Row {
+                    values: row.get_values().to_vec(),
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 }
 
-pub struct Row {}
+pub struct Row {
+    values: Vec<limbo_core::OwnedValue>,
+}
+
+unsafe impl Send for Row {}
+unsafe impl Sync for Row {}
 
 impl Row {
-    pub fn get_value(&self, _index: usize) -> Result<Value> {
-        todo!();
+    pub fn get_value(&self, index: usize) -> Result<Value> {
+        let value = &self.values[index];
+        match value {
+            limbo_core::OwnedValue::Integer(i) => Ok(Value::Integer(*i)),
+            _ => todo!(),
+        }
     }
 }

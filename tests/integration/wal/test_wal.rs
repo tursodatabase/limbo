@@ -1,5 +1,5 @@
 use crate::common::{do_flush, TempDatabase};
-use limbo_core::{Connection, LimboError, Result, StepResult, Value};
+use limbo_core::{Connection, LimboError, Result, StepResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -73,16 +73,15 @@ pub(crate) fn execute_and_get_ints(
             StepResult::Row => {
                 let row = stmt.row().unwrap();
                 for value in row.get_values() {
-                    let value = value.to_value();
                     let out = match value {
-                        Value::Integer(i) => i,
+                        limbo_core::OwnedValue::Integer(i) => i,
                         _ => {
                             return Err(LimboError::ConversionError(format!(
                                 "cannot convert {value} to int"
                             )))
                         }
                     };
-                    result.push(out);
+                    result.push(*out);
                 }
             }
             StepResult::Done => break,

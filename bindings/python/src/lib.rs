@@ -302,12 +302,13 @@ fn row_to_py(py: Python, row: &limbo_core::Row) -> PyObject {
     let py_values: Vec<PyObject> = row
         .get_values()
         .iter()
-        .map(|value| match value.to_value() {
-            limbo_core::Value::Null => py.None(),
-            limbo_core::Value::Integer(i) => i.to_object(py),
-            limbo_core::Value::Float(f) => f.to_object(py),
-            limbo_core::Value::Text(s) => s.to_object(py),
-            limbo_core::Value::Blob(b) => b.to_object(py),
+        .map(|value| match value {
+            limbo_core::OwnedValue::Null => py.None(),
+            limbo_core::OwnedValue::Integer(i) => i.to_object(py),
+            limbo_core::OwnedValue::Float(f) => f.to_object(py),
+            limbo_core::OwnedValue::Text(s) => s.as_str().to_object(py),
+            limbo_core::OwnedValue::Blob(b) => b.to_object(py),
+            _ => unreachable!(),
         })
         .collect();
 
