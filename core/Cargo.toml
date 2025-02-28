@@ -14,7 +14,7 @@ name = "limbo_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "json", "uuid", "time"]
+default = ["fs", "json", "uuid", "time", "static"]
 fs = []
 json = ["dep:jsonb", "dep:pest", "dep:pest_derive", "dep:serde", "dep:indexmap"]
 uuid = ["limbo_uuid/static"]
@@ -24,6 +24,7 @@ regexp = ["limbo_regexp/static"]
 time = ["limbo_time/static"]
 crypto = ["limbo_crypto/static"]
 series = ["limbo_series/static"]
+static = ["limbo_ext/static"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.6.1", optional = true }

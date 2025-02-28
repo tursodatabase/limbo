@@ -17,6 +17,9 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
 
 Add the crate to your `Cargo.toml`:
 
+This modification in `Cargo.toml` is only needed if you are creating an extension as a separate Crate. If you are 
+creating an extension inside `core`, this step should be skipped.
+
 ```toml
 
 [features]
