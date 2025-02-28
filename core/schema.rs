@@ -38,6 +38,11 @@ impl Schema {
         self.tables.insert(name, Table::Virtual(table).into());
     }
 
+    pub fn remove_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.tables.remove(&name);
+    }
+
     pub fn get_table(&self, name: &str) -> Option<Rc<Table>> {
         let name = normalize_ident(name);
         self.tables.get(&name).cloned()
@@ -58,6 +63,18 @@ impl Schema {
             .entry(table_name)
             .or_default()
             .push(index.clone())
+    }
+
+    pub fn get_indices(&self, table_name: &str) -> &[Rc<Index>] {
+        let name = normalize_ident(table_name);
+        self.indexes
+            .get(&name)
+            .map_or_else(|| &[] as &[Rc<Index>], |v| v.as_slice())
+    }
+
+    pub fn remove_indices_for_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.indexes.remove(&name);
     }
 }
 

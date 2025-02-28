@@ -11,11 +11,11 @@ use crate::{LimboError, Result};
 use std::cell::{Ref, RefCell};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
-    payload_overflows, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
-    DATABASE_HEADER_SIZE,
+    write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
 };
 
 /*
@@ -73,6 +73,21 @@ macro_rules! return_if_locked {
     }};
 }
 
+/// State machine of destroy operations
+/// Keep track of traversal so that it can be resumed when IO is encountered
+#[derive(Debug, Clone)]
+enum DestroyState {
+    Start,
+    LoadPage,
+    ProcessPage,
+    ClearOverflowPages { cell: BTreeCell },
+    FreePage,
+}
+
+struct DestroyInfo {
+    state: DestroyState,
+}
+
 /// State machine of a write operation.
 /// May involve balancing due to overflow.
 #[derive(Debug, Clone, Copy)]
@@ -123,6 +138,7 @@ impl WriteInfo {
 enum CursorState {
     None,
     Write(WriteInfo),
+    Destroy(DestroyInfo),
 }
 
 impl CursorState {
@@ -138,6 +154,25 @@ impl CursorState {
             _ => None,
         }
     }
+
+    fn destroy_info(&self) -> Option<&DestroyInfo> {
+        match self {
+            CursorState::Destroy(x) => Some(x),
+            _ => None,
+        }
+    }
+    fn mut_destroy_info(&mut self) -> Option<&mut DestroyInfo> {
+        match self {
+            CursorState::Destroy(x) => Some(x),
+            _ => None,
+        }
+    }
+}
+
+enum OverflowState {
+    Start,
+    ProcessPage { next_page: u32 },
+    Done,
 }
 
 pub struct BTreeCursor {
@@ -154,6 +189,9 @@ pub struct BTreeCursor {
     going_upwards: bool,
     /// Information maintained across execution attempts when an operation yields due to I/O.
     state: CursorState,
+    /// Information maintained while freeing overflow pages. Maintained separately from cursor state since
+    /// any method could require freeing overflow pages
+    overflow_state: Option<OverflowState>,
     /// Page stack used to traverse the btree.
     /// Each cursor has a stack because each cursor traverses the btree independently.
     stack: PageStack,
@@ -193,6 +231,7 @@ impl BTreeCursor {
             null_flag: false,
             going_upwards: false,
             state: CursorState::None,
+            overflow_state: None,
             stack: PageStack {
                 current_page: RefCell::new(-1),
                 cell_indices: RefCell::new([0; BTCURSOR_MAX_DEPTH + 1]),
@@ -1878,90 +1917,268 @@ impl BTreeCursor {
         id as u32
     }
 
-    fn clear_overflow_pages(&self, cell: &BTreeCell) -> Result<CursorResult<()>> {
-        // Get overflow info based on cell type
-        let (first_overflow_page, n_overflow) = match cell {
-            BTreeCell::TableLeafCell(leaf_cell) => {
-                match self.calculate_overflow_info(leaf_cell._payload.len(), PageType::TableLeaf)? {
-                    Some(n_overflow) => (leaf_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+    /// Clear the overflow pages linked to a specific page provided by the leaf cell
+    /// Uses a state machine to keep track of it's operations so that traversal can be
+    /// resumed from last point after IO interruption
+    fn clear_overflow_pages(&mut self, cell: &BTreeCell) -> Result<CursorResult<()>> {
+        loop {
+            let state = self.overflow_state.take().unwrap_or(OverflowState::Start);
+
+            match state {
+                OverflowState::Start => {
+                    let first_overflow_page = match cell {
+                        BTreeCell::TableLeafCell(leaf_cell) => leaf_cell.first_overflow_page,
+                        BTreeCell::IndexLeafCell(leaf_cell) => leaf_cell.first_overflow_page,
+                        BTreeCell::IndexInteriorCell(interior_cell) => {
+                            interior_cell.first_overflow_page
+                        }
+                        BTreeCell::TableInteriorCell(_) => return Ok(CursorResult::Ok(())), // No overflow pages
+                    };
+
+                    if let Some(page) = first_overflow_page {
+                        self.overflow_state = Some(OverflowState::ProcessPage { next_page: page });
+                        continue;
+                    } else {
+                        self.overflow_state = Some(OverflowState::Done);
+                    }
                 }
-            }
-            BTreeCell::IndexLeafCell(leaf_cell) => {
-                match self.calculate_overflow_info(leaf_cell.payload.len(), PageType::IndexLeaf)? {
-                    Some(n_overflow) => (leaf_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+                OverflowState::ProcessPage { next_page } => {
+                    if next_page < 2
+                        || next_page as usize > self.pager.db_header.borrow().database_size as usize
+                    {
+                        self.overflow_state = None;
+                        return Err(LimboError::Corrupt("Invalid overflow page number".into()));
+                    }
+                    let page = self.pager.read_page(next_page as usize)?;
+                    return_if_locked!(page);
+
+                    let contents = page.get().contents.as_ref().unwrap();
+                    let next = contents.read_u32(0);
+
+                    self.pager.free_page(Some(page), next_page as usize)?;
+
+                    if next != 0 {
+                        self.overflow_state = Some(OverflowState::ProcessPage { next_page: next });
+                    } else {
+                        self.overflow_state = Some(OverflowState::Done);
+                    }
                 }
-            }
-            BTreeCell::IndexInteriorCell(interior_cell) => {
-                match self
-                    .calculate_overflow_info(interior_cell.payload.len(), PageType::IndexInterior)?
-                {
-                    Some(n_overflow) => (interior_cell.first_overflow_page, n_overflow),
-                    None => return Ok(CursorResult::Ok(())),
+                OverflowState::Done => {
+                    self.overflow_state = None;
+                    return Ok(CursorResult::Ok(()));
                 }
-            }
-            BTreeCell::TableInteriorCell(_) => return Ok(CursorResult::Ok(())), // No overflow pages
-        };
-
-        let Some(first_page) = first_overflow_page else {
-            return Ok(CursorResult::Ok(()));
-        };
-        let page_count = self.pager.db_header.borrow().database_size as usize;
-        let mut pages_left = n_overflow;
-        let mut current_page = first_page;
-        // Clear overflow pages
-        while pages_left > 0 {
-            pages_left -= 1;
-
-            // Validate overflow page number
-            if current_page < 2 || current_page as usize > page_count {
-                return Err(LimboError::Corrupt("Invalid overflow page number".into()));
-            }
-
-            let page = self.pager.read_page(current_page as usize)?;
-            return_if_locked!(page);
-            let contents = page.get().contents.as_ref().unwrap();
-
-            let next_page = if pages_left > 0 {
-                contents.read_u32(0)
-            } else {
-                0
             };
-
-            // Free the current page
-            self.pager.free_page(Some(page), current_page as usize)?;
-
-            current_page = next_page;
         }
-        Ok(CursorResult::Ok(()))
     }
 
-    fn calculate_overflow_info(
-        &self,
-        payload_len: usize,
-        page_type: PageType,
-    ) -> Result<Option<usize>> {
-        let max_local = payload_overflow_threshold_max(page_type, self.usable_space() as u16);
-        let min_local = payload_overflow_threshold_min(page_type, self.usable_space() as u16);
-        let usable_size = self.usable_space();
-
-        let (_, local_size) = payload_overflows(payload_len, max_local, min_local, usable_size);
-
-        assert!(
-            local_size != payload_len,
-            "Trying to clear overflow pages when there are no overflow pages"
-        );
-
-        // Calculate expected overflow pages
-        let overflow_page_size = self.usable_space() - 4;
-        let n_overflow =
-            (payload_len - local_size + overflow_page_size).div_ceil(overflow_page_size);
-        if n_overflow == 0 {
-            return Err(LimboError::Corrupt("Invalid overflow calculation".into()));
+    /// Destroys a B-tree by freeing all its pages in an iterative depth-first order.
+    /// This ensures child pages are freed before their parents
+    /// Uses a state machine to keep track of the operation to ensure IO doesn't cause repeated traversals
+    ///
+    /// # Example
+    /// For a B-tree with this structure (where 4' is an overflow page):
+    /// ```text
+    ///            1 (root)
+    ///           /        \
+    ///          2          3
+    ///        /   \      /   \
+    /// 4' <- 4     5    6     7
+    /// ```
+    ///
+    /// The destruction order would be: [4',4,5,2,6,7,3,1]
+    pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
+        if let CursorState::None = &self.state {
+            self.move_to_root();
+            self.state = CursorState::Destroy(DestroyInfo {
+                state: DestroyState::Start,
+            });
         }
 
-        Ok(Some(n_overflow))
+        loop {
+            let destroy_state = {
+                let destroy_info = self
+                    .state
+                    .destroy_info()
+                    .expect("unable to get a mut reference to destroy state in cursor");
+                destroy_info.state.clone()
+            };
+
+            match destroy_state {
+                DestroyState::Start => {
+                    let destroy_info = self
+                        .state
+                        .mut_destroy_info()
+                        .expect("unable to get a mut reference to destroy state in cursor");
+                    destroy_info.state = DestroyState::LoadPage;
+                }
+                DestroyState::LoadPage => {
+                    let page = self.stack.top();
+                    return_if_locked!(page);
+
+                    if !page.is_loaded() {
+                        self.pager.load_page(Arc::clone(&page))?;
+                        return Ok(CursorResult::IO);
+                    }
+
+                    let destroy_info = self
+                        .state
+                        .mut_destroy_info()
+                        .expect("unable to get a mut reference to destroy state in cursor");
+                    destroy_info.state = DestroyState::ProcessPage;
+                }
+                DestroyState::ProcessPage => {
+                    let page = self.stack.top();
+                    assert!(page.is_loaded()); //  page should be loaded at this time
+
+                    let contents = page.get().contents.as_ref().unwrap();
+                    let cell_idx = self.stack.current_cell_index();
+
+                    //  If we've processed all cells in this page, figure out what to do with this page
+                    if cell_idx >= contents.cell_count() as i32 {
+                        match (contents.is_leaf(), cell_idx) {
+                            //  Leaf pages with all cells processed
+                            (true, n) if n >= contents.cell_count() as i32 => {
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::FreePage;
+                                continue;
+                            }
+                            //  Non-leaf page which has processed all children but not it's potential right child
+                            (false, n) if n == contents.cell_count() as i32 => {
+                                if let Some(rightmost) = contents.rightmost_pointer() {
+                                    let rightmost_page =
+                                        self.pager.read_page(rightmost as usize)?;
+                                    self.stack.advance();
+                                    self.stack.push(rightmost_page);
+                                    let destroy_info = self.state.mut_destroy_info().expect(
+                                        "unable to get a mut reference to destroy state in cursor",
+                                    );
+                                    destroy_info.state = DestroyState::LoadPage;
+                                } else {
+                                    let destroy_info = self.state.mut_destroy_info().expect(
+                                        "unable to get a mut reference to destroy state in cursor",
+                                    );
+                                    destroy_info.state = DestroyState::FreePage;
+                                }
+                                continue;
+                            }
+                            //  Non-leaf page which has processed all children and it's right child
+                            (false, n) if n > contents.cell_count() as i32 => {
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::FreePage;
+                                continue;
+                            }
+                            _ => unreachable!("Invalid cell idx state"),
+                        }
+                    }
+
+                    //  We have not yet processed all cells in this page
+                    //  Get the current cell
+                    let cell = contents.cell_get(
+                        cell_idx as usize,
+                        Rc::clone(&self.pager),
+                        payload_overflow_threshold_max(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    )?;
+
+                    match contents.is_leaf() {
+                        //  For a leaf cell, clear the overflow pages associated with this cell
+                        true => {
+                            let destroy_info = self
+                                .state
+                                .mut_destroy_info()
+                                .expect("unable to get a mut reference to destroy state in cursor");
+                            destroy_info.state = DestroyState::ClearOverflowPages { cell };
+                            continue;
+                        }
+                        //  For interior cells, check the type of cell to determine what to do
+                        false => match &cell {
+                            //  For index interior cells, remove the overflow pages
+                            BTreeCell::IndexInteriorCell(_) => {
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::ClearOverflowPages { cell };
+                                continue;
+                            }
+                            //  For all other interior cells, load the left child page
+                            _ => {
+                                let child_page_id = match &cell {
+                                    BTreeCell::TableInteriorCell(cell) => cell._left_child_page,
+                                    BTreeCell::IndexInteriorCell(cell) => cell.left_child_page,
+                                    _ => panic!("expected interior cell"),
+                                };
+                                let child_page = self.pager.read_page(child_page_id as usize)?;
+                                self.stack.advance();
+                                self.stack.push(child_page);
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                                continue;
+                            }
+                        },
+                    }
+                }
+                DestroyState::ClearOverflowPages { cell } => {
+                    match self.clear_overflow_pages(&cell)? {
+                        CursorResult::Ok(_) => match cell {
+                            //  For an index interior cell, clear the left child page now that overflow pages have been cleared
+                            BTreeCell::IndexInteriorCell(index_int_cell) => {
+                                let child_page = self
+                                    .pager
+                                    .read_page(index_int_cell.left_child_page as usize)?;
+                                self.stack.advance();
+                                self.stack.push(child_page);
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                                continue;
+                            }
+                            //  For any leaf cell, advance the index now that overflow pages have been cleared
+                            BTreeCell::TableLeafCell(_) | BTreeCell::IndexLeafCell(_) => {
+                                self.stack.advance();
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                            }
+                            _ => panic!("unexpected cell type"),
+                        },
+                        CursorResult::IO => return Ok(CursorResult::IO),
+                    }
+                }
+                DestroyState::FreePage => {
+                    let page = self.stack.top();
+                    let page_id = page.get().id;
+
+                    self.pager.free_page(Some(page), page_id)?;
+
+                    if self.stack.has_parent() {
+                        self.stack.pop();
+                        let destroy_info = self
+                            .state
+                            .mut_destroy_info()
+                            .expect("unable to get a mut reference to destroy state in cursor");
+                        destroy_info.state = DestroyState::ProcessPage;
+                    } else {
+                        self.state = CursorState::None;
+                        return Ok(CursorResult::Ok(()));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3371,7 +3588,7 @@ mod tests {
     #[ignore]
     pub fn test_clear_overflow_pages() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
-        let cursor = BTreeCursor::new(pager.clone(), 1);
+        let mut cursor = BTreeCursor::new(pager.clone(), 1);
 
         let max_local = payload_overflow_threshold_max(PageType::TableLeaf, 4096);
         let usable_size = cursor.usable_space();
@@ -3468,7 +3685,7 @@ mod tests {
     #[test]
     pub fn test_clear_overflow_pages_no_overflow() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
-        let cursor = BTreeCursor::new(pager.clone(), 1);
+        let mut cursor = BTreeCursor::new(pager.clone(), 1);
 
         let small_payload = vec![b'A'; 10];
 
@@ -3506,6 +3723,90 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_btree_destroy() -> Result<()> {
+        let initial_size = 3;
+        let (pager, db_header) = setup_test_env(initial_size);
+        let mut cursor = BTreeCursor::new(pager.clone(), 2);
+        assert_eq!(
+            db_header.borrow().database_size,
+            initial_size,
+            "Database should initially have 3 pages"
+        );
+
+        // Initialize page 2 as a root page (interior)
+        let root_page = cursor.pager.read_page(2)?;
+        {
+            btree_init_page(&root_page, PageType::TableInterior, 0, 512); // Use proper page size
+        }
+
+        // Allocate two leaf pages
+        let page3 = cursor.pager.allocate_page()?;
+        btree_init_page(&page3, PageType::TableLeaf, 0, 512);
+
+        let page4 = cursor.pager.allocate_page()?;
+        btree_init_page(&page4, PageType::TableLeaf, 0, 512);
+
+        // Configure the root page to point to the two leaf pages
+        {
+            let contents = root_page.get().contents.as_mut().unwrap();
+
+            // Set rightmost pointer to page4
+            contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, page4.get().id as u32);
+
+            // Create a cell with pointer to page3
+            let cell_content = vec![
+                // First 4 bytes: left child pointer (page3)
+                (page3.get().id >> 24) as u8,
+                (page3.get().id >> 16) as u8,
+                (page3.get().id >> 8) as u8,
+                page3.get().id as u8,
+                // Next byte: rowid as varint (simple value 100)
+                100,
+            ];
+
+            // Insert the cell
+            insert_into_cell(contents, &cell_content, 0, 512)?;
+        }
+
+        // Add a simple record to each leaf page
+        for page in [&page3, &page4] {
+            let contents = page.get().contents.as_mut().unwrap();
+
+            // Simple record with just a rowid and payload
+            let record_bytes = vec![
+                5,                   // Payload length (varint)
+                page.get().id as u8, // Rowid (varint)
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o', // Payload
+            ];
+
+            insert_into_cell(contents, &record_bytes, 0, 512)?;
+        }
+
+        // Verify structure before destruction
+        assert_eq!(
+            db_header.borrow().database_size,
+            5, // We should have pages 0-4
+            "Database should have 4 pages total"
+        );
+
+        // Track freelist state before destruction
+        let initial_free_pages = db_header.borrow().freelist_pages;
+        assert_eq!(initial_free_pages, 0, "should start with no free pages");
+
+        run_until_done(|| cursor.btree_destroy(), pager.deref())?;
+
+        let pages_freed = db_header.borrow().freelist_pages - initial_free_pages;
+        assert_eq!(pages_freed, 3, "should free 3 pages (root + 2 leaves)");
+
+        Ok(())
+    }
+
     #[test]
     pub fn test_defragment() {
         let db = get_database();
