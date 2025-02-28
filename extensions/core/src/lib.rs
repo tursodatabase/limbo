@@ -1,12 +1,10 @@
 mod types;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
-use std::{
-    fmt::Display,
-    os::raw::{c_char, c_void},
-};
+pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive, VfsDerive};
+use std::ffi::{c_char, c_void};
+use std::fmt::Display;
 pub use types::{ResultCode, Value, ValueType};
 
-pub type ExtResult<T> = std::result::Result<T, ResultCode>;
+pub type Result<T> = std::result::Result<T, ResultCode>;
 
 #[repr(C)]
 pub struct ExtensionApi {
@@ -14,6 +12,140 @@ pub struct ExtensionApi {
     pub register_scalar_function: RegisterScalarFn,
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
+    pub register_vfs: RegisterVfsFn,
+    pub builtin_vfs: *mut *const VfsImpl,
+    pub builtin_vfs_count: i32,
+}
+
+impl ExtensionApi {
+    /// Since we want the option to build in extensions at compile time as well,
+    /// we add a slice of VfsImpls to the extension API, and this is called with any
+    /// libraries that we load staticly that will add their VFS implementations to the list.
+    pub fn add_builtin_vfs(&mut self, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() || self.builtin_vfs.is_null() {
+            return ResultCode::Error;
+        }
+        let mut new = unsafe {
+            let slice =
+                std::slice::from_raw_parts_mut(self.builtin_vfs, self.builtin_vfs_count as usize);
+            Vec::from(slice)
+        };
+        new.push(vfs);
+        self.builtin_vfs = Box::into_raw(new.into_boxed_slice()) as *mut *const VfsImpl;
+        self.builtin_vfs_count += 1;
+        ResultCode::OK
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub trait VfsExtension: Default {
+    const NAME: &'static str;
+    type File: VfsFile;
+    fn open_file(&self, path: &str, flags: i32, direct: bool) -> Result<Self::File>;
+    fn run_once(&self) -> Result<()> {
+        Ok(())
+    }
+    fn close(&self, _file: Self::File) -> Result<()> {
+        Ok(())
+    }
+    fn generate_random_number(&self) -> i64 {
+        let mut buf = [0u8; 8];
+        getrandom::getrandom(&mut buf).unwrap();
+        i64::from_ne_bytes(buf)
+    }
+    fn get_current_time(&self) -> String {
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub trait VfsFile: Sized {
+    fn lock(&mut self, _exclusive: bool) -> Result<()> {
+        Ok(())
+    }
+    fn unlock(&self) -> Result<()> {
+        Ok(())
+    }
+    fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> Result<i32>;
+    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> Result<i32>;
+    fn sync(&self) -> Result<()>;
+    fn size(&self) -> i64;
+}
+
+#[repr(C)]
+pub struct VfsImpl {
+    pub name: *const c_char,
+    pub vfs: *const c_void,
+    pub open: VfsOpen,
+    pub close: VfsClose,
+    pub read: VfsRead,
+    pub write: VfsWrite,
+    pub sync: VfsSync,
+    pub lock: VfsLock,
+    pub unlock: VfsUnlock,
+    pub size: VfsSize,
+    pub run_once: VfsRunOnce,
+    pub current_time: VfsGetCurrentTime,
+    pub gen_random_number: VfsGenerateRandomNumber,
+}
+
+pub type RegisterVfsFn =
+    unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, vfs: *const VfsImpl) -> ResultCode;
+
+pub type VfsOpen = unsafe extern "C" fn(
+    ctx: *const c_void,
+    path: *const c_char,
+    flags: i32,
+    direct: bool,
+) -> *const c_void;
+
+pub type VfsClose = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
+
+pub type VfsRead =
+    unsafe extern "C" fn(file: *const c_void, buf: *mut u8, count: usize, offset: i64) -> i32;
+
+pub type VfsWrite =
+    unsafe extern "C" fn(file: *const c_void, buf: *const u8, count: usize, offset: i64) -> i32;
+
+pub type VfsSync = unsafe extern "C" fn(file: *const c_void) -> i32;
+
+pub type VfsLock = unsafe extern "C" fn(file: *const c_void, exclusive: bool) -> ResultCode;
+
+pub type VfsUnlock = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
+
+pub type VfsSize = unsafe extern "C" fn(file: *const c_void) -> i64;
+
+pub type VfsRunOnce = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
+
+pub type VfsGetCurrentTime = unsafe extern "C" fn() -> *const c_char;
+
+pub type VfsGenerateRandomNumber = unsafe extern "C" fn() -> i64;
+
+#[repr(C)]
+pub struct VfsFileImpl {
+    pub file: *const c_void,
+    pub vfs: *const VfsImpl,
+}
+
+impl VfsFileImpl {
+    pub fn new(file: *const c_void, vfs: *const VfsImpl) -> Result<Self> {
+        if file.is_null() || vfs.is_null() {
+            return Err(ResultCode::Error);
+        }
+        Ok(Self { file, vfs })
+    }
+}
+
+impl Drop for VfsFileImpl {
+    fn drop(&mut self) {
+        if self.vfs.is_null() {
+            return;
+        }
+        let vfs = unsafe { &*self.vfs };
+        unsafe {
+            (vfs.close)(self.file);
+        }
+    }
 }
 
 pub type ExtensionEntryPoint = unsafe extern "C" fn(api: *const ExtensionApi) -> ResultCode;
@@ -55,7 +187,7 @@ pub trait AggFunc {
     const ARGS: i32;
 
     fn step(state: &mut Self::State, args: &[Value]);
-    fn finalize(state: Self::State) -> Result<Value, Self::Error>;
+    fn finalize(state: Self::State) -> std::result::Result<Value, Self::Error>;
 }
 
 #[repr(C)]
@@ -74,7 +206,7 @@ pub struct VTabModuleImpl {
 }
 
 impl VTabModuleImpl {
-    pub fn init_schema(&self, args: Vec<Value>) -> ExtResult<String> {
+    pub fn init_schema(&self, args: Vec<Value>) -> Result<String> {
         let schema = unsafe { (self.create_schema)(args.as_ptr(), args.len() as i32) };
         if schema.is_null() {
             return Err(ResultCode::InvalidArgs);
@@ -123,18 +255,18 @@ pub trait VTabModule: 'static {
     type Error: std::fmt::Display;
 
     fn create_schema(args: &[Value]) -> String;
-    fn open(&self) -> Result<Self::VCursor, Self::Error>;
+    fn open(&self) -> std::result::Result<Self::VCursor, Self::Error>;
     fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode;
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error>;
+    fn column(cursor: &Self::VCursor, idx: u32) -> std::result::Result<Value, Self::Error>;
     fn next(cursor: &mut Self::VCursor) -> ResultCode;
     fn eof(cursor: &Self::VCursor) -> bool;
-    fn update(&mut self, _rowid: i64, _args: &[Value]) -> Result<(), Self::Error> {
+    fn update(&mut self, _rowid: i64, _args: &[Value]) -> std::result::Result<(), Self::Error> {
         Ok(())
     }
-    fn insert(&mut self, _args: &[Value]) -> Result<i64, Self::Error> {
+    fn insert(&mut self, _args: &[Value]) -> std::result::Result<i64, Self::Error> {
         Ok(0)
     }
-    fn delete(&mut self, _rowid: i64) -> Result<(), Self::Error> {
+    fn delete(&mut self, _rowid: i64) -> std::result::Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -142,7 +274,7 @@ pub trait VTabModule: 'static {
 pub trait VTabCursor: Sized {
     type Error: std::fmt::Display;
     fn rowid(&self) -> i64;
-    fn column(&self, idx: u32) -> Result<Value, Self::Error>;
+    fn column(&self, idx: u32) -> std::result::Result<Value, Self::Error>;
     fn eof(&self) -> bool;
     fn next(&mut self) -> ResultCode;
 }

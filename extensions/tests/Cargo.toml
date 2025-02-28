@@ -1,0 +1,21 @@
+[package]
+name = "limbo_testvfs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+static = ["limbo_ext/static"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+chrono = "0.4.39"
+getrandom = "0.3.1"
+limbo_ext = { workspace = true, features = ["static"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
