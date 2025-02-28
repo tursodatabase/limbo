@@ -9,6 +9,7 @@ use limbo_sqlite3_parser::{
 };
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 use tracing::trace;
 
 pub struct Schema {
@@ -135,6 +136,7 @@ pub struct BTreeTable {
     pub primary_key_column_names: Vec<String>,
     pub columns: Vec<Column>,
     pub has_rowid: bool,
+    pub created_at: Instant,
 }
 
 impl BTreeTable {
@@ -370,6 +372,7 @@ fn create_table(
         has_rowid,
         primary_key_column_names,
         columns: cols,
+        created_at: Instant::now(),
     })
 }
 
@@ -533,6 +536,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
         name: "sqlite_schema".to_string(),
         has_rowid: true,
         primary_key_column_names: vec![],
+        created_at: Instant::now(),
         columns: vec![
             Column {
                 name: Some("type".to_string()),
@@ -1037,6 +1041,7 @@ mod tests {
             name: "t1".to_string(),
             has_rowid: true,
             primary_key_column_names: vec!["nonexistent".to_string()],
+            created_at: Instant::now(),
             columns: vec![Column {
                 name: Some("a".to_string()),
                 ty: Type::Integer,
