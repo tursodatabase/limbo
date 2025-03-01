@@ -1,6 +1,7 @@
 use crate::vdbe::builder::CursorType;
 
 use super::{Insn, InsnReference, OwnedValue, Program};
+use crate::function::{Func, ScalarFunc};
 use std::rc::Rc;
 
 pub fn insn_to_str(
@@ -936,7 +937,14 @@ pub fn insn_to_str(
                 *constant_mask,
                 *start_reg as i32,
                 *dest as i32,
-                OwnedValue::build_text(&func.func.to_string()),
+                {
+                    let s = if matches!(&func.func, Func::Scalar(ScalarFunc::Like)) {
+                        format!("like({})", func.arg_count)
+                    } else {
+                        func.func.to_string()
+                    };
+                    OwnedValue::build_text(&s)
+                },
                 0,
                 if func.arg_count == 0 {
                     format!("r[{}]=func()", dest)
