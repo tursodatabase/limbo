@@ -1,7 +1,10 @@
-use limbo_ext::{register_extension, scalar, ResultCode, Value, ValueType};
+use limbo_ext::{
+    register_extension, scalar, CustomType, CustomTypeDerive, ResultCode, Value, ValueType,
+};
 
 register_extension! {
     scalars: {uuid4_str, uuid4_blob, uuid7_str, uuid7, uuid7_ts, uuid_str, uuid_blob },
+    types: { UUID }
 }
 
 #[scalar(name = "uuid4_str", alias = "gen_random_uuid")]
@@ -89,7 +92,7 @@ fn uuid7_ts(args: &[Value]) -> Value {
             let Some(text) = args[0].to_text() else {
                 return Value::null();
             };
-            let Ok(uuid) = uuid::Uuid::parse_str(&text) else {
+            let Ok(uuid) = uuid::Uuid::parse_str(text) else {
                 return Value::null();
             };
             let unix = uuid_to_unix(uuid.as_bytes());
@@ -118,7 +121,7 @@ fn uuid_blob(&self, args: &[Value]) -> Value {
     let Some(text) = args[0].to_text() else {
         return Value::null();
     };
-    match uuid::Uuid::parse_str(&text) {
+    match uuid::Uuid::parse_str(text) {
         Ok(uuid) => Value::from_blob(uuid.as_bytes().to_vec()),
         Err(_) => Value::null(),
     }
@@ -132,4 +135,27 @@ fn uuid_to_unix(uuid: &[u8; 16]) -> u64 {
         | ((uuid[3] as u64) << 16)
         | ((uuid[4] as u64) << 8)
         | (uuid[5] as u64)
+}
+
+#[derive(CustomTypeDerive, Default)]
+pub struct UUID;
+
+impl CustomType for UUID {
+    const NAME: &'static str = "UUID";
+    const TYPE: ValueType = ValueType::Text;
+
+    fn generate(_col_name: Option<&str>, insert_val: &Value) -> Value {
+        // if value inserted is a unix timestamp, store a uuidv7. otherwise store a uuidv4
+        if let Some(val) = insert_val.to_integer() {
+            if val > 0 {
+                let ctx = uuid::ContextV7::new();
+                let ts = uuid::Timestamp::from_unix(ctx, val as u64, 0);
+                Value::from_text(uuid::Uuid::new_v7(ts).to_string())
+            } else {
+                Value::from_text(uuid::Uuid::new_v4().to_string())
+            }
+        } else {
+            Value::from_text(uuid::Uuid::new_v4().to_string())
+        }
+    }
 }
