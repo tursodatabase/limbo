@@ -76,7 +76,7 @@ unsafe extern "C" fn register_module(
     db.register_module_impl(&name_str, module, kind)
 }
 
-unsafe extern "C" fn register_extension_type(
+unsafe extern "C" fn register_custom_type(
     ctx: *mut c_void,
     module: *const CustomTypeImpl,
 ) -> ResultCode {
@@ -84,7 +84,7 @@ unsafe extern "C" fn register_extension_type(
         return ResultCode::Error;
     }
     let db = unsafe { &mut *(ctx as *mut Database) };
-    db.register_extension_type_impl(module)
+    db.register_custom_type_impl(module)
 }
 
 impl Database {
@@ -127,7 +127,7 @@ impl Database {
         ResultCode::OK
     }
 
-    fn register_extension_type_impl(&mut self, type_impl: *const CustomTypeImpl) -> ResultCode {
+    fn register_custom_type_impl(&mut self, type_impl: *const CustomTypeImpl) -> ResultCode {
         let name = unsafe { CStr::from_ptr((*type_impl).name) }
             .to_str()
             .unwrap_or_default();
@@ -153,6 +153,7 @@ impl Database {
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            register_custom_type,
         }
     }
 
