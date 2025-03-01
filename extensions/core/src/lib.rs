@@ -165,7 +165,7 @@ pub struct CustomTypeImpl {
 pub trait CustomType: Default + Sized {
     const NAME: &'static str;
     const TYPE: ValueType;
-    fn generate(col_name: Option<&str>, insert_val: Option<&Value>) -> Value;
+    fn generate(col_name: Option<&str>, insert_val: &Value) -> Value;
 }
 
 pub type CustomTypeGenerateFn =
