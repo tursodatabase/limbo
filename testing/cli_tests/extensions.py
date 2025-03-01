@@ -57,6 +57,7 @@ def test_uuid():
         validate_string_uuid,
         "scalar alias's are registered properly",
     )
+    limbo.quit()
 
 
 def true(res):
@@ -104,6 +105,7 @@ def test_regexp():
         "select regexp_replace('the year is 2021', '([0-9]+)', '$1 or 2050') = 'the year is 2021 or 2050';",
         true,
     )
+    limbo.quit()
 
 
 def validate_median(res):
@@ -163,6 +165,7 @@ def test_aggregates():
     limbo.run_test_fn(
         "SELECT percentile_disc(value, 0.55) from test;", validate_percentile_disc
     )
+    limbo.quit()
 
 
 # Encoders and decoders
@@ -303,6 +306,7 @@ def test_crypto():
         validate_url_decode,
         "url should decode correctly",
     )
+    limbo.quit()
 
 
 def test_series():
@@ -329,6 +333,7 @@ def test_series():
         "SELECT * FROM generate_series(10, 1, -2);",
         lambda res: res == "10\n8\n6\n4\n2",
     )
+    limbo.quit()
 
 
 def test_kv():
@@ -394,6 +399,7 @@ def test_kv():
     limbo.run_test_fn(
         "select count(*) from t;", lambda res: "4" == res, "four rows remain"
     )
+    limbo.quit()
 
 
 if __name__ == "__main__":
