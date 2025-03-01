@@ -1,5 +1,7 @@
 mod types;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
+pub use limbo_macros::{
+    register_extension, scalar, AggregateDerive, CustomTypeDerive, VTabModuleDerive,
+};
 use std::{
     ffi::{c_char, c_void},
     fmt::Display,
