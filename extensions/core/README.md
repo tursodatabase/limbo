@@ -11,7 +11,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
  - [] **VFS Modules** 
- - [] **Custom Types**: Create a custom type alias to define columns and handle insert behavior.
+ - [ x ] **Custom Types**: Create a custom type alias to define columns and handle insert behavior.
 ---
 
 ## Installation
@@ -60,10 +60,12 @@ register_extension!{
     scalars: { double }, // name of your function, if different from attribute name
     aggregates: { Percentile },
     vtabs: { CsvVTable },
+    types: { UUID },
 }
 ```
+<details>
+<summary>Scalar Example:</summary>
 
-### Scalar Example:
 ```rust
 use limbo_ext::{register_extension, Value, scalar};
 
@@ -88,7 +90,12 @@ fn double(&self, args: &[Value]) -> Value {
 }
 ```
 
-### Aggregates Example:
+</details>
+
+<details>
+<summary>Aggregates Example: </summary>
+
+<br />
 
 ```rust
 
@@ -158,8 +165,10 @@ impl AggFunc for Percentile {
     }
 }
 ```
+</details>
 
-### Virtual Table Example:
+<details>
+<summary> Virtual Table Example:</summary>
 
 ```rust
 
@@ -279,6 +288,39 @@ impl VTabCursor for CsvCursor {
     }
 }
 ```
+</details>
+
+<details>
+<summary> Custom type example:</summary>
+
+```rust
+
+#[derive(Default, CustomTypeDerive)]
+pub struct UUID;
+
+/// Your type must implement the CustomType trait.
+impl CustomType for UUID {
+  const NAME: &'static str = "UUID";
+  const TYPE: ValueType = ValueType::Text;
+
+   /// Generate is called on any insert to a column of your declared type. 
+   /// 'insert_value' will be None if no value was inserted to the column for that row.
+  fn generate(col_name: Option<&str>, insert_value: Option<&Value>) -> Value {
+        // This example checks if the inserted value is a unix timestamp and generates a uuidv7.
+        // otherwise it stores a uuidv4.
+        if let Some(val) = insert_val {
+            let maybe_ts = val.to_integer().unwrap_or(0);
+            let ctx = uuid::ContextV7::new();
+            let ts = uuid::Timestamp::from_unix(ctx, maybe_ts as u64, 0);
+            return Value::from_text(uuid::Uuid::new_v7(ts).to_string());
+        }
+        Value::from_text(uuid::Uuid::new_v4().to_string())
+  }
+}
+```
+
+</details>
+
 
 ## Cargo.toml Config
 
