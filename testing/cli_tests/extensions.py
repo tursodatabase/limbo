@@ -65,6 +65,31 @@ def test_uuid():
         validate_string_uuid,
         "scalar alias's are registered properly",
     )
+    limbo.run_test_fn("CREATE TABLE users (id UUID, name TEXT);", null)
+    limbo.run_test_fn("INSERT INTO USERS (name) values ('test');", null)
+    limbo.run_test_fn("SELECT id from users;", validate_string_uuid)
+    limbo.run_test_fn(
+        "INSERT INTO USERS (id, name) values (unixepoch(), 'next');", null
+    )
+    limbo.run_test_fn("SELECT id from users where name = 'next';", validate_string_uuid)
+    limbo.run_test_fn(
+        "SELECT uuid7_timestamp_ms(id) / 1000 from users where name = 'next';",
+        validate_ts,
+        "unixepoch() inserted to ID column",
+    )
+    limbo.run_test_fn(
+        "INSERT INTO users (id, name) values (1740853356, 'testing');", null
+    )
+    limbo.run_test_fn(
+        "SELECT id from users where name = 'testing';",
+        validate_string_uuid,
+        "correct uuid was inserted to ID field",
+    )
+    limbo.run_test_fn(
+        "SELECT uuid7_timestamp_ms(id) / 1000 from users where name = 'testing';",
+        lambda x: x == "1740853356",
+        "correct uuid was inserted to ID field when unix timestamp was inserted to ID column",
+    )
 
 
 def true(res):
