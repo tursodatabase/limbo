@@ -23,6 +23,7 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use ext::foreign_types::TypeRegistry;
 use ext::list_vfs_modules;
 use fallible_iterator::FallibleIterator;
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
@@ -738,6 +739,7 @@ pub(crate) struct SymbolTable {
     pub functions: HashMap<String, Rc<function::ExternalFunc>>,
     pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
+    pub type_registry: TypeRegistry,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -781,6 +783,7 @@ impl SymbolTable {
             functions: HashMap::new(),
             vtabs: HashMap::new(),
             vtab_modules: HashMap::new(),
+            type_registry: TypeRegistry::new(),
         }
     }
 
