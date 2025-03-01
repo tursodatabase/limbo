@@ -14,6 +14,7 @@ pub struct ExtensionApi {
     pub register_scalar_function: RegisterScalarFn,
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
+    pub register_custom_type: RegisterCustomTypeFn,
 }
 
 pub type ExtensionEntryPoint = unsafe extern "C" fn(api: *const ExtensionApi) -> ResultCode;

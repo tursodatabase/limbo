@@ -76,15 +76,15 @@ unsafe extern "C" fn register_module(
     conn.register_module_impl(&name_str, module, kind)
 }
 
-unsafe extern "C" fn register_extension_type(
+unsafe extern "C" fn register_custom_type(
     ctx: *mut c_void,
     module: *const CustomTypeImpl,
 ) -> ResultCode {
     if ctx.is_null() {
         return ResultCode::Error;
     }
-    let db = unsafe { &mut *(ctx as *mut Connection) };
-    db.register_extension_type_impl(module)
+    let conn = unsafe { &mut *(ctx as *mut Connection) };
+    conn.register_custom_type_impl(module)
 }
 
 impl Connection {
@@ -127,7 +127,7 @@ impl Connection {
         ResultCode::OK
     }
 
-    fn register_extension_type_impl(&mut self, type_impl: *const CustomTypeImpl) -> ResultCode {
+    fn register_custom_type_impl(&mut self, type_impl: *const CustomTypeImpl) -> ResultCode {
         let name = unsafe { CStr::from_ptr((*type_impl).name) }
             .to_str()
             .unwrap_or_default();
@@ -153,6 +153,7 @@ impl Connection {
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            register_custom_type,
         }
     }
 
