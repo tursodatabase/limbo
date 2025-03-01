@@ -1,3 +1,4 @@
+use crate::ext::foreign_types::TypeRegistry;
 use crate::{util::normalize_ident, Result, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
@@ -161,12 +162,16 @@ impl BTreeTable {
         None
     }
 
-    pub fn from_sql(sql: &str, root_page: usize) -> Result<BTreeTable> {
+    pub fn from_sql(
+        sql: &str,
+        root_page: usize,
+        type_registry: Option<&TypeRegistry>,
+    ) -> Result<BTreeTable> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         match cmd {
             Some(Cmd::Stmt(Stmt::CreateTable { tbl_name, body, .. })) => {
-                create_table(tbl_name, *body, root_page)
+                create_table(tbl_name, *body, root_page, type_registry)
             }
             _ => todo!("Expected CREATE TABLE statement"),
         }
@@ -235,6 +240,7 @@ fn create_table(
     tbl_name: QualifiedName,
     body: CreateTableBody,
     root_page: usize,
+    type_registry: Option<&TypeRegistry>,
 ) -> Result<BTreeTable> {
     let table_name = normalize_ident(&tbl_name.name.0);
     trace!("Creating table {}", table_name);
@@ -309,6 +315,12 @@ fn create_table(
                             || type_name.contains("DOUB")
                         {
                             (Type::Real, ty_str)
+                        } else if let Some(reg) = type_registry {
+                            if let Some(ext_type) = reg.get(&ty_str) {
+                                (ext_type.type_of().into(), ty_str)
+                            } else {
+                                (Type::Numeric, ty_str)
+                            }
                         } else {
                             (Type::Numeric, ty_str)
                         }
@@ -688,7 +700,7 @@ mod tests {
     #[test]
     pub fn test_has_rowid_true() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         assert!(table.has_rowid, "has_rowid should be set to true");
         Ok(())
     }
@@ -696,7 +708,7 @@ mod tests {
     #[test]
     pub fn test_has_rowid_false() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT) WITHOUT ROWID;"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         assert!(!table.has_rowid, "has_rowid should be set to false");
         Ok(())
     }
@@ -704,7 +716,7 @@ mod tests {
     #[test]
     pub fn test_column_is_rowid_alias_single_text() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a TEXT PRIMARY KEY, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             !table.column_is_rowid_alias(column),
@@ -716,7 +728,7 @@ mod tests {
     #[test]
     pub fn test_column_is_rowid_alias_single_integer() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             table.column_is_rowid_alias(column),
@@ -729,7 +741,7 @@ mod tests {
     pub fn test_column_is_rowid_alias_single_integer_separate_primary_key_definition() -> Result<()>
     {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             table.column_is_rowid_alias(column),
@@ -742,7 +754,7 @@ mod tests {
     pub fn test_column_is_rowid_alias_single_integer_separate_primary_key_definition_without_rowid(
     ) -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a)) WITHOUT ROWID;"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             !table.column_is_rowid_alias(column),
@@ -754,7 +766,7 @@ mod tests {
     #[test]
     pub fn test_column_is_rowid_alias_single_integer_without_rowid() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT) WITHOUT ROWID;"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             !table.column_is_rowid_alias(column),
@@ -766,7 +778,7 @@ mod tests {
     #[test]
     pub fn test_column_is_rowid_alias_inline_composite_primary_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT PRIMARY KEY);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             !table.column_is_rowid_alias(column),
@@ -778,7 +790,7 @@ mod tests {
     #[test]
     pub fn test_column_is_rowid_alias_separate_composite_primary_key_definition() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a, b));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(
             !table.column_is_rowid_alias(column),
@@ -790,7 +802,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_inline_single() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT, c REAL);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -808,7 +820,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_inline_multiple() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT PRIMARY KEY, c REAL);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -826,7 +838,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_separate_single() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -844,7 +856,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_separate_multiple() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a, b));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -862,7 +874,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_separate_single_quoted() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY('a'));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -879,7 +891,7 @@ mod tests {
     #[test]
     pub fn test_primary_key_separate_single_doubly_quoted() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY("a"));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
         let column = table.get_column("b").unwrap().1;
@@ -897,7 +909,7 @@ mod tests {
     #[test]
     pub fn test_default_value() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER DEFAULT 23);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         let default = column.default.clone().unwrap();
         assert_eq!(default.to_string(), "23");
@@ -907,7 +919,7 @@ mod tests {
     #[test]
     pub fn test_col_notnull() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER NOT NULL);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.notnull, true);
         Ok(())
@@ -916,7 +928,7 @@ mod tests {
     #[test]
     pub fn test_col_notnull_negative() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.notnull, false);
         Ok(())
@@ -925,7 +937,7 @@ mod tests {
     #[test]
     pub fn test_col_type_string_integer() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a InTeGeR);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.ty_str, "INTEGER");
         Ok(())
@@ -934,7 +946,7 @@ mod tests {
     #[test]
     pub fn test_col_type_string_int() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a InT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.ty_str, "INT");
         Ok(())
@@ -943,7 +955,7 @@ mod tests {
     #[test]
     pub fn test_col_type_string_blob() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a bLoB);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.ty_str, "BLOB");
         Ok(())
@@ -952,7 +964,7 @@ mod tests {
     #[test]
     pub fn test_col_type_string_empty() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.ty_str, "");
         Ok(())
@@ -961,7 +973,7 @@ mod tests {
     #[test]
     pub fn test_col_type_string_some_nonsense() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a someNonsenseName);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let column = table.get_column("a").unwrap().1;
         assert_eq!(column.ty_str, "someNonsenseName");
         Ok(())
@@ -983,7 +995,7 @@ mod tests {
     #[test]
     fn test_automatic_index_single_column() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let index = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2)?;
 
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
@@ -999,7 +1011,7 @@ mod tests {
     #[test]
     fn test_automatic_index_composite_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a, b));"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let index = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2)?;
 
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
@@ -1017,7 +1029,7 @@ mod tests {
     #[test]
     fn test_automatic_index_no_primary_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
+        let table = BTreeTable::from_sql(sql, 0, None)?;
         let result = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2);
 
         assert!(result.is_err());
