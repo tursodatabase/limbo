@@ -1116,7 +1116,7 @@ impl Program {
                                 cursors,
                                 "Column"
                             );
-                            let record = cursor.record()?;
+                            let record = cursor.record();
                             if let Some(record) = record.as_ref() {
                                 state.registers[*dest] = if cursor.get_null_flag() {
                                     OwnedValue::Null
@@ -1517,7 +1517,7 @@ impl Program {
                     let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.record() {
                         // Compare against the same number of values
                         if idx_record.get_values()[..record_from_regs.len()]
                             >= record_from_regs.get_values()[..]
@@ -1541,7 +1541,7 @@ impl Program {
                     let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.record() {
                         // Compare against the same number of values
                         if idx_record.get_values()[..record_from_regs.len()]
                             <= record_from_regs.get_values()[..]
@@ -1565,7 +1565,7 @@ impl Program {
                     let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.record() {
                         // Compare against the same number of values
                         if idx_record.get_values()[..record_from_regs.len()]
                             > record_from_regs.get_values()[..]
@@ -1589,7 +1589,7 @@ impl Program {
                     let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
-                    if let Some(ref idx_record) = *cursor.record()? {
+                    if let Some(ref idx_record) = *cursor.record() {
                         // Compare against the same number of values
                         if idx_record.get_values()[..record_from_regs.len()]
                             < record_from_regs.get_values()[..]
