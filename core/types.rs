@@ -185,7 +185,11 @@ impl OwnedValue {
                 let Some(text) = v.to_text() else {
                     return Ok(OwnedValue::Null);
                 };
-                Ok(OwnedValue::build_text(text))
+                if v.is_json() {
+                    Ok(OwnedValue::Text(Text::json(text)))
+                } else {
+                    Ok(OwnedValue::build_text(text))
+                }
             }
             ExtValueType::Blob => {
                 let Some(blob) = v.to_blob() else {
@@ -203,9 +207,7 @@ impl OwnedValue {
                 }
             }
         };
-        unsafe {
-            v.free();
-        }
+        unsafe { v.__free_internal_type() };
         res
     }
 }

@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Limbo extensions core"
 
 [features]
-default = []
+core_only = []
 static = []
 
 [dependencies]
