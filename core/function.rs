@@ -1,3 +1,4 @@
+use crate::ext::foreign_types::ForeignTypeFunc;
 use crate::LimboError;
 use limbo_ext::{FinalizeFunction, InitAggFunction, ScalarFunction, StepFunction};
 use std::fmt;
@@ -431,6 +432,7 @@ pub enum Func {
     #[cfg(feature = "json")]
     Json(JsonFunc),
     External(Rc<ExternalFunc>),
+    ForeignType(ForeignTypeFunc),
 }
 
 impl Display for Func {
@@ -443,6 +445,7 @@ impl Display for Func {
             #[cfg(feature = "json")]
             Self::Json(json_func) => write!(f, "{}", json_func),
             Self::External(generic_func) => write!(f, "{}", generic_func),
+            Self::ForeignType(ts) => write!(f, "{}", ts),
         }
     }
 }
