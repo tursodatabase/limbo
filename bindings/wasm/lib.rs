@@ -1,6 +1,6 @@
 use js_sys::{Array, Object};
 use limbo_core::{
-    maybe_init_database_file, BufferPool, OpenFlags, Pager, Result, WalFile, WalFileShared,
+    maybe_init_database_file, BufferPool, IOBuff, OpenFlags, Pager, Result, WalFile, WalFileShared,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -233,7 +233,7 @@ impl limbo_core::File for File {
             _ => unreachable!(),
         };
         {
-            let mut buf = r.buf_mut();
+            let buf = r.buf_mut();
             let buf: &mut [u8] = buf.as_mut_slice();
             let nr = self.vfs.pread(self.fd, buf, pos);
             assert!(nr >= 0);
@@ -242,17 +242,12 @@ impl limbo_core::File for File {
         Ok(())
     }
 
-    fn pwrite(
-        &self,
-        pos: usize,
-        buffer: Rc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: limbo_core::Completion,
-    ) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: limbo_core::Completion) -> Result<()> {
         let w = match &c {
             limbo_core::Completion::Write(ref w) => w,
             _ => unreachable!(),
         };
-        let buf = buffer.borrow();
+        let buf = buffer.buf();
         let buf: &[u8] = buf.as_slice();
         self.vfs.pwrite(self.fd, buf, pos);
         w.complete(buf.len() as i32);
@@ -345,13 +340,8 @@ impl limbo_core::DatabaseStorage for DatabaseStorage {
         Ok(())
     }
 
-    fn write_page(
-        &self,
-        page_idx: usize,
-        buffer: Rc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: limbo_core::Completion,
-    ) -> Result<()> {
-        let size = buffer.borrow().len();
+    fn write_page(&self, page_idx: usize, buffer: IOBuff, c: limbo_core::Completion) -> Result<()> {
+        let size = buffer.len();
         let pos = (page_idx - 1) * size;
         self.file.pwrite(pos, buffer, c)?;
         Ok(())

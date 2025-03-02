@@ -1,7 +1,10 @@
 #[cfg(feature = "fs")]
 use crate::error::LimboError;
-use crate::{io::Completion, Buffer, Result};
-use std::{cell::RefCell, rc::Rc};
+use crate::{
+    io::{Completion, IOBuff},
+    Result,
+};
+use std::rc::Rc;
 
 /// DatabaseStorage is an interface a database file that consists of pages.
 ///
@@ -10,8 +13,7 @@ use std::{cell::RefCell, rc::Rc};
 /// or something like a remote page server service.
 pub trait DatabaseStorage {
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<()>;
-    fn write_page(&self, page_idx: usize, buffer: Rc<RefCell<Buffer>>, c: Completion)
-        -> Result<()>;
+    fn write_page(&self, page_idx: usize, buffer: IOBuff, c: Completion) -> Result<()>;
     fn sync(&self, c: Completion) -> Result<()>;
 }
 
@@ -37,13 +39,8 @@ impl DatabaseStorage for FileStorage {
         Ok(())
     }
 
-    fn write_page(
-        &self,
-        page_idx: usize,
-        buffer: Rc<RefCell<Buffer>>,
-        c: Completion,
-    ) -> Result<()> {
-        let buffer_size = buffer.borrow().len();
+    fn write_page(&self, page_idx: usize, buffer: IOBuff, c: Completion) -> Result<()> {
+        let buffer_size = buffer.len();
         assert!(buffer_size >= 512);
         assert!(buffer_size <= 65536);
         assert_eq!(buffer_size & (buffer_size - 1), 0);

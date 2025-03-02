@@ -1031,8 +1031,7 @@ impl Program {
                             let rowid = {
                                 let mut index_cursor = state.get_cursor(index_cursor_id);
                                 let index_cursor = index_cursor.as_btree_mut();
-                                let rowid = index_cursor.rowid()?;
-                                rowid
+                                index_cursor.rowid()
                             };
                             let mut table_cursor = state.get_cursor(table_cursor_id);
                             let table_cursor = table_cursor.as_btree_mut();
@@ -1307,7 +1306,7 @@ impl Program {
                             let rowid = {
                                 let mut index_cursor = state.get_cursor(index_cursor_id);
                                 let index_cursor = index_cursor.as_btree_mut();
-                                let rowid = index_cursor.rowid()?;
+                                let rowid = index_cursor.rowid();
                                 rowid
                             };
                             let mut table_cursor = state.get_cursor(table_cursor_id);
@@ -1328,7 +1327,7 @@ impl Program {
                     let mut cursors = state.cursors.borrow_mut();
                     if let Some(Cursor::BTree(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
                     {
-                        if let Some(ref rowid) = btree_cursor.rowid()? {
+                        if let Some(ref rowid) = btree_cursor.rowid() {
                             state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
                         } else {
                             state.registers[*dest] = OwnedValue::Null;
@@ -2792,7 +2791,7 @@ impl Program {
                         cursor.wait_for_completion()?;
                         // Only update last_insert_rowid for regular table inserts, not schema modifications
                         if cursor.root_page() != 1 {
-                            if let Some(rowid) = cursor.rowid()? {
+                            if let Some(rowid) = cursor.rowid() {
                                 if let Some(conn) = self.connection.upgrade() {
                                     conn.update_last_rowid(rowid);
                                 }
@@ -3118,7 +3117,7 @@ fn get_new_rowid<R: Rng>(cursor: &mut BTreeCursor, mut rng: R) -> Result<CursorR
         CursorResult::IO => return Ok(CursorResult::IO),
     }
     let mut rowid = cursor
-        .rowid()?
+        .rowid()
         .unwrap_or(0) // if BTree is empty - use 0 as initial value for rowid
         .checked_add(1) // add 1 but be careful with overflows
         .unwrap_or(u64::MAX); // in case of overflow - use u64::MAX

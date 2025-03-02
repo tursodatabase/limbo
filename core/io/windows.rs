@@ -1,4 +1,4 @@
-use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
+use crate::{Completion, File, IOBuff, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::rc::Rc;
@@ -67,10 +67,10 @@ impl File for WindowsFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: Completion) -> Result<()> {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
-        let buf = buffer.borrow();
+        let buf = buffer.buf();
         let buf = buf.as_slice();
         file.write_all(buf)?;
         c.complete(buffer.borrow().len() as i32);

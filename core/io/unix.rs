@@ -2,7 +2,7 @@ use crate::error::LimboError;
 use crate::io::common;
 use crate::Result;
 
-use super::{Completion, File, OpenFlags, IO};
+use super::{Completion, File, IOBuff, OpenFlags, IO};
 use polling::{Event, Events, Poller};
 use rustix::{
     fd::{AsFd, AsRawFd},
@@ -11,11 +11,11 @@ use rustix::{
 };
 use std::io::{ErrorKind, Read, Seek, Write};
 use std::rc::Rc;
-use tracing::{debug, trace};
 use std::{
     cell::{RefCell, UnsafeCell},
     mem::MaybeUninit,
 };
+use tracing::{debug, trace};
 
 struct OwnedCallbacks(UnsafeCell<Callbacks>);
 struct BorrowedCallbacks<'io>(UnsafeCell<&'io mut Callbacks>);
@@ -210,13 +210,13 @@ impl IO for UnixIO {
                     CompletionCallback::Read(ref file, ref c, pos) => {
                         let mut file = file.borrow_mut();
                         let r = c.as_read();
-                        let mut buf = r.buf_mut();
+                        let buf = r.buf_mut();
                         file.seek(std::io::SeekFrom::Start(pos as u64))?;
                         file.read(buf.as_mut_slice())
                     }
                     CompletionCallback::Write(ref file, _, ref buf, pos) => {
                         let mut file = file.borrow_mut();
-                        let buf = buf.borrow();
+                        let buf = buf.buf();
                         file.seek(std::io::SeekFrom::Start(pos as u64))?;
                         file.write(buf.as_slice())
                     }
@@ -246,12 +246,7 @@ impl IO for UnixIO {
 
 enum CompletionCallback {
     Read(Rc<RefCell<std::fs::File>>, Completion, usize),
-    Write(
-        Rc<RefCell<std::fs::File>>,
-        Completion,
-        Rc<RefCell<crate::Buffer>>,
-        usize,
-    ),
+    Write(Rc<RefCell<std::fs::File>>, Completion, IOBuff, usize),
 }
 
 pub struct UnixFile<'io> {
@@ -304,7 +299,7 @@ impl File for UnixFile<'_> {
         let file = self.file.borrow();
         let result = {
             let r = c.as_read();
-            let mut buf = r.buf_mut();
+            let buf = r.buf_mut();
             rustix::io::pread(file.as_fd(), buf.as_mut_slice(), pos as u64)
         };
         match result {
@@ -332,10 +327,10 @@ impl File for UnixFile<'_> {
         }
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: Completion) -> Result<()> {
         let file = self.file.borrow();
         let result = {
-            let buf = buffer.borrow();
+            let buf = buffer.buf();
             rustix::io::pwrite(file.as_fd(), buf.as_slice(), pos as u64)
         };
         match result {
