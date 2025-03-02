@@ -196,9 +196,6 @@ impl Database {
             syms: RefCell::new(SymbolTable::new()),
             total_changes: Cell::new(0),
         });
-        if let Err(e) = conn.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
         Ok(conn)
     }
 
@@ -664,7 +661,9 @@ impl VirtualTable {
     }
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
+        let cursor = unsafe {
+            (self.implementation.open)(self.implementation.ctx, self.implementation.conn)
+        };
         VTabOpaqueCursor::new(cursor)
     }
 
