@@ -1,3 +1,4 @@
+mod vtab_connect;
 use crate::{function::ExternalFunc, Database};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
@@ -117,9 +118,11 @@ impl Database {
     pub fn build_limbo_ext(&self) -> ExtensionApi {
         ExtensionApi {
             ctx: self as *const _ as *mut c_void,
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            connect: vtab_connect::connect,
         }
     }
 

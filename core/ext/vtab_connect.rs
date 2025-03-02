@@ -78,9 +78,7 @@ pub unsafe extern "C" fn stmt_step(stmt: *mut Stmt) -> ResultCode {
     let Ok(stmt) = Stmt::from_ptr(stmt) else {
         return ResultCode::Error;
     };
-    if stmt._conn.is_null() {
-        return ResultCode::Error;
-    } else if stmt._ctx.is_null() {
+    if stmt._conn.is_null() || stmt._ctx.is_null() {
         return ResultCode::Error;
     }
     let conn: &Connection = unsafe { &*(stmt._conn as *const Connection) };
@@ -95,7 +93,7 @@ pub unsafe extern "C" fn stmt_step(stmt: *mut Stmt) -> ResultCode {
             }
             Ok(StepResult::Interrupt) => return ResultCode::Interrupt,
             Ok(StepResult::Busy) => return ResultCode::Busy,
-            Err(err) => {
+            _ => {
                 return ResultCode::Error;
             }
         }
