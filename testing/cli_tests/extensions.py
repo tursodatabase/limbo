@@ -396,6 +396,34 @@ def test_kv():
     )
 
 
+def test_vfs():
+    limbo = TestLimboShell()
+    ext_path = "target/debug/liblimbo_testvfs"
+    limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.run_test_fn(
+        ".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded"
+    )
+    limbo.execute_dot(".open testing/vfs_extension.db testvfs")
+    limbo.execute_dot("create table test (id integer primary key, value float);")
+    for _ in range(50):
+        limbo.execute_dot("insert into test (value) values (randomblob(32*1024));")
+    limbo.run_test_fn(
+        "SELECT count(*) FROM test;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
+    )
+    print("Tested large write to testfs")
+    cleanup()
+
+
+def cleanup():
+    if os.path.exists("testing/vfs_extension.db"):
+        os.remove("testing/vfs_extension.db")
+    if os.path.exists("testing/vfs_extension.db-wal"):
+        os.remove("testing/vfs_extension.db-wal")
+
+
 if __name__ == "__main__":
     try:
         test_regexp()
@@ -404,7 +432,9 @@ if __name__ == "__main__":
         test_crypto()
         test_series()
         test_kv()
+        test_vfs()
     except Exception as e:
         print(f"Test FAILED: {e}")
+        cleanup()
         exit(1)
     print("All tests passed successfully.")

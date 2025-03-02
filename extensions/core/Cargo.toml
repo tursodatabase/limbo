@@ -12,4 +12,6 @@ default = []
 static = []
 
 [dependencies]
+chrono = "0.4.39"
+getrandom = { version = "0.2.15", features = ["js"] }
 limbo_macros = { workspace = true }

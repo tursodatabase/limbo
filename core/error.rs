@@ -77,8 +77,8 @@ macro_rules! bail_constraint_error {
 }
 
 impl From<limbo_ext::ResultCode> for LimboError {
-    fn from(err: limbo_ext::ResultCode) -> Self {
-        LimboError::ExtensionError(err.to_string())
+    fn from(code: limbo_ext::ResultCode) -> Self {
+        Self::ExtensionError(code.to_string())
     }
 }
 
