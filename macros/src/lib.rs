@@ -348,8 +348,9 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///            city TEXT
 ///        )"
 ///    }
-///    /// Open the virtual table and return a cursor
-///  fn open() -> Self::VCursor {
+///    /// Open the virtual table and return a cursor. Optionally, you can store
+///    /// a connection to the owning database in your cursor.
+///  fn open(&self, conn: Rc<Connection>) -> Self::VCursor {
 ///       let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
 ///       let rows: Vec<Vec<String>> = csv_content
 ///           .lines()

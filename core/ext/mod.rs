@@ -7,6 +7,7 @@ pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
+    sync::Arc,
 };
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
@@ -115,9 +116,11 @@ impl Database {
         ResultCode::OK
     }
 
-    pub fn build_limbo_ext(&self) -> ExtensionApi {
+    pub fn build_limbo_ext(self: &Arc<Database>) -> ExtensionApi {
+        let ctx = Arc::into_raw(self.clone());
+        unsafe { Arc::increment_strong_count(ctx) };
         ExtensionApi {
-            ctx: self as *const _ as *mut c_void,
+            ctx: ctx as *mut c_void,
             conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
@@ -126,7 +129,7 @@ impl Database {
         }
     }
 
-    pub fn register_builtins(&self) -> Result<(), String> {
+    pub fn register_builtins(self: &Arc<Database>) -> Result<(), String> {
         #[allow(unused_variables)]
         let ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]
