@@ -1,3 +1,9 @@
 /core/ @pereman2 @jussisaurio @penberg
-/extensions/ @penberg @PThorpe92
+/core/storage @pereman2 @krishvishal
+/core/translate @jussisaurio
+/extensions/ @PThorpe92
+/core/ext/ @PThorpe92
+/bindings/go @PThorpe92
+/bindings/java @seonWKim
+/simulator/ @alpaylan
 * @penberg
