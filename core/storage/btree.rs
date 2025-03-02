@@ -824,6 +824,15 @@ impl BTreeCursor {
             let state = self.state.write_info().expect("must be balancing").state;
             match state {
                 WriteState::BalanceStart => {
+                    assert!(
+                        self.state
+                            .write_info()
+                            .unwrap()
+                            .balance_info
+                            .borrow()
+                            .is_none(),
+                        "BalanceInfo should be empty on start"
+                    );
                     let current_page = self.stack.top();
                     {
                         // check if we don't need to balance
@@ -1437,12 +1446,15 @@ impl BTreeCursor {
                     }
                 }
                 // TODO: balance root
-                self.stack.pop();
                 // TODO: free pages
-                (WriteState::Finish, Ok(CursorResult::Ok(())))
+                (WriteState::BalanceStart, Ok(CursorResult::Ok(())))
             }
             WriteState::Finish => todo!(),
         };
+        if matches!(next_write_state, WriteState::BalanceStart) {
+            // reset balance state
+            let _ = self.state.mut_write_info().unwrap().balance_info.take();
+        }
         let write_info = self.state.mut_write_info().unwrap();
         write_info.state = next_write_state;
         result
