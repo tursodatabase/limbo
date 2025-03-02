@@ -87,8 +87,6 @@ enum WriteState {
 struct BalanceInfo {
     /// Old pages being balanced.
     pages_to_balance: Vec<PageRef>,
-    /// Pages allocated during the write operation due to balancing.
-    new_pages: Vec<PageRef>,
     /// Bookkeeping of the rightmost pointer so the PAGE_HEADER_OFFSET_RIGHTMOST_PTR can be updated.
     rightmost_pointer: *mut u8,
     /// Divider cells of old pages
@@ -998,7 +996,6 @@ impl BTreeCursor {
                     .balance_info
                     .replace(Some(BalanceInfo {
                         pages_to_balance,
-                        new_pages: Vec::new(),
                         rightmost_pointer: right_pointer,
                         divider_cells: Vec::new(),
                         sibling_count,
@@ -1076,14 +1073,13 @@ impl BTreeCursor {
                 balance_info.divider_cells.reverse();
 
                 let mut cell_array = CellArray {
-                    cells: Vec::new(),
+                    cells: Vec::with_capacity(max_cells),
                     number_of_cells_per_page: Vec::new(),
                 };
 
                 let mut total_cells_inserted = 0;
                 // count_cells_in_old_pages is the prefix sum of cells of each page
                 let mut count_cells_in_old_pages = Vec::new();
-                let mut divider_cells = Vec::new();
 
                 let page_type = balance_info.pages_to_balance[0].get_contents().page_type();
                 let leaf_data = matches!(page_type, PageType::TableLeaf);
@@ -1129,14 +1125,11 @@ impl BTreeCursor {
                     if i < balance_info.pages_to_balance.len() - 1 && !leaf_data {
                         // If we are a index page or a interior table page we need to take the divider cell too.
                         // But we don't need the last divider as it will remain the same.
-                        let divider_cell = balance_info.divider_cells[i].clone();
+                        let divider_cell = &mut balance_info.divider_cells[i];
                         // TODO(pere): in case of old pages are leaf pages, so index leaf page, we need to strip page pointers
                         // from divider cells in index interior pages (parent) because those should not be included.
                         cells_inserted += 1;
-                        divider_cells.push(divider_cell);
-                        cell_array
-                            .cells
-                            .push(to_static_buf(divider_cells.last_mut().unwrap().as_mut()));
+                        cell_array.cells.push(to_static_buf(divider_cell.as_mut()));
                     }
                     total_cells_inserted += cells_inserted;
                 }
