@@ -151,18 +151,20 @@ In addition to standard SQL commands, the following special commands are availab
 
 Special Commands:
 -----------------
-.quit                      Stop interpreting input stream and exit.
-.show                      Display current settings.
-.open <database_file>      Open and connect to a database file.
-.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'.
-.schema <table_name>       Show the schema of the specified table.
+.quit                      Stop interpreting input stream and exit
+.show                      Display current settings
+.open <database_file>      Open and connect to a database file
+.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'
+.schema <table_name>       Show the schema of the specified table
 .tables <pattern>          List names of tables matching LIKE pattern TABLE
 .opcodes                   Display all the opcodes defined by the virtual machine
-.cd <directory>            Change the current working directory.
-.nullvalue <string>        Set the value to be displayed for null values.
-.echo on|off               Toggle echo mode to repeat commands before execution.
+.cd <directory>            Change the current working directory
+.nullvalue <string>        Set the value to be displayed for null values
+.echo on|off               Toggle echo mode to repeat commands before execution
 .import --csv FILE TABLE   Import csv data from FILE into TABLE
-.help                      Display this help message.
+.dump                      Output database contents as SQL
+.load                      Load an extension library
+.help                      Display this help message
 
 Usage Examples:
 ---------------
@@ -195,6 +197,12 @@ Usage Examples:
 
 10. To import csv file 'sample.csv' into 'csv_table' table:
    .import --csv sample.csv csv_table
+
+11. To display the database contents as SQL:
+   .dump
+
+12. To load an extension library:
+   .load /target/debug/liblimbo_regexp
 
 Note:
 - All SQL commands must end with a semicolon (;).
