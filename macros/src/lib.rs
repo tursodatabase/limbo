@@ -467,7 +467,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 let ctx  = ctx as *const #struct_name;
                 let ctx: &#struct_name = &*ctx;
                 let conn = ::limbo_ext::Connection::new(conn);
-                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx, ::std::rc::Rc::new(conn)) {
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx, Some(::std::rc::Rc::new(conn))) {
                     return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *const ::std::ffi::c_void;
                 } else {
                     return ::std::ptr::null();
