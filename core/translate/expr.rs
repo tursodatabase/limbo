@@ -2159,7 +2159,7 @@ fn translate_like_base(
         lhs,
         op,
         rhs,
-        escape: _,
+        escape,
         ..
     } = expr
     else {
@@ -2167,10 +2167,22 @@ fn translate_like_base(
     };
     match op {
         ast::LikeOperator::Like | ast::LikeOperator::Glob => {
-            let start_reg = program.alloc_registers(2);
+            let arg_count = if matches!(escape, Some(_)) { 3 } else { 2 };
+            let start_reg = program.alloc_registers(arg_count);
             let mut constant_mask = 0;
             translate_and_mark(program, referenced_tables, lhs, start_reg + 1, resolver)?;
             let _ = translate_expr(program, referenced_tables, rhs, start_reg, resolver)?;
+            if arg_count == 3 {
+                if let Some(escape) = escape {
+                    translate_and_mark(
+                        program,
+                        referenced_tables,
+                        escape,
+                        start_reg + 2,
+                        resolver,
+                    )?;
+                }
+            }
             if matches!(rhs.as_ref(), ast::Expr::Literal(_)) {
                 program.mark_last_insn_constant();
                 constant_mask = 1;
@@ -2186,7 +2198,7 @@ fn translate_like_base(
                 dest: target_register,
                 func: FuncCtx {
                     func: Func::Scalar(func),
-                    arg_count: 2,
+                    arg_count: arg_count,
                 },
             });
         }
