@@ -1,5 +1,6 @@
 package tech.turso.jdbc4;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.sql.ResultSet;
@@ -69,5 +70,31 @@ class JDBC4StatementTest {
   void operations_on_closed_statement_should_throw_exception() throws Exception {
     stmt.close();
     assertThrows(SQLException.class, () -> stmt.execute("SELECT 1;"));
+  }
+
+  @Test
+  void execute_update_should_return_number_of_inserted_elements() throws Exception {
+    assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1);")).isEqualTo(0);
+    assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (0);")).isEqualTo(1);
+    assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2);")).isEqualTo(2);
+    assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (3), (4), (5);")).isEqualTo(3);
+  }
+
+  @Test
+  @Disabled("Limbo update not yet supported")
+  void execute_update_should_return_number_of_updated_elements() throws Exception {
+    assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1);")).isEqualTo(0);
+    assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2), (3);")).isEqualTo(3);
+
+    assertThat(stmt.executeUpdate("UPDATE s1 SET c1 = 0;")).isEqualTo(3);
+  }
+
+  @Test
+  @Disabled("Limbo delete has a bug")
+  void execute_update_should_return_number_of_deleted_elements() throws Exception {
+    assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1);")).isEqualTo(0);
+    assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2), (3);")).isEqualTo(3);
+
+    assertThat(stmt.executeUpdate("DELETE FROM s1")).isEqualTo(3);
   }
 }

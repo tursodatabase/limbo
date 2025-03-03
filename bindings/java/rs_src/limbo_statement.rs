@@ -270,6 +270,23 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindBlob<'local>(
     SQLITE_OK
 }
 
+#[no_mangle]
+pub extern "system" fn Java_tech_turso_core_LimboStatement_totalChanges<'local>(
+    mut env: JNIEnv<'local>,
+    obj: JObject<'local>,
+    stmt_ptr: jlong,
+) -> jlong {
+    let stmt = match to_limbo_statement(stmt_ptr) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
+            return -1;
+        }
+    };
+
+    stmt.connection.conn.total_changes()
+}
+
 /// Converts an optional `JObject` into Java's `LimboStepResult`.
 ///
 /// This function takes an optional `JObject` and converts it into a Java object

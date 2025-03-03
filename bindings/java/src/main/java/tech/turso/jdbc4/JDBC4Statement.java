@@ -28,8 +28,6 @@ public class JDBC4Statement implements Statement {
   private final int resultSetHoldability;
 
   private int queryTimeoutSeconds;
-  private long updateCount;
-  private boolean exhaustedResults = false;
 
   private ReentrantLock connectionLock = new ReentrantLock();
 
@@ -74,14 +72,14 @@ public class JDBC4Statement implements Statement {
 
   @Override
   public int executeUpdate(String sql) throws SQLException {
-    execute(sql);
+    final long previousTotalChanges = statement == null ? 0L : statement.totalChanges();
 
+    execute(sql);
     requireNonNull(statement, "statement should not be null after running execute method");
     final LimboResultSet resultSet = statement.getResultSet();
     resultSet.consumeAll();
 
-    // TODO: return update count;
-    return 0;
+    return (int) (statement.totalChanges() - previousTotalChanges);
   }
 
   @Override
@@ -176,7 +174,6 @@ public class JDBC4Statement implements Statement {
             statement = connection.prepare(sql);
             final boolean result = statement.execute();
             updateGeneratedKeys();
-            exhaustedResults = false;
 
             return result;
           } finally {
