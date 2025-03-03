@@ -38,3 +38,9 @@ This product depends on serde_json5, distributed
 
 * License: licenses/core/serde_json5-license.md (Apache License v2.0)
 * Homepage: https://github.com/google/serde_json5
+
+This project depends on ipnetwork, distributed by the ipnetwork project:
+
+* License: licenses/extensions/ipnetwork-apache-license.md (Apache License v2.0)
+* License: licenses/extensions/ipnetwork-mit-license.md (MIT License)
+* Homepage: https://github.com/achanda/ipnetwork

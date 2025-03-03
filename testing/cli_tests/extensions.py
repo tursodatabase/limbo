@@ -395,6 +395,72 @@ def test_kv():
         "select count(*) from t;", lambda res: "4" == res, "four rows remain"
     )
 
+def test_ipaddr():
+    limbo = TestLimboShell()
+    ext_path = "./target/debug/liblimbo_ipaddr"
+ 
+    limbo.run_test_fn(
+        "SELECT ipfamily('192.168.1.1');",
+        lambda res: "error: no such function: " in res,
+        "ipfamily function returns null when ext not loaded",
+    )
+    limbo.execute_dot(f".load {ext_path}")
+ 
+    limbo.run_test_fn(
+        "SELECT ipfamily('192.168.1.1');",
+        lambda res: "4" == res,
+        "ipfamily function returns 4 for IPv4",
+    )
+    limbo.run_test_fn(
+        "SELECT ipfamily('2001:db8::1');",
+        lambda res: "6" == res,
+        "ipfamily function returns 6 for IPv6",
+    )
+
+    limbo.run_test_fn(
+        "SELECT ipcontains('192.168.16.0/24', '192.168.16.3');",
+        lambda res: "1" == res,
+        "ipcontains function returns 1 for IPv4",
+    )
+    limbo.run_test_fn(
+        "SELECT ipcontains('192.168.1.0/24', '192.168.2.1');",
+        lambda res: "0" == res,
+        "ipcontains function returns 0 for IPv4",
+    )
+
+    limbo.run_test_fn(
+        "SELECT iphost('192.168.1.0/24');",
+        lambda res: "192.168.1.0" == res,
+        "iphost function returns the host for IPv4",
+    )
+    limbo.run_test_fn(
+        "SELECT iphost('2001:db8::1/128');",
+        lambda res: "2001:db8::1" == res,
+        "iphost function returns the host for IPv6",
+    )
+
+    limbo.run_test_fn(
+        "SELECT ipmasklen('192.168.1.0/24');",
+        lambda res: "24" == res,
+        "ipmasklen function returns the mask length for IPv4",
+    )
+    limbo.run_test_fn(
+        "SELECT ipmasklen('2001:db8::1');",
+        lambda res: "128" == res,
+        "ipmasklen function returns the mask length for IPv6",
+    )
+    
+    limbo.run_test_fn(
+        "SELECT ipnetwork('192.168.16.12/24');",
+        lambda res: "192.168.16.0/24" == res,
+        "ipnetwork function returns the flattened CIDR for IPv4",
+    )
+    limbo.run_test_fn(
+        "SELECT ipnetwork('2001:db8::1');",
+        lambda res: "2001:db8::1/128" == res,
+        "ipnetwork function returns the network for IPv6",
+    )
+    
 
 if __name__ == "__main__":
     try:
@@ -404,6 +470,7 @@ if __name__ == "__main__":
         test_crypto()
         test_series()
         test_kv()
+        test_ipaddr()
     except Exception as e:
         print(f"Test FAILED: {e}")
         exit(1)

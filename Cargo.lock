@@ -1343,6 +1343,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
 name = "is-terminal"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,6 +1625,7 @@ dependencies = [
  "libloading",
  "limbo_crypto",
  "limbo_ext",
+ "limbo_ipaddr",
  "limbo_macros",
  "limbo_percentile",
  "limbo_regexp",
@@ -1668,6 +1675,15 @@ name = "limbo_ext"
 version = "0.0.15"
 dependencies = [
  "limbo_macros",
+]
+
+[[package]]
+name = "limbo_ipaddr"
+version = "0.0.15"
+dependencies = [
+ "ipnetwork",
+ "limbo_ext",
+ "mimalloc",
 ]
 
 [[package]]

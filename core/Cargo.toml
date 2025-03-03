@@ -24,6 +24,7 @@ regexp = ["limbo_regexp/static"]
 time = ["limbo_time/static"]
 crypto = ["limbo_crypto/static"]
 series = ["limbo_series/static"]
+ipaddr = ["limbo_ipaddr/static"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.6.1", optional = true }
@@ -62,6 +63,7 @@ limbo_percentile = { workspace = true, optional = true, features = ["static"] }
 limbo_time = { workspace = true, optional = true, features = ["static"] }
 limbo_crypto = { workspace = true, optional = true, features = ["static"] }
 limbo_series = { workspace = true, optional = true, features = ["static"] }
+limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
 miette = "7.4.0"
 strum = "0.26"
 parking_lot = "0.12.3"

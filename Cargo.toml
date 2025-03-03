@@ -43,7 +43,7 @@ limbo_series = { path = "extensions/series", version = "0.0.15" }
 limbo_time = { path = "extensions/time", version = "0.0.15" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.15" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.15" }
-
+limbo_ipaddr = { path = "extensions/ipaddr", version = "0.0.15" }
 # Config for 'cargo dist'
 [workspace.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
