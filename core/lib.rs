@@ -23,6 +23,7 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use ext::foreign_types::TypeRegistry;
 use fallible_iterator::FallibleIterator;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
@@ -497,7 +498,7 @@ impl Statement {
     }
 
     pub fn bind_at(&mut self, index: NonZero<usize>, value: OwnedValue) {
-        self.state.bind_at(index, value.into());
+        self.state.bind_at(index, value);
     }
 
     pub fn reset(&mut self) {
@@ -554,7 +555,7 @@ impl VirtualTable {
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
         )? {
-            let columns = columns_from_create_table_body(&body)?;
+            let columns = columns_from_create_table_body(&body, syms)?;
             let vtab = Rc::new(VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
                 implementation: module.implementation.clone(),
@@ -651,6 +652,7 @@ pub(crate) struct SymbolTable {
     extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
+    pub type_registry: TypeRegistry,
 }
 
 impl std::fmt::Debug for SymbolTable {
@@ -696,6 +698,7 @@ impl SymbolTable {
             #[cfg(not(target_family = "wasm"))]
             extensions: Vec::new(),
             vtab_modules: HashMap::new(),
+            type_registry: TypeRegistry::new(),
         }
     }
 

@@ -7,6 +7,7 @@ pub(crate) struct RegisterExtensionInput {
     pub aggregates: Vec<Ident>,
     pub scalars: Vec<Ident>,
     pub vtabs: Vec<Ident>,
+    pub types: Vec<Ident>,
 }
 
 impl syn::parse::Parse for RegisterExtensionInput {
@@ -14,12 +15,13 @@ impl syn::parse::Parse for RegisterExtensionInput {
         let mut aggregates = Vec::new();
         let mut scalars = Vec::new();
         let mut vtabs = Vec::new();
+        let mut types = Vec::new();
         while !input.is_empty() {
             if input.peek(syn::Ident) && input.peek2(Token![:]) {
                 let section_name: Ident = input.parse()?;
                 input.parse::<Token![:]>()?;
-                let names = ["aggregates", "scalars", "vtabs"];
-                if names.contains(&section_name.to_string().as_str()) {
+                let names = ["aggregates", "scalars", "vtabs", "types"];
+                if names.contains(&section_name.to_string().trim()) {
                     let content;
                     syn::braced!(content in input);
                     let parsed_items = Punctuated::<Ident, Token![,]>::parse_terminated(&content)?
@@ -30,7 +32,10 @@ impl syn::parse::Parse for RegisterExtensionInput {
                         "aggregates" => aggregates = parsed_items,
                         "scalars" => scalars = parsed_items,
                         "vtabs" => vtabs = parsed_items,
-                        _ => unreachable!(),
+                        "types" => types = parsed_items,
+                        _ => {
+                            return Err(syn::Error::new(section_name.span(), "Invalid section"));
+                        }
                     };
 
                     if input.peek(Token![,]) {
@@ -40,7 +45,8 @@ impl syn::parse::Parse for RegisterExtensionInput {
                     return Err(syn::Error::new(section_name.span(), "Unknown section"));
                 }
             } else {
-                return Err(input.error("Expected aggregates:, scalars:, or vtabs: section"));
+                return Err(input
+                    .error("Expected 'aggregates:', 'scalars:', 'types:', or 'vtabs:' section"));
             }
         }
 
@@ -48,6 +54,7 @@ impl syn::parse::Parse for RegisterExtensionInput {
             aggregates,
             scalars,
             vtabs,
+            types,
         })
     }
 }
