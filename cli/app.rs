@@ -1,4 +1,5 @@
 use crate::{
+    helper::LimboHelper,
     import::{ImportFile, IMPORT_HELP},
     input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings, HELP_MSG},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
@@ -7,7 +8,7 @@ use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table
 use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 
 use clap::{Parser, ValueEnum};
-use rustyline::DefaultEditor;
+use rustyline::{history::DefaultHistory, Editor};
 use std::{
     fmt,
     io::{self, Write},
@@ -167,7 +168,7 @@ pub struct Limbo<'a> {
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
     opts: Settings,
-    pub rl: &'a mut DefaultEditor,
+    pub rl: &'a mut Editor<LimboHelper, DefaultHistory>,
 }
 
 macro_rules! query_internal {
@@ -196,7 +197,7 @@ macro_rules! query_internal {
 }
 
 impl<'a> Limbo<'a> {
-    pub fn new(rl: &'a mut rustyline::DefaultEditor) -> anyhow::Result<Self> {
+    pub fn new(rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>) -> anyhow::Result<Self> {
         let opts = Opts::parse();
         let db_file = opts
             .database
@@ -211,6 +212,8 @@ impl<'a> Limbo<'a> {
         };
         let db = Database::open_file(io.clone(), &db_file)?;
         let conn = db.connect();
+        let h = LimboHelper::new(conn.clone(), io.clone());
+        rl.set_helper(Some(h));
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
             let interrupt_count: Arc<AtomicUsize> = Arc::clone(&interrupt_count);

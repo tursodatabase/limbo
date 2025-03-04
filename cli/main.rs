@@ -1,15 +1,22 @@
 #![allow(clippy::arc_with_non_send_sync)]
 mod app;
+mod helper;
 mod import;
 mod input;
 mod opcodes_dictionary;
 
-use rustyline::{error::ReadlineError, DefaultEditor};
+use rustyline::{error::ReadlineError, Config, Editor};
 use std::sync::atomic::Ordering;
+
+fn rustyline_config() -> Config {
+    Config::builder()
+        .completion_type(rustyline::CompletionType::List)
+        .build()
+}
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let mut rl = DefaultEditor::new()?;
+    let mut rl = Editor::with_config(rustyline_config())?;
     let mut app = app::Limbo::new(&mut rl)?;
     let home = dirs::home_dir().expect("Could not determine home directory");
     let history_file = home.join(".limbo_history");
