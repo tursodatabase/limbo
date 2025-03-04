@@ -6,6 +6,7 @@ members = [
     "bindings/go",
     "bindings/java",
     "bindings/python",
+    "bindings/ruby",
     "bindings/rust",
     "bindings/wasm",
     "cli",
