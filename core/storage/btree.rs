@@ -3162,7 +3162,7 @@ mod tests {
                 let key = OwnedValue::Integer(*key);
                 let value = Record::new(vec![OwnedValue::Blob(Rc::new(vec![0; *size]))]);
                 tracing::info!("insert key:{}", key);
-                run_until_done(|| cursor.insert(None, &key, &value, true), pager.deref()).unwrap();
+                run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
                 tracing::info!(
                     "=========== btree ===========\n{}\n\n",
                     format_btree(pager.clone(), root_page, 0)
@@ -3226,7 +3226,7 @@ mod tests {
 
                 let key = OwnedValue::Integer(key);
                 let value = Record::new(vec![OwnedValue::Blob(Rc::new(vec![0; size]))]);
-                run_until_done(|| cursor.insert(None, &key, &value, true), pager.deref()).unwrap();
+                run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
             }
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
@@ -3922,7 +3922,7 @@ mod tests {
                 pager.deref(),
             )
             .unwrap();
-            run_until_done(|| cursor.insert(None, &key, &value, true), pager.deref()).unwrap();
+            run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
             keys.push(i);
         }
         if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
