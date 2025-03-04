@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Properties;
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
+import tech.turso.core.LimboPropertiesHolder;
 import tech.turso.jdbc4.JDBC4Connection;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
@@ -57,14 +58,12 @@ public final class JDBC implements Driver {
 
   @Override
   public int getMajorVersion() {
-    // TODO
-    return 0;
+    return Integer.parseInt(LimboPropertiesHolder.getDriverVersion().split("\\.")[0]);
   }
 
   @Override
   public int getMinorVersion() {
-    // TODO
-    return 0;
+    return Integer.parseInt(LimboPropertiesHolder.getDriverVersion().split("\\.")[1]);
   }
 
   @Override

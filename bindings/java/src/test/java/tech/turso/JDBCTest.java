@@ -1,8 +1,10 @@
 package tech.turso;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import java.sql.Connection;
+import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
@@ -29,5 +31,23 @@ class JDBCTest {
     try (Connection connection = DriverManager.getConnection("jdbc:sqlite:sample.db")) {
       assertThat(connection).isNotNull();
     }
+  }
+
+  @Test
+  void retrieve_version() {
+    assertDoesNotThrow(() -> DriverManager.getDriver("jdbc:sqlite:").getMajorVersion());
+    assertDoesNotThrow(() -> DriverManager.getDriver("jdbc:sqlite:").getMinorVersion());
+  }
+
+  @Test
+  void all_driver_property_info_should_have_a_description() throws Exception {
+    Driver driver = DriverManager.getDriver("jdbc:sqlite:");
+    assertThat(driver.getPropertyInfo(null, null))
+        .allSatisfy((info) -> assertThat(info.description).isNotNull());
+  }
+
+  @Test
+  void return_null_when_protocol_can_not_be_handled() throws Exception {
+    assertThat(JDBC.createConnection("jdbc:unknownprotocol:", null)).isNull();
   }
 }

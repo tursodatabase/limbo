@@ -19,3 +19,10 @@ pub(crate) mod pager;
 pub(crate) mod sqlite3_ondisk;
 #[allow(clippy::arc_with_non_send_sync)]
 pub(crate) mod wal;
+
+#[macro_export]
+macro_rules! return_corrupt {
+    ($msg:expr) => {
+        return Err(LimboError::Corrupt($msg.into()));
+    };
+}

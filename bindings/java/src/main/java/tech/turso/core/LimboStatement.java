@@ -215,6 +215,21 @@ public final class LimboStatement {
       throws SQLException;
 
   /**
+   * Returns total number of changes.
+   *
+   * @throws SQLException If a database access error occurs
+   */
+  public long totalChanges() throws SQLException {
+    final long result = totalChanges(statementPointer);
+    if (result == -1) {
+      throw new SQLException("Exception while retrieving total number of changes");
+    }
+
+    return result;
+  }
+
+  private native long totalChanges(long statementPointer) throws SQLException;
+  /**
    * Checks if the statement is closed.
    *
    * @return true if the statement is closed, false otherwise.

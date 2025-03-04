@@ -185,7 +185,11 @@ impl OwnedValue {
                 let Some(text) = v.to_text() else {
                     return Ok(OwnedValue::Null);
                 };
-                Ok(OwnedValue::build_text(text))
+                if v.is_json() {
+                    Ok(OwnedValue::Text(Text::json(text)))
+                } else {
+                    Ok(OwnedValue::build_text(text))
+                }
             }
             ExtValueType::Blob => {
                 let Some(blob) = v.to_blob() else {
@@ -203,9 +207,7 @@ impl OwnedValue {
                 }
             }
         };
-        unsafe {
-            v.free();
-        }
+        unsafe { v.__free_internal_type() };
         res
     }
 }
@@ -617,20 +619,15 @@ impl Record {
 }
 
 pub enum Cursor {
-    Table(BTreeCursor),
-    Index(BTreeCursor),
+    BTree(BTreeCursor),
     Pseudo(PseudoCursor),
     Sorter(Sorter),
     Virtual(VTabOpaqueCursor),
 }
 
 impl Cursor {
-    pub fn new_table(cursor: BTreeCursor) -> Self {
-        Self::Table(cursor)
-    }
-
-    pub fn new_index(cursor: BTreeCursor) -> Self {
-        Self::Index(cursor)
+    pub fn new_btree(cursor: BTreeCursor) -> Self {
+        Self::BTree(cursor)
     }
 
     pub fn new_pseudo(cursor: PseudoCursor) -> Self {
@@ -641,17 +638,10 @@ impl Cursor {
         Self::Sorter(cursor)
     }
 
-    pub fn as_table_mut(&mut self) -> &mut BTreeCursor {
+    pub fn as_btree_mut(&mut self) -> &mut BTreeCursor {
         match self {
-            Self::Table(cursor) => cursor,
-            _ => panic!("Cursor is not a table"),
-        }
-    }
-
-    pub fn as_index_mut(&mut self) -> &mut BTreeCursor {
-        match self {
-            Self::Index(cursor) => cursor,
-            _ => panic!("Cursor is not an index"),
+            Self::BTree(cursor) => cursor,
+            _ => panic!("Cursor is not a btree"),
         }
     }
 

@@ -8,5 +8,6 @@ cargo publish -p limbo_regexp
 cargo publish -p limbo_series
 cargo publish -p limbo_time
 cargo publish -p limbo_uuid
+cargo publish -p limbo_ipaddr
 cargo publish -p limbo_core
 cargo publish -p limbo

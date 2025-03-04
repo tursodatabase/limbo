@@ -150,6 +150,10 @@ impl Database {
         if unsafe { !limbo_series::register_extension_static(&ext_api).is_ok() } {
             return Err("Failed to register series extension".to_string());
         }
+        #[cfg(feature = "ipaddr")]
+        if unsafe { !limbo_ipaddr::register_extension_static(&ext_api).is_ok() } {
+            return Err("Failed to register ipaddr extension".to_string());
+        }
         Ok(())
     }
 }

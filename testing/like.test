@@ -74,6 +74,10 @@ John|Johnson
 Stephen|Stephens
 Robert|Roberts}
 
+do_execsql_test where-like-another-column-prefix {
+    select count(*) from users where last_name like 'Pe#rry' escape '#';
+} {19}
+
 do_execsql_test where-like-impossible {
     select * from products where 'foobar' like 'fooba';
 } {}

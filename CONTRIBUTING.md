@@ -184,6 +184,39 @@ Once Maturin is installed, you can build the crate and install it as a Python mo
 cd bindings/python && maturin develop
 ```
 
+## Antithesis
+
+Antithesis is a testing platform for finding bugs with reproducibility. In
+Limbo, we use Antithesis in addition to our own deterministic simulation
+testing (DST) tool for the following:
+
+- Discovering bugs that the DST did not catch (and improve the DST)
+- Discovering bugs that the DST does not cover (for example, non-simulated I/O)
+
+If you have an Antithesis account, you first need to configure some
+environment variables:
+
+```bash
+export ANTITHESIS_USER=
+export ANTITHESIS_TENANT=
+export ANTITHESIS_PASSWD=
+export ANTITHESIS_DOCKER_HOST=
+export ANTITHESIS_DOCKER_REPO=
+export ANTITHESIS_EMAIL=
+```
+
+You can then publish a new Antithesis workflow with:
+ 
+```bash
+scripts/antithesis/publish-workload.sh
+```
+
+And launch an Antithesis test run with:
+
+```bash
+scripts/antithesis/launch.sh
+```
+
 ## Adding Third Party Dependencies
 
 When you want to add third party dependencies, please follow these steps:

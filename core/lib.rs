@@ -28,7 +28,7 @@ use fallible_iterator::FallibleIterator;
 use libloading::{Library, Symbol};
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{ExtensionApi, ExtensionEntryPoint};
-use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl, Value as ExtValue};
+use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
@@ -497,7 +497,7 @@ impl Statement {
     }
 
     pub fn bind_at(&mut self, index: NonZero<usize>, value: OwnedValue) {
-        self.state.bind_at(index, value.into());
+        self.state.bind_at(index, value);
     }
 
     pub fn reset(&mut self) {
@@ -582,22 +582,16 @@ impl VirtualTable {
         let mut filter_args = Vec::with_capacity(arg_count);
         for i in 0..arg_count {
             let ownedvalue_arg = args.get(i).unwrap();
-            let extvalue_arg: ExtValue = match ownedvalue_arg {
-                OwnedValue::Null => Ok(ExtValue::null()),
-                OwnedValue::Integer(i) => Ok(ExtValue::from_integer(*i)),
-                OwnedValue::Float(f) => Ok(ExtValue::from_float(*f)),
-                OwnedValue::Text(t) => Ok(ExtValue::from_text(t.as_str().to_string())),
-                OwnedValue::Blob(b) => Ok(ExtValue::from_blob((**b).clone())),
-                other => Err(LimboError::ExtensionError(format!(
-                    "Unsupported value type: {:?}",
-                    other
-                ))),
-            }?;
-            filter_args.push(extvalue_arg);
+            filter_args.push(ownedvalue_arg.to_ffi());
         }
         let rc = unsafe {
             (self.implementation.filter)(cursor.as_ptr(), arg_count as i32, filter_args.as_ptr())
         };
+        for arg in filter_args {
+            unsafe {
+                arg.__free_internal_type();
+            }
+        }
         match rc {
             ResultCode::OK => Ok(true),
             ResultCode::EOF => Ok(false),
@@ -634,7 +628,7 @@ impl VirtualTable {
         };
         for arg in ext_args {
             unsafe {
-                arg.free();
+                arg.__free_internal_type();
             }
         }
         match rc {

@@ -163,8 +163,8 @@ mod tests {
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?}",
-                query, limbo, sqlite
+                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
+                query, limbo, sqlite, seed
             );
         }
     }
@@ -291,10 +291,11 @@ mod tests {
                     assert!(
                         (limbo - sqlite).abs() < 1e-9
                             || (limbo - sqlite) / (limbo.abs().max(sqlite.abs())) < 1e-9,
-                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
                         query,
                         limbo,
-                        sqlite
+                        sqlite,
+                        seed
                     )
                 }
                 _ => {}
@@ -448,8 +449,8 @@ mod tests {
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?}",
-                query, limbo, sqlite
+                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
+                query, limbo, sqlite, seed
             );
         }
     }
@@ -818,8 +819,8 @@ mod tests {
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?}",
-                query, limbo, sqlite
+                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
+                query, limbo, sqlite, seed
             );
         }
     }
@@ -891,7 +892,9 @@ mod tests {
             log::info!("insert: {}", query);
             assert_eq!(
                 limbo_exec_rows(&db, &limbo_conn, &query),
-                sqlite_exec_rows(&sqlite_conn, &query)
+                sqlite_exec_rows(&sqlite_conn, &query),
+                "seed: {}",
+                seed,
             );
         }
 
@@ -909,8 +912,8 @@ mod tests {
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?}",
-                query, limbo, sqlite
+                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
+                query, limbo, sqlite, seed
             );
         }
     }

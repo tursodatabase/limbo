@@ -1,7 +1,5 @@
 package tech.turso.jdbc4;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
@@ -9,18 +7,15 @@ import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.util.Properties;
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
+import tech.turso.core.LimboPropertiesHolder;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
 
 public final class JDBC4DatabaseMetaData implements DatabaseMetaData {
 
   private static final Logger logger = LoggerFactory.getLogger(JDBC4DatabaseMetaData.class);
-
-  private static String driverName = "";
-  private static String driverVersion = "";
 
   private final JDBC4Connection connection;
   @Nullable private PreparedStatement getTables = null;
@@ -40,22 +35,6 @@ public final class JDBC4DatabaseMetaData implements DatabaseMetaData {
   @Nullable private PreparedStatement getBestRowIdentifier = null;
   @Nullable private PreparedStatement getVersionColumns = null;
   @Nullable private PreparedStatement getColumnPrivileges = null;
-
-  static {
-    try (InputStream limboJdbcPropStream =
-        JDBC4DatabaseMetaData.class.getClassLoader().getResourceAsStream("limbo-jdbc.properties")) {
-      if (limboJdbcPropStream == null) {
-        throw new IOException("Cannot load limbo-jdbc.properties from jar");
-      }
-
-      final Properties properties = new Properties();
-      properties.load(limboJdbcPropStream);
-      driverName = properties.getProperty("driverName");
-      driverVersion = properties.getProperty("driverVersion");
-    } catch (IOException e) {
-      logger.error("Failed to load driverName and driverVersion");
-    }
-  }
 
   public JDBC4DatabaseMetaData(JDBC4Connection connection) {
     this.connection = connection;
@@ -120,22 +99,22 @@ public final class JDBC4DatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public String getDriverName() {
-    return driverName;
+    return LimboPropertiesHolder.getDriverName();
   }
 
   @Override
   public String getDriverVersion() {
-    return driverVersion;
+    return LimboPropertiesHolder.getDriverVersion();
   }
 
   @Override
   public int getDriverMajorVersion() {
-    return Integer.parseInt(driverVersion.split("\\.")[0]);
+    return Integer.parseInt(getDriverVersion().split("\\.")[0]);
   }
 
   @Override
   public int getDriverMinorVersion() {
-    return Integer.parseInt(driverVersion.split("\\.")[1]);
+    return Integer.parseInt(getDriverVersion().split("\\.")[1]);
   }
 
   @Override

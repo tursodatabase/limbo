@@ -9,6 +9,7 @@ use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 use clap::{Parser, ValueEnum};
 use rustyline::DefaultEditor;
 use std::{
+    fmt,
     io::{self, Write},
     path::PathBuf,
     rc::Rc,
@@ -307,6 +308,15 @@ impl<'a> Limbo<'a> {
                             || value_type.contains("TEXT")
                         {
                             format!("'{}'", value.to_string().replace("'", "''"))
+                        } else if value_type.contains("BLOB") {
+                            let blob = value.to_blob().unwrap_or(&[]);
+                            let hex_string: String =
+                                blob.iter().fold(String::new(), |mut output, b| {
+                                    let _ =
+                                        fmt::Write::write_fmt(&mut output, format_args!("{b:02x}"));
+                                    output
+                                });
+                            format!("X'{}'", hex_string)
                         } else {
                             value.to_string()
                         }

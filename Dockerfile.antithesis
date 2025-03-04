@@ -1,0 +1,73 @@
+FROM lukemathwalker/cargo-chef:0.1.68-rust-1.84.0-slim-bullseye AS chef
+RUN apt update \
+    && apt install -y git libssl-dev pkg-config\
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+#
+# Cache dependencies
+#
+
+FROM chef AS planner
+COPY ./Cargo.lock ./Cargo.lock
+COPY ./Cargo.toml ./Cargo.toml
+COPY ./bindings/go ./bindings/go/
+COPY ./bindings/java ./bindings/java/
+COPY ./bindings/python ./bindings/python/
+COPY ./bindings/rust ./bindings/rust/
+COPY ./bindings/wasm ./bindings/wasm/
+COPY ./cli ./cli/
+COPY ./core ./core/
+COPY ./extensions ./extensions/
+COPY ./macros ./macros/
+COPY ./simulator ./simulator/
+COPY ./sqlite3 ./sqlite3/
+COPY ./tests ./tests/
+COPY ./stress ./stress/
+COPY ./vendored ./vendored/
+RUN cargo chef prepare --bin limbo_stress --recipe-path recipe.json
+
+#
+# Build the project.
+#
+
+FROM chef AS builder 
+
+ARG antithesis=true
+
+# Source: https://antithesis.com/assets/instrumentation/libvoidstar.so
+COPY stress/libvoidstar.so /opt/antithesis/libvoidstar.so
+
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --bin limbo_stress --release --recipe-path recipe.json
+COPY --from=planner /app/bindings/rust ./bindings/rust/
+COPY --from=planner /app/core ./core/
+COPY --from=planner /app/extensions ./extensions/
+COPY --from=planner /app/macros ./macros/
+COPY --from=planner /app/stress ./stress/
+COPY --from=planner /app/vendored ./vendored/
+
+RUN if [ "$antithesis" = "true" ]; then \
+        cp /opt/antithesis/libvoidstar.so /usr/lib/libvoidstar.so && \
+        export RUSTFLAGS="-Ccodegen-units=1 -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=3 -Cllvm-args=-sanitizer-coverage-trace-pc-guard -Clink-args=-Wl,--build-id -L/usr/lib/ -lvoidstar" && \
+        cargo build --bin limbo_stress --release; \
+    else \
+        cargo build --bin limbo_stress --release; \
+    fi
+
+#
+# The final image.
+#
+
+FROM debian:bullseye-slim AS runtime
+RUN apt-get update && apt-get install -y bash && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+EXPOSE 8080
+COPY --from=builder /usr/lib/libvoidstar.so* /usr/lib/
+COPY --from=builder /app/target/release/limbo_stress /bin/limbo_stress
+COPY stress/docker-entrypoint.sh /bin
+RUN chmod +x /bin/docker-entrypoint.sh
+ENTRYPOINT ["/bin/docker-entrypoint.sh"]
+CMD ["/bin/limbo_stress"]

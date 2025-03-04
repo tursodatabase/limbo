@@ -1,7 +1,7 @@
 use crate::result::LimboResult;
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
-use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent};
+use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
 use crate::storage::wal::{CheckpointResult, Wal};
 use crate::{Buffer, LimboError, Result};
 use parking_lot::RwLock;
@@ -201,6 +201,37 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
         })
+    }
+
+    pub fn btree_create(&self, flags: usize) -> u32 {
+        let page_type = match flags {
+            1 => PageType::TableLeaf,
+            2 => PageType::IndexLeaf,
+            _ => unreachable!(
+                "wrong create table flags, should be 1 for table and 2 for index, got {}",
+                flags,
+            ),
+        };
+        let page = self.do_allocate_page(page_type, 0);
+        let id = page.get().id;
+        id as u32
+    }
+
+    /// Allocate a new page to the btree via the pager.
+    /// This marks the page as dirty and writes the page header.
+    pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
+        let page = self.allocate_page().unwrap();
+        crate::btree_init_page(&page, page_type, offset, self.usable_space() as u16);
+        page
+    }
+
+    /// The "usable size" of a database page is the page size specified by the 2-byte integer at offset 16
+    /// in the header, minus the "reserved" space size recorded in the 1-byte integer at offset 20 in the header.
+    /// The usable size of a page might be an odd number. However, the usable size is not allowed to be less than 480.
+    /// In other words, if the page size is 512, then the reserved space size cannot exceed 32.
+    pub fn usable_space(&self) -> usize {
+        let db_header = self.db_header.borrow();
+        (db_header.page_size - db_header.reserved_space as u16) as usize
     }
 
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
