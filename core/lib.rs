@@ -84,8 +84,11 @@ enum TransactionState {
 }
 
 pub struct Database {
+    // TODO: make schema work without lock
     schema: Arc<Mutex<Schema>>,
+    // TODO: make header work without lock
     header: Arc<Mutex<DatabaseHeader>>,
+    // TODO: make syms work without lock
     syms: Arc<Mutex<SymbolTable>>,
     page_io: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
