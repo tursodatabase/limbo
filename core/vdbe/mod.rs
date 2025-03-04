@@ -48,7 +48,7 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
-use crate::MvStore;
+use crate::{MvStore, MvCursor};
 #[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
@@ -752,7 +752,16 @@ impl Program {
                     root_page,
                 } => {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
-                    let cursor = BTreeCursor::new(mv_store.clone(), pager.clone(), *root_page);
+                    let mv_cursor = match state.mv_tx_id {
+                        Some(tx_id) => {
+                            let table_id = *root_page as u64;
+                            let mv_store = mv_store.as_ref().unwrap().clone();
+                            let mv_cursor = Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
+                            Some(mv_cursor)
+                        },
+                        None => None,
+                    };
+                    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
                     let mut cursors = state.cursors.borrow_mut();
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
@@ -2802,7 +2811,7 @@ impl Program {
                         // NOTE(pere): Sending moved_before == true is okay because we moved before but
                         // if we were to set to false after starting a balance procedure, it might
                         // leave undefined state.
-                        return_if_io!(cursor.insert(state.mv_tx_id, key, record, true));
+                        return_if_io!(cursor.insert(key, record, true));
                     }
                     state.pc += 1;
                 }
@@ -2948,7 +2957,16 @@ impl Program {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
                     let mut cursors = state.cursors.borrow_mut();
                     let is_index = cursor_type.is_index();
-                    let cursor = BTreeCursor::new(mv_store.clone(), pager.clone(), *root_page);
+                    let mv_cursor = match state.mv_tx_id {
+                        Some(tx_id) => {
+                            let table_id = *root_page as u64;
+                            let mv_store = mv_store.as_ref().unwrap().clone();
+                            let mv_cursor = Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
+                            Some(mv_cursor)
+                        }
+                        None => None,
+                    };
+                    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
                     if is_index {
                         cursors
                             .get_mut(*cursor_id)

@@ -4,7 +4,7 @@ use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::{
     read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
 };
-use crate::MvStore;
+use crate::MvCursor;
 
 use crate::types::{CursorResult, OwnedValue, Record, SeekKey, SeekOp};
 use crate::{return_corrupt, LimboError, Result};
@@ -136,8 +136,8 @@ impl CursorState {
 }
 
 pub struct BTreeCursor {
-    /// The multi-version store that is used to read and write to the database file.
-    mv_store: Option<Rc<MvStore>>,
+    /// The multi-version cursor that is used to read and write to the database file.
+    mv_cursor: Option<Rc<MvCursor>>,
     /// The pager that is used to read and write to the database file.
     pager: Rc<Pager>,
     /// Page id of the root page used to go back up fast.
@@ -182,9 +182,9 @@ struct CellArray {
 }
 
 impl BTreeCursor {
-    pub fn new(mv_store: Option<Rc<MvStore>>, pager: Rc<Pager>, root_page: usize) -> Self {
+    pub fn new(mv_cursor: Option<Rc<MvCursor>>, pager: Rc<Pager>, root_page: usize) -> Self {
         Self {
-            mv_store,
+            mv_cursor,
             pager,
             root_page,
             rowid: Cell::new(None),
@@ -203,7 +203,7 @@ impl BTreeCursor {
     /// Check if the table is empty.
     /// This is done by checking if the root page has no cells.
     fn is_empty_table(&self) -> Result<CursorResult<bool>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         let page = self.pager.read_page(self.root_page)?;
         return_if_locked!(page);
 
@@ -296,7 +296,7 @@ impl BTreeCursor {
         &mut self,
         predicate: Option<(SeekKey<'_>, SeekOp)>,
     ) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         loop {
             let mem_page_rc = self.stack.top();
             let cell_idx = self.stack.current_cell_index() as usize;
@@ -599,7 +599,7 @@ impl BTreeCursor {
     }
 
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
         //
@@ -1592,27 +1592,33 @@ impl BTreeCursor {
     }
 
     pub fn is_empty(&self) -> bool {
-        assert!(self.mv_store.is_none());
-        self.record.borrow().is_none()
+        if let Some(mv_cursor) = &self.mv_cursor {
+            mv_cursor.is_empty()
+        } else {
+            self.record.borrow().is_none()
+        }
     }
 
     pub fn root_page(&self) -> usize {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         self.root_page
     }
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
-        self.move_to_root();
+        if let Some(_) = &self.mv_cursor {
+            // no-op
+        } else {
+            self.move_to_root();
 
-        let (rowid, record) = return_if_io!(self.get_next_record(None));
-        self.rowid.replace(rowid);
-        self.record.replace(record);
+            let (rowid, record) = return_if_io!(self.get_next_record(None));
+            self.rowid.replace(rowid);
+            self.record.replace(record);    
+        }
         Ok(CursorResult::Ok(()))
     }
 
     pub fn last(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         match self.move_to_rightmost()? {
             CursorResult::Ok(_) => self.prev(),
             CursorResult::IO => Ok(CursorResult::IO),
@@ -1620,7 +1626,7 @@ impl BTreeCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         let (rowid, record) = return_if_io!(self.get_next_record(None));
         self.rowid.replace(rowid);
         self.record.replace(record);
@@ -1628,7 +1634,7 @@ impl BTreeCursor {
     }
 
     pub fn prev(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         match self.get_prev_record()? {
             CursorResult::Ok((rowid, record)) => {
                 self.rowid.replace(rowid);
@@ -1645,12 +1651,12 @@ impl BTreeCursor {
     }
 
     pub fn rowid(&self) -> Result<Option<u64>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         Ok(self.rowid.get())
     }
 
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<bool>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         let (rowid, record) = return_if_io!(self.do_seek(key, op));
         self.rowid.replace(rowid);
         self.record.replace(record);
@@ -1658,13 +1664,12 @@ impl BTreeCursor {
     }
 
     pub fn record(&self) -> Ref<Option<Record>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         self.record.borrow()
     }
 
     pub fn insert(
         &mut self,
-        tx_id: Option<crate::mvcc::database::TxID>,
         key: &OwnedValue,
         record: &Record,
         moved_before: bool, /* Indicate whether it's necessary to traverse to find the leaf page */
@@ -1673,8 +1678,8 @@ impl BTreeCursor {
             OwnedValue::Integer(i) => i,
             _ => unreachable!("btree tables are indexed by integers!"),
         };
-        match tx_id {
-            Some(tx_id) => self.mvcc_insert(tx_id, *int_key, record),
+        match &self.mv_cursor {
+            Some(_) => self.mvcc_insert(*int_key, record),
             None => {
                 if !moved_before {
                     return_if_io!(self.move_to(SeekKey::TableRowId(*int_key as u64), SeekOp::EQ));
@@ -1686,18 +1691,18 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(()))
     }
 
-    fn mvcc_insert(&self, tx_id: crate::mvcc::database::TxID, key: i64, record: &Record) {
-        if let Some(mv_store) = &self.mv_store {
+    fn mvcc_insert(&self, key: i64, record: &Record) {
+        if let Some(mv_cursor) = &self.mv_cursor {
             let row_id = crate::mvcc::database::RowID::new(self.table_id() as u64, key as u64);
             let mut record_buf = Vec::new();
             record.serialize(&mut record_buf);
             let row = crate::mvcc::database::Row::new(row_id, record_buf);
-            mv_store.insert(tx_id, row).unwrap();
+            mv_cursor.insert(row).unwrap();
         }
     }
 
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         let page = self.stack.top();
         return_if_locked!(page);
 
@@ -1833,17 +1838,17 @@ impl BTreeCursor {
     }
 
     pub fn set_null_flag(&mut self, flag: bool) {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         self.null_flag = flag;
     }
 
     pub fn get_null_flag(&self) -> bool {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         self.null_flag
     }
 
     pub fn exists(&mut self, key: &OwnedValue) -> Result<CursorResult<bool>> {
-        assert!(self.mv_store.is_none());
+        assert!(self.mv_cursor.is_none());
         let int_key = match key {
             OwnedValue::Integer(i) => i,
             _ => unreachable!("btree tables are indexed by integers!"),
