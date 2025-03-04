@@ -84,7 +84,6 @@ enum TransactionState {
 }
 
 pub struct Database {
-    // TODO: make schema work without lock
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
     header: Arc<Mutex<DatabaseHeader>>,
@@ -146,7 +145,9 @@ impl Database {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
-            let mut schema = schema.try_write().expect("lock on schema should succeed first try");
+            let mut schema = schema
+                .try_write()
+                .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
             parse_schema_rows(rows, &mut schema, io, syms.deref())?;
         }
