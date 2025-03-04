@@ -1,6 +1,6 @@
 use crate::{
     import::{ImportFile, IMPORT_HELP},
-    input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings, HELP_MSG},
+    input::{get_io, get_writer, DbLocation, OutputMode, Settings, HELP_MSG},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
@@ -42,14 +42,11 @@ pub struct Opts {
     #[clap(short, long, help = "Print commands before execution")]
     pub echo: bool,
     #[clap(
-        default_value_t,
-        value_enum,
-        short,
+        short = 'v',
         long,
-        help = "Select I/O backend. The only other choice to 'syscall' is\n\
-        \t'io-uring' when built for Linux with feature 'io_uring'\n"
+        help = "Select VFS. options are io_uring (if feature enabled), memory, and syscall"
     )]
-    pub io: Io,
+    pub vfs: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +83,8 @@ pub enum Command {
     LoadExtension,
     /// Dump the current database as a list of SQL statements
     Dump,
+    /// List available VFS
+    ListVfs,
 }
 
 impl Command {
@@ -99,6 +98,7 @@ impl Command {
             | Self::ShowInfo
             | Self::Tables
             | Self::SetOutput
+            | Self::ListVfs
             | Self::Dump => 0,
             Self::Open
             | Self::OutputMode
@@ -128,6 +128,7 @@ impl Command {
             Self::LoadExtension => ".load",
             Self::Dump => ".dump",
             Self::Import => &IMPORT_HELP,
+            Self::ListVfs => ".vfslist",
         }
     }
 }
@@ -152,6 +153,7 @@ impl FromStr for Command {
             ".import" => Ok(Self::Import),
             ".load" => Ok(Self::LoadExtension),
             ".dump" => Ok(Self::Dump),
+            ".vfslist" => Ok(Self::ListVfs),
             _ => Err("Unknown command".to_string()),
         }
     }
@@ -202,14 +204,23 @@ impl<'a> Limbo<'a> {
             .database
             .as_ref()
             .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string());
-
-        let io = {
-            match db_file.as_str() {
-                ":memory:" => get_io(DbLocation::Memory, opts.io)?,
-                _path => get_io(DbLocation::Path, opts.io)?,
-            }
+        let (io, db) = if let Some(ref vfs) = opts.vfs {
+            Database::open_new(&db_file, vfs)?
+        } else {
+            let io = {
+                match db_file.as_str() {
+                    ":memory:" => get_io(
+                        DbLocation::Memory,
+                        opts.vfs.as_ref().map_or("", |s| s.as_str()),
+                    )?,
+                    _path => get_io(
+                        DbLocation::Path,
+                        opts.vfs.as_ref().map_or("", |s| s.as_str()),
+                    )?,
+                }
+            };
+            (io.clone(), Database::open_file(io.clone(), &db_file)?)
         };
-        let db = Database::open_file(io.clone(), &db_file)?;
         let conn = db.connect();
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
@@ -297,7 +308,7 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let values = row
                     .get_values()
-                    .into_iter()
+                    .iter()
                     .zip(value_types.iter())
                     .map(|(value, value_type)| {
                         // If the type affinity is TEXT, replace each single
@@ -323,7 +334,7 @@ impl<'a> Limbo<'a> {
                     })
                     .collect::<Vec<_>>()
                     .join(",");
-                let _ = self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
+                self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
                 Ok(())
             }
         )?;
@@ -349,7 +360,7 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let sql: &str = row.get::<&str>(2)?;
                 let name: &str = row.get::<&str>(0)?;
-                let _ = self.write_fmt(format_args!("{};", sql))?;
+                self.write_fmt(format_args!("{};", sql))?;
                 self.dump_table(name)
             }
         );
@@ -400,18 +411,30 @@ impl<'a> Limbo<'a> {
         }
     }
 
-    fn open_db(&mut self, path: &str) -> anyhow::Result<()> {
+    fn open_db(&mut self, path: &str, vfs_name: Option<&str>) -> anyhow::Result<()> {
         self.conn.close()?;
-        let io = {
-            match path {
-                ":memory:" => get_io(DbLocation::Memory, self.opts.io)?,
-                _path => get_io(DbLocation::Path, self.opts.io)?,
-            }
+        let (io, db) = if let Some(vfs_name) = vfs_name {
+            self.conn.open_new(path, vfs_name)?
+        } else {
+            let io = {
+                match path {
+                    ":memory:" => get_io(DbLocation::Memory, &self.opts.io.to_string())?,
+                    _path => get_io(DbLocation::Path, &self.opts.io.to_string())?,
+                }
+            };
+            (io.clone(), Database::open_file(io.clone(), path)?)
         };
-        self.io = Arc::clone(&io);
-        let db = Database::open_file(self.io.clone(), path)?;
+        self.io = io;
         self.conn = db.connect();
         self.opts.db_file = path.to_string();
+        Ok(())
+    }
+
+    fn list_vfs(&mut self) -> io::Result<()> {
+        let vfs_list = self.conn.list_vfs();
+        for vfs in vfs_list {
+            let _ = self.writeln(vfs);
+        }
         Ok(())
     }
 
@@ -465,12 +488,12 @@ impl<'a> Limbo<'a> {
     fn run_query(&mut self, input: &str) {
         let echo = self.opts.echo;
         if echo {
-            let _ = self.writeln(&input);
+            let _ = self.writeln(input);
         }
         let conn = self.conn.clone();
         let runner = conn.query_runner(input.as_bytes());
         for output in runner {
-            if let Err(_) = self.print_query_result(&input, output) {
+            if self.print_query_result(input, output).is_err() {
                 break;
             }
         }
@@ -564,8 +587,12 @@ impl<'a> Limbo<'a> {
                     std::process::exit(0)
                 }
                 Command::Open => {
-                    if self.open_db(args[1]).is_err() {
-                        let _ = self.writeln("Error: Unable to open database file.");
+                    let vfs = args.get(2).map(|s| &**s);
+                    if let Err(e) = self.open_db(args[1], vfs) {
+                        let _ = self.write_fmt(format_args!(
+                            "Error: Unable to open database file.\n {}",
+                            e
+                        ));
                     }
                 }
                 Command::Schema => {
@@ -645,6 +672,9 @@ impl<'a> Limbo<'a> {
                     if let Err(e) = self.dump_database() {
                         let _ = self.write_fmt(format_args!("/****** ERROR: {} ******/", e));
                     }
+                }
+                Command::ListVfs => {
+                    let _ = self.list_vfs();
                 }
             }
         } else {
