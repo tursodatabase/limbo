@@ -1,8 +1,10 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
+    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
+    Value,
 };
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Mutex;
 
 lazy_static! {
@@ -32,7 +34,7 @@ impl VTabModule for KVStoreVTab {
         "CREATE TABLE x (key TEXT PRIMARY KEY, value TEXT);".to_string()
     }
 
-    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
         Ok(KVStoreCursor {
             rows: Vec::new(),
             index: None,

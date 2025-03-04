@@ -356,8 +356,9 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///            city TEXT
 ///        )"
 ///    }
-///    /// Open the virtual table and return a cursor
-///  fn open() -> Self::VCursor {
+///    /// Open the virtual table and return a cursor. Optionally, you can store
+///    /// a connection to the owning database in your cursor.
+///  fn open(&self, conn: Rc<Connection>) -> Self::VCursor {
 ///       let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
 ///       let rows: Vec<Vec<String>> = csv_content
 ///           .lines()
@@ -467,13 +468,18 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void) -> *const ::std::ffi::c_void {
+            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void, conn: *mut ::limbo_ext::Conn) -> *const ::std::ffi::c_void {
                 if ctx.is_null() {
                     return ::std::ptr::null();
                 }
                 let ctx  = ctx as *const #struct_name;
                 let ctx: &#struct_name = &*ctx;
-                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx) {
+                let conn = if conn.is_null() {
+                    None
+                } else {
+                     Some(::std::rc::Rc::new(::limbo_ext::Connection::new(conn)))
+                };
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx, conn) {
                     return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *const ::std::ffi::c_void;
                 } else {
                     return ::std::ptr::null();
@@ -594,18 +600,22 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
 
             #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
-                api: *const ::limbo_ext::ExtensionApi
+                api: *mut ::limbo_ext::ExtensionApi
             ) -> ::limbo_ext::ResultCode {
                 if api.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
-                let api = &*api;
+                let api = &mut *api;
+                // establish connection on vtab module registration
+                let connection = unsafe { (api.connect)(api.ctx) };
+                api.conn = connection;
                 let name = <#struct_name as ::limbo_ext::VTabModule>::NAME;
                 let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
                 let table_instance = ::std::boxed::Box::into_raw(::std::boxed::Box::new(#struct_name::default()));
                 let module = ::limbo_ext::VTabModuleImpl {
                     ctx: table_instance as *const ::std::ffi::c_void,
                     name: name_c,
+                    conn: api.conn,
                     create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
                     filter: Self::#filter_fn_name,
@@ -711,7 +721,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
             #[cfg(feature = "static")]
             pub unsafe extern "C" fn register_extension_static(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
-                let api = unsafe { &*api };
+                let api = unsafe { &*api as *const ::limbo_ext::ExtensionApi } as *mut ::limbo_ext::ExtensionApi;
                 #(#static_scalars)*
 
                 #(#static_aggregates)*
@@ -724,7 +734,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
             #[cfg(not(feature = "static"))]
             #[no_mangle]
             pub unsafe extern "C" fn register_extension(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
-                let api = unsafe { &*api };
+                let api = unsafe { &*api as *const ::limbo_ext::ExtensionApi } as *mut ::limbo_ext::ExtensionApi;
                 #(#scalar_calls)*
 
                 #(#aggregate_calls)*

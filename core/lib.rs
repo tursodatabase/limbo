@@ -150,10 +150,8 @@ impl Database {
             _shared_wal: shared_wal.clone(),
             syms: syms.clone(),
         };
-        if let Err(e) = db.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
         let db = Arc::new(db);
+        let _ = db.register_builtins();
         let conn = Rc::new(Connection {
             db: db.clone(),
             pager,
@@ -186,7 +184,7 @@ impl Database {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> Result<()> {
+    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(self: &Arc<Database>, path: P) -> Result<()> {
         let api = Box::new(self.build_limbo_ext());
         let lib =
             unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
@@ -569,7 +567,9 @@ impl VirtualTable {
     }
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
+        let cursor = unsafe {
+            (self.implementation.open)(self.implementation.ctx, self.implementation.conn)
+        };
         VTabOpaqueCursor::new(cursor)
     }
 
