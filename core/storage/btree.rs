@@ -203,7 +203,9 @@ impl BTreeCursor {
     /// Check if the table is empty.
     /// This is done by checking if the root page has no cells.
     fn is_empty_table(&self) -> Result<CursorResult<bool>> {
-        assert!(self.mv_cursor.is_none());
+        if let Some(mv_cursor) = &self.mv_cursor {
+            return Ok(CursorResult::Ok(mv_cursor.is_empty()));
+        }
         let page = self.pager.read_page(self.root_page)?;
         return_if_locked!(page);
 
@@ -296,7 +298,17 @@ impl BTreeCursor {
         &mut self,
         predicate: Option<(SeekKey<'_>, SeekOp)>,
     ) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
-        assert!(self.mv_cursor.is_none());
+        if let Some(mv_cursor) = &self.mv_cursor {
+            let rowid = mv_cursor.current_row_id();
+            match rowid {
+                Some(rowid) => {
+                    let record = mv_cursor.current_row().unwrap().unwrap();
+                    let record: Record = crate::storage::sqlite3_ondisk::read_record(&record.data)?;
+                    return Ok(CursorResult::Ok((Some(rowid.row_id), Some(record))));
+                }
+                None => return Ok(CursorResult::Ok((None, None))),
+            }
+        }
         loop {
             let mem_page_rc = self.stack.top();
             let cell_idx = self.stack.current_cell_index() as usize;
@@ -1600,7 +1612,6 @@ impl BTreeCursor {
     }
 
     pub fn root_page(&self) -> usize {
-        assert!(self.mv_cursor.is_none());
         self.root_page
     }
 
@@ -1612,7 +1623,7 @@ impl BTreeCursor {
 
             let (rowid, record) = return_if_io!(self.get_next_record(None));
             self.rowid.replace(rowid);
-            self.record.replace(record);    
+            self.record.replace(record);
         }
         Ok(CursorResult::Ok(()))
     }
@@ -1626,7 +1637,6 @@ impl BTreeCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
-        assert!(self.mv_cursor.is_none());
         let (rowid, record) = return_if_io!(self.get_next_record(None));
         self.rowid.replace(rowid);
         self.record.replace(record);
@@ -1651,7 +1661,9 @@ impl BTreeCursor {
     }
 
     pub fn rowid(&self) -> Result<Option<u64>> {
-        assert!(self.mv_cursor.is_none());
+        if let Some(mv_cursor) = &self.mv_cursor {
+            return Ok(mv_cursor.current_row_id().map(|rowid| rowid.row_id));
+        }
         Ok(self.rowid.get())
     }
 
@@ -1664,7 +1676,6 @@ impl BTreeCursor {
     }
 
     pub fn record(&self) -> Ref<Option<Record>> {
-        assert!(self.mv_cursor.is_none());
         self.record.borrow()
     }
 
@@ -1838,12 +1849,10 @@ impl BTreeCursor {
     }
 
     pub fn set_null_flag(&mut self, flag: bool) {
-        assert!(self.mv_cursor.is_none());
         self.null_flag = flag;
     }
 
     pub fn get_null_flag(&self) -> bool {
-        assert!(self.mv_cursor.is_none());
         self.null_flag
     }
 

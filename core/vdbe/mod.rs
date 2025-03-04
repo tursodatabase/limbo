@@ -48,7 +48,6 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
-use crate::{MvStore, MvCursor};
 #[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
@@ -57,6 +56,7 @@ use crate::{
     json::json_quote, json::json_remove, json::json_set, json::json_type,
 };
 use crate::{resolve_ext_path, Connection, Result, TransactionState, DATABASE_VERSION};
+use crate::{MvCursor, MvStore};
 use insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
     exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
@@ -756,9 +756,10 @@ impl Program {
                         Some(tx_id) => {
                             let table_id = *root_page as u64;
                             let mv_store = mv_store.as_ref().unwrap().clone();
-                            let mv_cursor = Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
+                            let mv_cursor =
+                                Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
                             Some(mv_cursor)
-                        },
+                        }
                         None => None,
                     };
                     let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
@@ -2961,7 +2962,8 @@ impl Program {
                         Some(tx_id) => {
                             let table_id = *root_page as u64;
                             let mv_store = mv_store.as_ref().unwrap().clone();
-                            let mv_cursor = Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
+                            let mv_cursor =
+                                Rc::new(MvCursor::new(mv_store, tx_id, table_id).unwrap());
                             Some(mv_cursor)
                         }
                         None => None,
