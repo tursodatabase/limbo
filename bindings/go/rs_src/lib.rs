@@ -27,7 +27,7 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
         }
         _ => Arc::new(limbo_core::PlatformIO::new().expect("Failed to create IO")),
     };
-    let db = Database::open_file(io.clone(), path);
+    let db = Database::open_file(io.clone(), path, false);
     match db {
         Ok(db) => {
             let conn = db.connect();

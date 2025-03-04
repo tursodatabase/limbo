@@ -41,7 +41,7 @@ impl TempDatabase {
 
     pub fn connect_limbo(&self) -> Rc<limbo_core::Connection> {
         log::debug!("conneting to limbo");
-        let db = Database::open_file(self.io.clone(), self.path.to_str().unwrap()).unwrap();
+        let db = Database::open_file(self.io.clone(), self.path.to_str().unwrap(), false).unwrap();
 
         let conn = db.connect();
         log::debug!("connected to limbo");
