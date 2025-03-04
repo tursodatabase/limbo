@@ -2998,7 +2998,7 @@ impl Program {
                         "SELECT * FROM  sqlite_schema WHERE {}",
                         where_clause
                     ))?;
-                    let mut schema = conn.schema.lock().unwrap();
+                    let mut schema = conn.schema.write();
                     // TODO: This function below is synchronous, make it async
                     parse_schema_rows(
                         Some(stmt),
