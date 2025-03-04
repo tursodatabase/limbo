@@ -1,4 +1,4 @@
-use super::{common, Completion, File, OpenFlags, IO};
+use super::{common, Completion, File, IOBuff, OpenFlags, IO};
 use crate::{LimboError, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use rustix::io_uring::iovec;
@@ -247,7 +247,7 @@ impl File for UringFile {
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
         let mut io = self.io.borrow_mut();
         let read_e = {
-            let mut buf = r.buf_mut();
+            let buf = r.buf_mut();
             let len = buf.len();
             let buf = buf.as_mut_ptr();
             let iovec = io.get_iovec(buf, len);
@@ -260,11 +260,11 @@ impl File for UringFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: Completion) -> Result<()> {
         let mut io = self.io.borrow_mut();
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
         let write = {
-            let buf = buffer.borrow();
+            let buf = buffer.buf();
             trace!("pwrite(pos = {}, length = {})", pos, buf.len());
             let iovec = io.get_iovec(buf.as_ptr(), buf.len());
             io_uring::opcode::Writev::new(fd, iovec as *const iovec as *const libc::iovec, 1)

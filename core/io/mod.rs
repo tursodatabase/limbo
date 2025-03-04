@@ -1,19 +1,14 @@
 use crate::Result;
 use cfg_block::cfg_block;
+use std::cell::UnsafeCell;
 use std::fmt;
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    fmt::Debug,
-    mem::ManuallyDrop,
-    pin::Pin,
-    rc::Rc,
-};
+use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, rc::Rc};
 
 pub trait File {
     fn lock_file(&self, exclusive: bool) -> Result<()>;
     fn unlock_file(&self) -> Result<()>;
     fn pread(&self, pos: usize, c: Completion) -> Result<()>;
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<Buffer>>, c: Completion) -> Result<()>;
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: Completion) -> Result<()>;
     fn sync(&self, c: Completion) -> Result<()>;
     fn size(&self) -> Result<u64>;
 }
@@ -33,7 +28,7 @@ pub trait IO {
     fn get_current_time(&self) -> String;
 }
 
-pub type Complete = dyn Fn(Rc<RefCell<Buffer>>);
+pub type Complete = dyn Fn(IOBuff);
 pub type WriteComplete = dyn Fn(i32);
 pub type SyncComplete = dyn Fn(i32);
 
@@ -44,7 +39,7 @@ pub enum Completion {
 }
 
 pub struct ReadCompletion {
-    pub buf: Rc<RefCell<Buffer>>,
+    pub buf: IOBuff,
     pub complete: Box<Complete>,
 }
 
@@ -76,16 +71,17 @@ pub struct SyncCompletion {
 }
 
 impl ReadCompletion {
-    pub fn new(buf: Rc<RefCell<Buffer>>, complete: Box<Complete>) -> Self {
+    pub fn new(buf: IOBuff, complete: Box<Complete>) -> Self {
         Self { buf, complete }
     }
 
-    pub fn buf(&self) -> Ref<'_, Buffer> {
-        self.buf.borrow()
+    pub fn buf(&self) -> &Buffer {
+        unsafe { &*self.buf.0.get() }
     }
 
-    pub fn buf_mut(&self) -> RefMut<'_, Buffer> {
-        self.buf.borrow_mut()
+    #[allow(clippy::mut_from_ref)]
+    pub fn buf_mut(&self) -> &mut Buffer {
+        unsafe { &mut *self.buf.0.get() }
     }
 
     pub fn complete(&self) {
@@ -110,6 +106,36 @@ impl SyncCompletion {
 
     pub fn complete(&self, res: i32) {
         (self.complete)(res);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IOBuff(Rc<UnsafeCell<Buffer>>);
+
+impl IOBuff {
+    pub fn new(buf: Buffer) -> Self {
+        Self(Rc::new(UnsafeCell::new(buf)))
+    }
+
+    // Clones the inner buffer and not just a refcount increase
+    pub fn clone_inner(&self) -> Self {
+        Self(Rc::new(UnsafeCell::new(unsafe { (*self.0.get()).clone() })))
+    }
+
+    pub fn buf(&self) -> &Buffer {
+        unsafe { &*self.0.get() }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    pub fn buf_mut(&self) -> &mut Buffer {
+        unsafe { &mut *self.0.get() }
+    }
+
+    pub fn len(&self) -> usize {
+        self.buf().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.buf().is_empty()
     }
 }
 
