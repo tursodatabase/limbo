@@ -4,6 +4,7 @@ use std::{
     cmp::Ordering,
     fmt::{Display, Formatter},
     rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
@@ -325,7 +326,7 @@ pub enum Search {
     },
     /// A secondary index search. Uses bytecode instructions like SeekGE, SeekGT etc.
     IndexSearch {
-        index: Rc<Index>,
+        index: Arc<Index>,
         cmp_op: ast::Operator,
         cmp_expr: WhereTerm,
     },

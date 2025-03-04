@@ -53,6 +53,8 @@ pub enum LimboError {
     Unbound(NonZero<usize>),
     #[error("Runtime error: integer overflow")]
     IntegerOverflow,
+    #[error("Schema is locked for write")]
+    SchemaLocked,
 }
 
 #[macro_export]

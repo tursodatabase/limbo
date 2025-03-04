@@ -9,21 +9,22 @@ use limbo_sqlite3_parser::{
 };
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::trace;
 
 pub struct Schema {
-    pub tables: HashMap<String, Rc<Table>>,
+    pub tables: HashMap<String, Arc<Table>>,
     // table_name to list of indexes for the table
-    pub indexes: HashMap<String, Vec<Rc<Index>>>,
+    pub indexes: HashMap<String, Vec<Arc<Index>>>,
 }
 
 impl Schema {
     pub fn new() -> Self {
-        let mut tables: HashMap<String, Rc<Table>> = HashMap::new();
-        let indexes: HashMap<String, Vec<Rc<Index>>> = HashMap::new();
+        let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
+        let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         tables.insert(
             "sqlite_schema".to_string(),
-            Rc::new(Table::BTree(sqlite_schema_table().into())),
+            Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
         Self { tables, indexes }
     }
@@ -38,7 +39,7 @@ impl Schema {
         self.tables.insert(name, Table::Virtual(table).into());
     }
 
-    pub fn get_table(&self, name: &str) -> Option<Rc<Table>> {
+    pub fn get_table(&self, name: &str) -> Option<Arc<Table>> {
         let name = normalize_ident(name);
         self.tables.get(&name).cloned()
     }
@@ -52,7 +53,7 @@ impl Schema {
         }
     }
 
-    pub fn add_index(&mut self, index: Rc<Index>) {
+    pub fn add_index(&mut self, index: Arc<Index>) {
         let table_name = normalize_ident(&index.table_name);
         self.indexes
             .entry(table_name)

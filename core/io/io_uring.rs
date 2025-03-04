@@ -8,6 +8,7 @@ use std::io::ErrorKind;
 use std::os::fd::AsFd;
 use std::os::unix::io::AsRawFd;
 use std::rc::Rc;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -34,6 +35,9 @@ impl fmt::Display for UringIOError {
 pub struct UringIO {
     inner: Rc<RefCell<InnerUringIO>>,
 }
+
+unsafe impl Send for UringIO {}
+unsafe impl Sync for UringIO {}
 
 struct WrappedIOUring {
     ring: io_uring::IoUring,
@@ -132,7 +136,7 @@ impl WrappedIOUring {
 }
 
 impl IO for UringIO {
-    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Rc<dyn File>> {
+    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let file = std::fs::File::options()
             .read(true)
@@ -148,7 +152,7 @@ impl IO for UringIO {
                 Err(error) => debug!("Error {error:?} returned when setting O_DIRECT flag to read file. The performance of the system may be affected"),
             }
         }
-        let uring_file = Rc::new(UringFile {
+        let uring_file = Arc::new(UringFile {
             io: self.inner.clone(),
             file,
         });
@@ -202,6 +206,9 @@ pub struct UringFile {
     io: Rc<RefCell<InnerUringIO>>,
     file: std::fs::File,
 }
+
+unsafe impl Send for UringFile {}
+unsafe impl Sync for UringFile {}
 
 impl File for UringFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
@@ -260,7 +267,7 @@ impl File for UringFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
         let mut io = self.io.borrow_mut();
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
         let write = {
