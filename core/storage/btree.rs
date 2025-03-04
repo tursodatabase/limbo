@@ -3201,6 +3201,7 @@ mod tests {
     #[test]
     pub fn test_drop_odd() {
         let db = get_database();
+        let conn = db.connect().unwrap();
 
         let page = get_page(2);
         let page = page.get_contents();
@@ -3847,7 +3848,7 @@ mod tests {
             &mut payload,
             &record,
             4096,
-            db.pager.clone(),
+            conn.pager.clone(),
         );
         insert(0, page.get_contents());
         defragment(page.get_contents());

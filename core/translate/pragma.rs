@@ -173,7 +173,11 @@ fn query_pragma(
     match pragma {
         PragmaName::CacheSize => {
             program.emit_int(
-                database_header.lock().unwrap().default_page_cache_size.into(),
+                database_header
+                    .lock()
+                    .unwrap()
+                    .default_page_cache_size
+                    .into(),
                 register,
             );
             program.emit_result_row(register, 1);

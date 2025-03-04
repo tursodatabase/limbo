@@ -88,8 +88,6 @@ pub struct Database {
     schema: Arc<Mutex<Schema>>,
     // TODO: make header work without lock
     header: Arc<Mutex<DatabaseHeader>>,
-    // TODO: make syms work without lock
-    syms: Arc<Mutex<SymbolTable>>,
     page_io: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
     page_size: u16,
@@ -115,7 +113,7 @@ impl Database {
         io.run_once()?;
         let page_size = db_header.lock().unwrap().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
-        Self::open(io, page_io,  wal_shared)
+        Self::open(io, page_io, wal_shared)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -134,31 +132,30 @@ impl Database {
         let page_size = db_header.lock().unwrap().page_size;
         let header = db_header;
         let schema = Arc::new(Mutex::new(Schema::new()));
-        let syms = Arc::new(Mutex::new(SymbolTable::new()));
         let db = Database {
             schema: schema.clone(),
             header: header.clone(),
             shared_page_cache: shared_page_cache.clone(),
             shared_wal: shared_wal.clone(),
-            syms: syms.clone(),
             page_io,
             io: io.clone(),
-            page_size
+            page_size,
         };
-        if let Err(e) = db.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
         let db = Arc::new(db);
-        let conn = db.connect()?;
-        let rows = conn.query("SELECT * FROM sqlite_schema")?;
-        let mut schema = schema.lock().unwrap();
-        let syms = syms.lock().unwrap();
-        parse_schema_rows(rows, &mut schema, io, syms.deref())?;
+        {
+            // parse schema
+            let conn = db.connect()?;
+            let rows = conn.query("SELECT * FROM sqlite_schema")?;
+            let mut schema = schema.lock().unwrap();
+            let syms = conn.syms.borrow();
+            parse_schema_rows(rows, &mut schema, io, syms.deref())?;
+        }
         Ok(db)
     }
 
     pub fn connect(self: &Arc<Database>) -> Result<Rc<Connection>> {
         let buffer_pool = Rc::new(BufferPool::new(self.page_size as usize));
+
         let wal = Rc::new(RefCell::new(WalFile::new(
             self.io.clone(),
             self.page_size as usize,
@@ -173,7 +170,7 @@ impl Database {
             self.shared_page_cache.clone(),
             buffer_pool,
         )?);
-        Ok(Rc::new(Connection {
+        let conn = Rc::new(Connection {
             db: self.clone(),
             pager: pager.clone(),
             schema: self.schema.clone(),
@@ -182,32 +179,13 @@ impl Database {
             auto_commit: RefCell::new(true),
             transaction_state: RefCell::new(TransactionState::None),
             last_change: Cell::new(0),
+            syms: RefCell::new(SymbolTable::new()),
             total_changes: Cell::new(0),
-        }))
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> Result<()> {
-        let api = Box::new(self.build_limbo_ext());
-        let lib =
-            unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
-        let entry: Symbol<ExtensionEntryPoint> = unsafe {
-            lib.get(b"register_extension")
-                .map_err(|e| LimboError::ExtensionError(e.to_string()))?
-        };
-        let api_ptr: *const ExtensionApi = Box::into_raw(api);
-        let result_code = unsafe { entry(api_ptr) };
-        if result_code.is_ok() {
-            self.syms.lock().unwrap().extensions.push((lib, api_ptr));
-            Ok(())
-        } else {
-            if !api_ptr.is_null() {
-                let _ = unsafe { Box::from_raw(api_ptr.cast_mut()) };
-            }
-            Err(LimboError::ExtensionError(
-                "Extension registration failed".to_string(),
-            ))
+        });
+        if let Err(e) = conn.register_builtins() {
+            return Err(LimboError::ExtensionError(e));
         }
+        Ok(conn)
     }
 }
 
@@ -269,6 +247,7 @@ pub struct Connection {
     last_insert_rowid: Cell<u64>,
     last_change: Cell<i64>,
     total_changes: Cell<i64>,
+    syms: RefCell<SymbolTable>,
 }
 
 impl Connection {
@@ -277,7 +256,7 @@ impl Connection {
         tracing::trace!("Preparing: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
-        let syms = self.db.syms.lock().unwrap();
+        let syms = self.syms.borrow();
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Stmt(stmt) => {
@@ -312,8 +291,7 @@ impl Connection {
     }
 
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
-        let db = self.db.clone();
-        let syms = db.syms.lock().unwrap();
+        let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
@@ -344,8 +322,12 @@ impl Connection {
             Cmd::ExplainQueryPlan(stmt) => {
                 match stmt {
                     ast::Stmt::Select(select) => {
-                        let mut plan =
-                            prepare_select_plan(&self.schema.lock().unwrap(), *select, &syms, None)?;
+                        let mut plan = prepare_select_plan(
+                            &self.schema.lock().unwrap(),
+                            *select,
+                            &syms,
+                            None,
+                        )?;
                         optimize_plan(&mut plan, &self.schema.lock().unwrap())?;
                         println!("{}", plan);
                     }
@@ -364,7 +346,7 @@ impl Connection {
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
-        let syms = self.db.syms.lock().unwrap();
+        let syms = self.syms.borrow();
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Explain(stmt) => {
@@ -416,7 +398,26 @@ impl Connection {
 
     #[cfg(not(target_family = "wasm"))]
     pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> Result<()> {
-        Database::load_extension(&self.db, path)
+        let api = Box::new(self.build_limbo_ext());
+        let lib =
+            unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
+        let entry: Symbol<ExtensionEntryPoint> = unsafe {
+            lib.get(b"register_extension")
+                .map_err(|e| LimboError::ExtensionError(e.to_string()))?
+        };
+        let api_ptr: *const ExtensionApi = Box::into_raw(api);
+        let result_code = unsafe { entry(api_ptr) };
+        if result_code.is_ok() {
+            self.syms.borrow_mut().extensions.push((lib, api_ptr));
+            Ok(())
+        } else {
+            if !api_ptr.is_null() {
+                let _ = unsafe { Box::from_raw(api_ptr.cast_mut()) };
+            }
+            Err(LimboError::ExtensionError(
+                "Extension registration failed".to_string(),
+            ))
+        }
     }
 
     /// Close a connection and checkpoint.

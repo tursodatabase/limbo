@@ -1,4 +1,4 @@
-use crate::{function::ExternalFunc, Database};
+use crate::{function::ExternalFunc, Connection};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
 };
@@ -28,8 +28,8 @@ unsafe extern "C" fn register_scalar_function(
     if ctx.is_null() {
         return ResultCode::Error;
     }
-    let db = unsafe { &*(ctx as *const Database) };
-    db.register_scalar_function_impl(&name_str, func)
+    let conn = unsafe { &*(ctx as *const Connection) };
+    conn.register_scalar_function_impl(&name_str, func)
 }
 
 unsafe extern "C" fn register_aggregate_function(
@@ -48,8 +48,8 @@ unsafe extern "C" fn register_aggregate_function(
     if ctx.is_null() {
         return ResultCode::Error;
     }
-    let db = unsafe { &*(ctx as *const Database) };
-    db.register_aggregate_function_impl(&name_str, args, (init_func, step_func, finalize_func))
+    let conn = unsafe { &*(ctx as *const Connection) };
+    conn.register_aggregate_function_impl(&name_str, args, (init_func, step_func, finalize_func))
 }
 
 unsafe extern "C" fn register_module(
@@ -69,14 +69,14 @@ unsafe extern "C" fn register_module(
     if ctx.is_null() {
         return ResultCode::Error;
     }
-    let db = unsafe { &mut *(ctx as *mut Database) };
+    let conn = unsafe { &mut *(ctx as *mut Connection) };
 
-    db.register_module_impl(&name_str, module, kind)
+    conn.register_module_impl(&name_str, module, kind)
 }
 
-impl Database {
+impl Connection {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
-        self.syms.lock().unwrap().functions.insert(
+        self.syms.borrow_mut().functions.insert(
             name.to_string(),
             Rc::new(ExternalFunc::new_scalar(name.to_string(), func)),
         );
@@ -89,7 +89,7 @@ impl Database {
         args: i32,
         func: ExternAggFunc,
     ) -> ResultCode {
-        self.syms.lock().unwrap().functions.insert(
+        self.syms.borrow_mut().functions.insert(
             name.to_string(),
             Rc::new(ExternalFunc::new_aggregate(name.to_string(), args, func)),
         );
@@ -108,8 +108,7 @@ impl Database {
             implementation: module,
         };
         self.syms
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .vtab_modules
             .insert(name.to_string(), vmodule.into());
         ResultCode::OK

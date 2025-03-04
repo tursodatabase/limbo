@@ -1,7 +1,6 @@
 use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
 use core::fmt;
-use std::sync::Arc;
 use fallible_iterator::FallibleIterator;
 use limbo_sqlite3_parser::ast::{Expr, Literal, TableOptions};
 use limbo_sqlite3_parser::{
@@ -10,6 +9,7 @@ use limbo_sqlite3_parser::{
 };
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::trace;
 
 pub struct Schema {

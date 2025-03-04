@@ -1,7 +1,8 @@
 use std::{
     cell::Cell,
     collections::HashMap,
-    rc::{Rc, Weak}, sync::{Arc, Mutex},
+    rc::{Rc, Weak},
+    sync::{Arc, Mutex},
 };
 
 use crate::{

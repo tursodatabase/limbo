@@ -1,7 +1,5 @@
 use js_sys::{Array, Object};
-use limbo_core::{
-    maybe_init_database_file, OpenFlags, Pager, Result, WalFileShared,
-};
+use limbo_core::{maybe_init_database_file, OpenFlags, Pager, Result, WalFileShared};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -328,7 +326,6 @@ impl DatabaseStorage {
         Self { file }
     }
 }
-
 
 impl limbo_core::DatabaseStorage for DatabaseStorage {
     fn read_page(&self, page_idx: usize, c: limbo_core::Completion) -> Result<()> {

@@ -814,15 +814,13 @@ impl Program {
                         Some(&table_name),
                         &module_name,
                         args,
-                        &conn.db.syms.lock().unwrap(),
+                        &conn.syms.borrow(),
                         limbo_ext::VTabKind::VirtualTable,
                         None,
                     )?;
                     {
-                        conn.db
-                            .syms
-                            .lock()
-                            .unwrap()
+                        conn.syms
+                            .borrow_mut()
                             .vtabs
                             .insert(table_name, table.clone());
                     }
@@ -3006,7 +3004,7 @@ impl Program {
                         Some(stmt),
                         &mut schema,
                         conn.pager.io.clone(),
-                        &conn.db.syms.lock().unwrap()
+                        &conn.syms.borrow(),
                     )?;
                     state.pc += 1;
                 }

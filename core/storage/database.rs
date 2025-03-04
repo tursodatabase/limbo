@@ -19,7 +19,6 @@ pub trait DatabaseStorage: Send + Sync {
     fn sync(&self, c: Completion) -> Result<()>;
 }
 
-
 #[cfg(feature = "fs")]
 pub struct FileStorage {
     file: Arc<dyn crate::io::File>,

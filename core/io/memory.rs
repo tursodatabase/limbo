@@ -60,7 +60,6 @@ pub struct MemoryFile {
 unsafe impl Send for MemoryFile {}
 unsafe impl Sync for MemoryFile {}
 
-
 impl File for MemoryFile {
     fn lock_file(&self, _exclusive: bool) -> Result<()> {
         Ok(())

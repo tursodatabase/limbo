@@ -1,4 +1,4 @@
-use std::{collections::HashMap,  sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use limbo_sqlite3_parser::ast;
 
@@ -90,8 +90,9 @@ fn query_is_already_ordered_by(
             Search::RowidSearch { .. } => Ok(key.is_rowid_alias_of(0)),
             Search::IndexSearch { index, .. } => {
                 let index_rc = key.check_index_scan(0, &table_reference, available_indexes)?;
-                let index_is_the_same =
-                    index_rc.map(|irc| Arc::ptr_eq(index, &irc)).unwrap_or(false);
+                let index_is_the_same = index_rc
+                    .map(|irc| Arc::ptr_eq(index, &irc))
+                    .unwrap_or(false);
                 Ok(index_is_the_same)
             }
         },

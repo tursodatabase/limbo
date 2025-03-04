@@ -3,7 +3,8 @@ use limbo_sqlite3_parser::ast;
 use std::{
     cmp::Ordering,
     fmt::{Display, Formatter},
-    rc::Rc, sync::Arc,
+    rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
