@@ -172,7 +172,7 @@ impl Database {
             buffer_pool,
         )?);
         let conn = Rc::new(Connection {
-            db: self.clone(),
+            _db: self.clone(),
             pager: pager.clone(),
             schema: self.schema.clone(),
             header: self.header.clone(),
@@ -239,7 +239,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
 }
 
 pub struct Connection {
-    db: Arc<Database>,
+    _db: Arc<Database>,
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
     header: Arc<Mutex<DatabaseHeader>>,
