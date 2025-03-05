@@ -1,6 +1,8 @@
+pub mod foreign_types;
 use crate::{function::ExternalFunc, Database};
 use limbo_ext::{
-    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
+    CustomTypeImpl, ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind,
+    VTabModuleImpl,
 };
 pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 use std::{
@@ -74,6 +76,17 @@ unsafe extern "C" fn register_module(
     db.register_module_impl(&name_str, module, kind)
 }
 
+unsafe extern "C" fn register_custom_type(
+    ctx: *mut c_void,
+    module: *const CustomTypeImpl,
+) -> ResultCode {
+    if ctx.is_null() {
+        return ResultCode::Error;
+    }
+    let db = unsafe { &mut *(ctx as *mut Database) };
+    db.register_custom_type_impl(module)
+}
+
 impl Database {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
         self.syms.borrow_mut().functions.insert(
@@ -114,12 +127,33 @@ impl Database {
         ResultCode::OK
     }
 
+    fn register_custom_type_impl(&mut self, type_impl: *const CustomTypeImpl) -> ResultCode {
+        let name = unsafe { CStr::from_ptr((*type_impl).name) }
+            .to_str()
+            .unwrap_or_default();
+        {
+            if self.syms.borrow_mut().type_registry.get(name).is_some() {
+                // type already registered
+                return ResultCode::OK;
+            }
+        }
+        let ot = unsafe { (*type_impl).type_of } as ExtValueType;
+        {
+            self.syms
+                .borrow_mut()
+                .type_registry
+                .register(name, type_impl, ot.into());
+        }
+        ResultCode::OK
+    }
+
     pub fn build_limbo_ext(&self) -> ExtensionApi {
         ExtensionApi {
             ctx: self as *const _ as *mut c_void,
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            register_custom_type,
         }
     }
 

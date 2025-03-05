@@ -623,6 +623,52 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+#[proc_macro_derive(CustomTypeDerive)]
+pub fn derive_type(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let struct_name = &ast.ident;
+    let generate_fn_name = format_ident!("generate_{}", struct_name);
+    let register_fn_name = format_ident!("register_{}", struct_name);
+    let output = quote! {
+        impl #struct_name {
+       #[no_mangle]
+        pub unsafe extern "C" fn #generate_fn_name(
+            col_name: *const ::std::ffi::c_char,
+            insert_val: *const ::limbo_ext::Value)
+        ->  ::limbo_ext::Value {
+            let col_name = if col_name.is_null() {
+                None
+            } else {
+                ::std::ffi::CStr::from_ptr(col_name as *mut i8).to_str().map_or(None, |s| Some(s))
+            };
+            let val = if insert_val.is_null() {
+                &::limbo_ext::Value::null()
+            } else {
+                 &*(insert_val)
+            };
+            <#struct_name as ::limbo_ext::CustomType>::generate(col_name, val)
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn #register_fn_name(api: *const ::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
+            if api.is_null() {
+                return ::limbo_ext::ResultCode::Error;
+            }
+            let api = &*api;
+            let name = <#struct_name as ::limbo_ext::CustomType>::NAME;
+            let name_c = std::ffi::CString::new(name).unwrap();
+            let module = ::std::boxed::Box::into_raw(::std::boxed::Box::new(::limbo_ext::CustomTypeImpl {
+                name: name_c.as_ptr() as *const ::std::ffi::c_char,
+                type_of: Self::TYPE,
+                generate: Self::#generate_fn_name,
+            }));
+            (api.register_custom_type)(api.ctx, module as *const ::limbo_ext::CustomTypeImpl)
+        }
+      }
+    };
+    TokenStream::from(output)
+}
+
 /// Register your extension with 'core' by providing the relevant functions
 ///```ignore
 ///use limbo_ext::{register_extension, scalar, Value, AggregateDerive, AggFunc};
@@ -662,6 +708,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
         aggregates,
         scalars,
         vtabs,
+        types,
     } = input_ast;
 
     let scalar_calls = scalars.iter().map(|scalar_ident| {
@@ -699,9 +746,21 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
             }
         }
     });
+    let types_calls = types.iter().map(|typ_ident| {
+        let register_fn = syn::Ident::new(&format!("register_{}", typ_ident), typ_ident.span());
+        quote! {
+        {
+                let result = unsafe{ #typ_ident::#register_fn(api)};
+                if !result.is_ok() {
+                    return result;
+                }
+        }
+        }
+    });
     let static_aggregates = aggregate_calls.clone();
     let static_scalars = scalar_calls.clone();
     let static_vtabs = vtab_calls.clone();
+    let static_types = types_calls.clone();
 
     let expanded = quote! {
     #[cfg(not(target_family = "wasm"))]
@@ -718,6 +777,8 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
                 #(#static_vtabs)*
 
+                #(#static_types)*
+
                 ::limbo_ext::ResultCode::OK
               }
 
@@ -730,6 +791,8 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
                 #(#aggregate_calls)*
 
                 #(#vtab_calls)*
+
+                #(#types_calls)*
 
                 ::limbo_ext::ResultCode::OK
             }
