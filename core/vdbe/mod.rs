@@ -30,7 +30,6 @@ use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
 };
 use crate::functions::printf::exec_printf;
-use crate::info;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
@@ -55,6 +54,7 @@ use crate::{
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
     json::json_quote, json::json_remove, json::json_set, json::json_type,
 };
+use crate::{info, CheckpointStatus};
 use crate::{resolve_ext_path, Connection, Result, TransactionState, DATABASE_VERSION};
 use insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
@@ -71,6 +71,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::num::NonZero;
+use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use tracing::instrument;
@@ -219,6 +220,11 @@ impl VTabOpaqueCursor {
     }
 }
 
+#[derive(Copy, Clone)]
+enum HaltState {
+    Checkpointing,
+}
+
 /// The program state describes the environment in which the program executes.
 pub struct ProgramState {
     pub pc: InsnReference,
@@ -231,6 +237,7 @@ pub struct ProgramState {
     regex_cache: RegexCache,
     interrupted: bool,
     parameters: HashMap<NonZero<usize>, OwnedValue>,
+    halt_state: Option<HaltState>,
 }
 
 impl ProgramState {
@@ -249,6 +256,7 @@ impl ProgramState {
             regex_cache: RegexCache::new(),
             interrupted: false,
             parameters: HashMap::new(),
+            halt_state: None,
         }
     }
 
@@ -1196,7 +1204,7 @@ impl Program {
                             )));
                         }
                     }
-                    return self.halt(pager);
+                    return self.halt(pager, state);
                 }
                 Insn::Transaction { write } => {
                     let connection = self.connection.upgrade().unwrap();
@@ -1212,7 +1220,6 @@ impl Program {
 
                     if updated && matches!(current_state, TransactionState::None) {
                         if let LimboResult::Busy = pager.begin_read_tx()? {
-                            tracing::trace!("begin_read_tx busy");
                             return Ok(StepResult::Busy);
                         }
                     }
@@ -1254,7 +1261,7 @@ impl Program {
                             "cannot commit - no transaction is active".to_string(),
                         ));
                     }
-                    return self.halt(pager);
+                    return self.halt(pager, state);
                 }
                 Insn::Goto { target_pc } => {
                     assert!(target_pc.is_offset());
@@ -3077,39 +3084,68 @@ impl Program {
         }
     }
 
-    fn halt(&self, pager: Rc<Pager>) -> Result<StepResult> {
+    fn halt(&self, pager: Rc<Pager>, program_state: &mut ProgramState) -> Result<StepResult> {
         let connection = self
             .connection
             .upgrade()
             .expect("only weak ref to connection?");
         let auto_commit = *connection.auto_commit.borrow();
         tracing::trace!("Halt auto_commit {}", auto_commit);
-        if auto_commit {
-            let current_state = connection.transaction_state.borrow().clone();
-            if current_state == TransactionState::Read {
-                pager.end_read_tx()?;
-                return Ok(StepResult::Done);
-            }
-            match pager.end_tx() {
-                Ok(crate::storage::wal::CheckpointStatus::IO) => Ok(StepResult::IO),
-                Ok(crate::storage::wal::CheckpointStatus::Done(_)) => {
-                    if self.change_cnt_on {
-                        if let Some(conn) = self.connection.upgrade() {
-                            conn.set_changes(self.n_change.get());
-                        }
-                    }
-                    Ok(StepResult::Done)
-                }
-                Err(e) => Err(e),
-            }
+        assert!(
+            program_state.halt_state.is_none()
+                || (matches!(program_state.halt_state.unwrap(), HaltState::Checkpointing))
+        );
+        if program_state.halt_state.is_some() {
+            self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())
         } else {
-            if self.change_cnt_on {
-                if let Some(conn) = self.connection.upgrade() {
-                    conn.set_changes(self.n_change.get());
+            if auto_commit {
+                let current_state = connection.transaction_state.borrow().clone();
+                match current_state {
+                    TransactionState::Write => self.step_end_write_txn(
+                        &pager,
+                        &mut program_state.halt_state,
+                        connection.deref(),
+                    ),
+                    TransactionState::Read => {
+                        pager.end_read_tx()?;
+                        Ok(StepResult::Done)
+                    }
+                    TransactionState::None => Ok(StepResult::Done),
                 }
+            } else {
+                if self.change_cnt_on {
+                    if let Some(conn) = self.connection.upgrade() {
+                        conn.set_changes(self.n_change.get());
+                    }
+                }
+                Ok(StepResult::Done)
             }
-            Ok(StepResult::Done)
         }
+    }
+
+    fn step_end_write_txn(
+        &self,
+        pager: &Rc<Pager>,
+        halt_state: &mut Option<HaltState>,
+        connection: &Connection,
+    ) -> Result<StepResult> {
+        let checkpoint_status = pager.end_tx()?;
+        match checkpoint_status {
+            CheckpointStatus::Done(_) => {
+                connection.transaction_state.replace(TransactionState::None);
+                let _ = halt_state.take();
+            }
+            CheckpointStatus::IO => {
+                *halt_state = Some(HaltState::Checkpointing);
+                return Ok(StepResult::IO);
+            }
+        }
+        if self.change_cnt_on {
+            if let Some(conn) = self.connection.upgrade() {
+                conn.set_changes(self.n_change.get());
+            }
+        }
+        Ok(StepResult::Done)
     }
 }
 

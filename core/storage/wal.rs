@@ -62,7 +62,7 @@ impl LimboRwLock {
     /// Shared lock. Returns true if it was successful, false if it couldn't lock it
     pub fn read(&mut self) -> bool {
         let lock = self.lock.load(Ordering::SeqCst);
-        match lock {
+        let ok = match lock {
             NO_LOCK => {
                 let res = self.lock.compare_exchange(
                     lock,
@@ -82,13 +82,15 @@ impl LimboRwLock {
             }
             WRITE_LOCK => false,
             _ => unreachable!(),
-        }
+        };
+        tracing::trace!("read_lock({})", ok);
+        ok
     }
 
     /// Locks exclusively. Returns true if it was successful, false if it couldn't lock it
     pub fn write(&mut self) -> bool {
         let lock = self.lock.load(Ordering::SeqCst);
-        match lock {
+        let ok = match lock {
             NO_LOCK => {
                 let res = self.lock.compare_exchange(
                     lock,
@@ -104,12 +106,15 @@ impl LimboRwLock {
             }
             WRITE_LOCK => true,
             _ => unreachable!(),
-        }
+        };
+        tracing::trace!("write_lock({})", ok);
+        ok
     }
 
     /// Unlock the current held lock.
     pub fn unlock(&mut self) {
         let lock = self.lock.load(Ordering::SeqCst);
+        tracing::trace!("unlock(lock={})", lock);
         match lock {
             NO_LOCK => {}
             SHARED_LOCK => {
@@ -355,7 +360,7 @@ impl Wal for WalFile {
         self.max_frame_read_lock_index = max_read_mark_index as usize;
         self.max_frame = max_read_mark as u64;
         self.min_frame = shared.nbackfills + 1;
-        trace!(
+        tracing::debug!(
             "begin_read_tx(min_frame={}, max_frame={}, lock={})",
             self.min_frame,
             self.max_frame,
@@ -366,6 +371,7 @@ impl Wal for WalFile {
 
     /// End a read transaction.
     fn end_read_tx(&self) -> Result<LimboResult> {
+        tracing::debug!("end_read_tx");
         let mut shared = self.shared.write();
         let read_lock = &mut shared.read_locks[self.max_frame_read_lock_index];
         read_lock.unlock();
@@ -376,6 +382,7 @@ impl Wal for WalFile {
     fn begin_write_tx(&mut self) -> Result<LimboResult> {
         let mut shared = self.shared.write();
         let busy = !shared.write_lock.write();
+        tracing::debug!("begin_write_transaction(busy={})", busy);
         if busy {
             return Ok(LimboResult::Busy);
         }
@@ -384,6 +391,7 @@ impl Wal for WalFile {
 
     /// End a write transaction
     fn end_write_tx(&self) -> Result<LimboResult> {
+        tracing::debug!("end_write_txn");
         let mut shared = self.shared.write();
         shared.write_lock.unlock();
         Ok(LimboResult::Ok)
