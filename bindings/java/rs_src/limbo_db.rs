@@ -67,7 +67,7 @@ pub extern "system" fn Java_tech_turso_core_LimboDB_openUtf8<'local>(
         }
     };
 
-    let db = match Database::open_file(io.clone(), &path) {
+    let db = match Database::open_file(io.clone(), &path, false) {
         Ok(db) => db,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, LIMBO_ETC, e.to_string());

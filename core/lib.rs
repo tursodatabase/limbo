@@ -83,7 +83,12 @@ enum TransactionState {
     None,
 }
 
+pub(crate) type MvStore = crate::mvcc::MvStore<crate::mvcc::LocalClock>;
+
+pub(crate) type MvCursor = crate::mvcc::cursor::ScanCursor<crate::mvcc::LocalClock>;
+
 pub struct Database {
+    mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
     header: Arc<Mutex<DatabaseHeader>>,
@@ -101,7 +106,7 @@ unsafe impl Sync for Database {}
 
 impl Database {
     #[cfg(feature = "fs")]
-    pub fn open_file(io: Arc<dyn IO>, path: &str) -> Result<Arc<Database>> {
+    pub fn open_file(io: Arc<dyn IO>, path: &str, enable_mvcc: bool) -> Result<Arc<Database>> {
         use storage::wal::WalFileShared;
 
         let file = io.open_file(path, OpenFlags::Create, true)?;
@@ -112,7 +117,7 @@ impl Database {
         io.run_once()?;
         let page_size = db_header.lock().unwrap().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
-        Self::open(io, page_io, wal_shared)
+        Self::open(io, page_io, wal_shared, enable_mvcc)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -120,6 +125,7 @@ impl Database {
         io: Arc<dyn IO>,
         page_io: Arc<dyn DatabaseStorage>,
         shared_wal: Arc<RwLock<WalFileShared>>,
+        enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;
@@ -127,11 +133,20 @@ impl Database {
             let version = db_header.lock().unwrap().version_number;
             version.to_string()
         });
+        let mv_store = if enable_mvcc {
+            Some(Rc::new(MvStore::new(
+                crate::mvcc::LocalClock::new(),
+                crate::mvcc::persistent_storage::Storage::new(),
+            )))
+        } else {
+            None
+        };
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
         let page_size = db_header.lock().unwrap().page_size;
         let header = db_header;
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
+            mv_store,
             schema: schema.clone(),
             header: header.clone(),
             shared_page_cache: shared_page_cache.clone(),
@@ -149,7 +164,7 @@ impl Database {
                 .try_write()
                 .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
-            parse_schema_rows(rows, &mut schema, io, syms.deref())?;
+            parse_schema_rows(rows, &mut schema, io, syms.deref(), None)?;
         }
         Ok(db)
     }
@@ -178,6 +193,7 @@ impl Database {
             header: self.header.clone(),
             last_insert_rowid: Cell::new(0),
             auto_commit: RefCell::new(true),
+            mv_transactions: RefCell::new(Vec::new()),
             transaction_state: RefCell::new(TransactionState::None),
             last_change: Cell::new(0),
             syms: RefCell::new(SymbolTable::new()),
@@ -244,6 +260,7 @@ pub struct Connection {
     schema: Arc<RwLock<Schema>>,
     header: Arc<Mutex<DatabaseHeader>>,
     auto_commit: RefCell<bool>,
+    mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: RefCell<TransactionState>,
     last_insert_rowid: Cell<u64>,
     last_change: Cell<i64>,
@@ -274,7 +291,11 @@ impl Connection {
                         &syms,
                         QueryMode::Normal,
                     )?);
-                    Ok(Statement::new(program, self.pager.clone()))
+                    Ok(Statement::new(
+                        program,
+                        self._db.mv_store.clone(),
+                        self.pager.clone(),
+                    ))
                 }
                 Cmd::Explain(_stmt) => todo!(),
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
@@ -312,7 +333,7 @@ impl Connection {
                     &syms,
                     QueryMode::Normal,
                 )?);
-                let stmt = Statement::new(program, self.pager.clone());
+                let stmt = Statement::new(program, self._db.mv_store.clone(), self.pager.clone());
                 Ok(Some(stmt))
             }
             Cmd::Explain(stmt) => {
@@ -407,7 +428,7 @@ impl Connection {
 
                     let mut state =
                         vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
-                    program.step(&mut state, self.pager.clone())?;
+                    program.step(&mut state, self._db.mv_store.clone(), self.pager.clone())?;
                 }
             }
         }
@@ -489,17 +510,27 @@ impl Connection {
 pub struct Statement {
     program: Rc<vdbe::Program>,
     state: vdbe::ProgramState,
+    mv_store: Option<Rc<MvStore>>,
     pager: Rc<Pager>,
 }
 
 impl Statement {
-    pub fn new(program: Rc<vdbe::Program>, pager: Rc<Pager>) -> Self {
+    pub fn new(
+        program: Rc<vdbe::Program>,
+        mv_store: Option<Rc<MvStore>>,
+        pager: Rc<Pager>,
+    ) -> Self {
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
         Self {
             program,
             state,
+            mv_store,
             pager,
         }
+    }
+
+    pub fn set_mv_tx_id(&mut self, mv_tx_id: Option<u64>) {
+        self.state.set_mv_tx_id(mv_tx_id);
     }
 
     pub fn interrupt(&mut self) {
@@ -507,7 +538,8 @@ impl Statement {
     }
 
     pub fn step(&mut self) -> Result<StepResult> {
-        self.program.step(&mut self.state, self.pager.clone())
+        self.program
+            .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
     }
 
     pub fn num_columns(&self) -> usize {

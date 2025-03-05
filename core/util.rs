@@ -41,8 +41,10 @@ pub fn parse_schema_rows(
     schema: &mut Schema,
     io: Arc<dyn IO>,
     syms: &SymbolTable,
+    mv_tx_id: Option<u64>,
 ) -> Result<()> {
     if let Some(mut rows) = rows {
+        rows.set_mv_tx_id(mv_tx_id);
         let mut automatic_indexes = Vec::new();
         loop {
             match rows.step()? {

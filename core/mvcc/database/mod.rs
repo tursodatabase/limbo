@@ -17,6 +17,12 @@ pub struct RowID {
     pub row_id: u64,
 }
 
+impl RowID {
+    pub fn new(table_id: u64, row_id: u64) -> Self {
+        Self { table_id, row_id }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 
 pub struct Row {
@@ -24,12 +30,18 @@ pub struct Row {
     pub data: Vec<u8>,
 }
 
+impl Row {
+    pub fn new(id: RowID, data: Vec<u8>) -> Self {
+        Self { id, data }
+    }
+}
+
 /// A row version.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowVersion {
-    begin: TxTimestampOrID,
-    end: Option<TxTimestampOrID>,
-    row: Row,
+    pub(crate) begin: TxTimestampOrID,
+    pub(crate) end: Option<TxTimestampOrID>,
+    pub(crate) row: Row,
 }
 
 pub type TxID = u64;
@@ -38,7 +50,7 @@ pub type TxID = u64;
 #[derive(Clone, Debug)]
 pub struct LogRecord {
     pub(crate) tx_timestamp: TxID,
-    row_versions: Vec<RowVersion>,
+    pub(crate) row_versions: Vec<RowVersion>,
 }
 
 impl LogRecord {
@@ -57,7 +69,7 @@ impl LogRecord {
 /// transaction ID in the `begin` and `end` fields. After a transaction commits,
 /// versions switch to tracking timestamps.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-enum TxTimestampOrID {
+pub enum TxTimestampOrID {
     /// A committed transaction's timestamp.
     Timestamp(u64),
     /// The ID of a non-committed transaction.
@@ -242,6 +254,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// * `row` - the row object containing the values to be inserted.
     ///
     pub fn insert(&self, tx_id: TxID, row: Row) -> Result<()> {
+        tracing::trace!("Insert -> TX: {}, Row: {:?}", tx_id, row.id);
         let tx = self
             .txs
             .get(&tx_id)
@@ -279,6 +292,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     ///
     /// Returns `true` if the row was successfully updated, and `false` otherwise.
     pub fn update(&self, tx_id: TxID, row: Row) -> Result<bool> {
+        tracing::trace!("Update -> TX: {}, Row: {:?}", tx_id, row.id);
         if !self.delete(tx_id, row.id)? {
             return Ok(false);
         }
@@ -289,6 +303,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// Inserts a row in the database with new values, previously deleting
     /// any old data if it existed. Bails on a delete error, e.g. write-write conflict.
     pub fn upsert(&self, tx_id: TxID, row: Row) -> Result<()> {
+        tracing::trace!("Upsert -> TX: {}, Row: {:?}", tx_id, row.id);
         self.delete(tx_id, row.id)?;
         self.insert(tx_id, row)
     }
@@ -308,6 +323,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// Returns `true` if the row was successfully deleted, and `false` otherwise.
     ///
     pub fn delete(&self, tx_id: TxID, id: RowID) -> Result<bool> {
+        tracing::trace!("Delete -> TX: {}, Row: {:?}", tx_id, id);
         let row_versions_opt = self.rows.get(&id);
         if let Some(ref row_versions) = row_versions_opt {
             let mut row_versions = row_versions.value().write().unwrap();
@@ -362,6 +378,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// Returns `Some(row)` with the row data if the row with the given `id` exists,
     /// and `None` otherwise.
     pub fn read(&self, tx_id: TxID, id: RowID) -> Result<Option<Row>> {
+        tracing::trace!("Read -> TX: {}, Row: {:?}", tx_id, id);
         let tx = self.txs.get(&tx_id).unwrap();
         let tx = tx.value().read().unwrap();
         assert_eq!(tx.state, TransactionState::Active);
@@ -382,12 +399,14 @@ impl<Clock: LogicalClock> MvStore<Clock> {
 
     /// Gets all row ids in the database.
     pub fn scan_row_ids(&self) -> Result<Vec<RowID>> {
+        tracing::trace!("ScanRowIds");
         let keys = self.rows.iter().map(|entry| *entry.key());
         Ok(keys.collect())
     }
 
     /// Gets all row ids in the database for a given table.
     pub fn scan_row_ids_for_table(&self, table_id: u64) -> Result<Vec<RowID>> {
+        tracing::trace!("ScanRowIdsForTable -> Table: {}", table_id);
         Ok(self
             .rows
             .range(
@@ -412,7 +431,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let tx_id = self.get_tx_id();
         let begin_ts = self.get_timestamp();
         let tx = Transaction::new(tx_id, begin_ts);
-        tracing::trace!("BEGIN     {tx}");
+        tracing::trace!("Begin -> TX: {tx}");
         self.txs.insert(tx_id, RwLock::new(tx));
         tx_id
     }
@@ -439,7 +458,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             }
         }
         tx.state.store(TransactionState::Preparing);
-        tracing::trace!("PREPARE   {tx}");
+        tracing::trace!("Prepare -> TX: {tx}");
 
         /* TODO: The code we have here is sufficient for snapshot isolation.
         ** In order to implement serializability, we need the following steps:
@@ -515,7 +534,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             """
         */
         tx.state.store(TransactionState::Committed(end_ts));
-        tracing::trace!("COMMIT    {tx}");
+        tracing::trace!("Commit -> TX: {tx}");
         let write_set: Vec<RowID> = tx.write_set.iter().map(|v| *v.value()).collect();
         drop(tx);
         // Postprocessing: inserting row versions and logging the transaction to persistent storage.
@@ -550,7 +569,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                 }
             }
         }
-        tracing::trace!("UPDATED TX{tx_id}");
+        tracing::trace!("Updated -> TX: {tx_id}");
         // We have now updated all the versions with a reference to the
         // transaction ID to a timestamp and can, therefore, remove the
         // transaction. Please note that when we move to lockless, the
@@ -563,7 +582,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         if !log_record.row_versions.is_empty() {
             self.storage.log_tx(log_record)?;
         }
-        tracing::trace!("LOGGED    {tx_id}");
+        tracing::trace!("Logged -> TX: {tx_id}");
         Ok(())
     }
 
