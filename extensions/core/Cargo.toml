@@ -12,4 +12,6 @@ core_only = []
 static = []
 
 [dependencies]
+chrono = "0.4.40"
+getrandom = { version = "0.3.1", features = ["wasm_js"] }
 limbo_macros = { workspace = true }

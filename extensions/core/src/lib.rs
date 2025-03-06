@@ -1,4 +1,5 @@
 mod types;
+mod vfs_modules;
 pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 use std::{
     fmt::Display,
