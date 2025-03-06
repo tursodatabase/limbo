@@ -23,6 +23,7 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use ext::list_vfs_modules;
 use fallible_iterator::FallibleIterator;
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
@@ -200,6 +201,33 @@ impl Database {
         }
         Ok(conn)
     }
+
+    /// Open a new database file with a specified VFS without an existing database
+    /// connection and symbol table to register extensions.
+    #[cfg(feature = "fs")]
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
+        use ext::add_builtin_vfs_extensions;
+
+        let vfsmods = add_builtin_vfs_extensions(None)?;
+        let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
+            Some(vfs) => vfs,
+            None => match vfs.trim() {
+                "memory" => Arc::new(MemoryIO::new()),
+                "syscall" => Arc::new(PlatformIO::new()?),
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Arc::new(UringIO::new()?),
+                other => {
+                    return Err(LimboError::InvalidArgument(format!(
+                        "no such VFS: {}",
+                        other
+                    )));
+                }
+            },
+        };
+        let db = Self::open_file(io.clone(), path, false)?;
+        Ok((io, db))
+    }
 }
 
 pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Result<()> {
@@ -316,8 +344,7 @@ impl Connection {
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
-                    &self
-                        .schema
+                    self.schema
                         .try_read()
                         .ok_or(LimboError::SchemaLocked)?
                         .deref(),
@@ -333,8 +360,7 @@ impl Connection {
             }
             Cmd::Explain(stmt) => {
                 let program = translate::translate(
-                    &self
-                        .schema
+                    self.schema
                         .try_read()
                         .ok_or(LimboError::SchemaLocked)?
                         .deref(),
@@ -352,8 +378,7 @@ impl Connection {
                 match stmt {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
-                            &self
-                                .schema
+                            self.schema
                                 .try_read()
                                 .ok_or(LimboError::SchemaLocked)?
                                 .deref(),
@@ -363,8 +388,7 @@ impl Connection {
                         )?;
                         optimize_plan(
                             &mut plan,
-                            &self
-                                .schema
+                            self.schema
                                 .try_read()
                                 .ok_or(LimboError::SchemaLocked)?
                                 .deref(),
@@ -391,8 +415,7 @@ impl Connection {
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
-                        &self
-                            .schema
+                        self.schema
                             .try_read()
                             .ok_or(LimboError::SchemaLocked)?
                             .deref(),
@@ -408,8 +431,7 @@ impl Connection {
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
                 Cmd::Stmt(stmt) => {
                     let program = translate::translate(
-                        &self
-                            .schema
+                        self.schema
                             .try_read()
                             .ok_or(LimboError::SchemaLocked)?
                             .deref(),
@@ -475,6 +497,28 @@ impl Connection {
 
     pub fn total_changes(&self) -> i64 {
         self.total_changes.get()
+    }
+
+    #[cfg(feature = "fs")]
+    pub fn open_new(&self, path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
+        Database::open_with_vfs(&self._db, path, vfs)
+    }
+
+    pub fn list_vfs(&self) -> Vec<String> {
+        let mut all_vfs = vec![String::from("memory")];
+        #[cfg(feature = "fs")]
+        {
+            #[cfg(all(feature = "fs", target_family = "unix"))]
+            {
+                all_vfs.push("syscall".to_string());
+            }
+            #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
+            {
+                all_vfs.push("io_uring".to_string());
+            }
+        }
+        all_vfs.extend(list_vfs_modules());
+        all_vfs
     }
 }
 

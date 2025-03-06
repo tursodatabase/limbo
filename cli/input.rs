@@ -1,6 +1,7 @@
 use crate::app::Opts;
 use clap::ValueEnum;
 use std::{
+    fmt::{Display, Formatter},
     io::{self, Write},
     sync::Arc,
 };
@@ -11,11 +12,26 @@ pub enum DbLocation {
     Path,
 }
 
-#[derive(Copy, Clone, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
+#[derive(Clone, Debug)]
 pub enum Io {
     Syscall,
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     IoUring,
+    External(String),
+    Memory,
+}
+
+impl Display for Io {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Io::Memory => write!(f, "memory"),
+            Io::Syscall => write!(f, "syscall"),
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Io::IoUring => write!(f, "io_uring"),
+            Io::External(str) => write!(f, "{}", str),
+        }
+    }
 }
 
 impl Default for Io {
@@ -65,7 +81,6 @@ pub struct Settings {
     pub echo: bool,
     pub is_stdout: bool,
     pub io: Io,
-    pub experimental_mvcc: bool,
 }
 
 impl From<&Opts> for Settings {
@@ -80,8 +95,14 @@ impl From<&Opts> for Settings {
                 .database
                 .as_ref()
                 .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
-            io: opts.io,
-            experimental_mvcc: opts.experimental_mvcc,
+            io: match opts.vfs.as_ref().unwrap_or(&String::new()).as_str() {
+                "memory" => Io::Memory,
+                "syscall" => Io::Syscall,
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Io::IoUring,
+                "" => Io::default(),
+                vfs => Io::External(vfs.to_string()),
+            },
         }
     }
 }
@@ -120,12 +141,13 @@ pub fn get_writer(output: &str) -> Box<dyn Write> {
     }
 }
 
-pub fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
+pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
     Ok(match db_location {
         DbLocation::Memory => Arc::new(limbo_core::MemoryIO::new()),
         DbLocation::Path => {
             match io_choice {
-                Io::Syscall => {
+                "memory" => Arc::new(limbo_core::MemoryIO::new()),
+                "syscall" => {
                     // We are building for Linux/macOS and syscall backend has been selected
                     #[cfg(target_family = "unix")]
                     {
@@ -139,7 +161,8 @@ pub fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn 
                 }
                 // We are building for Linux and io_uring backend has been selected
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                Io::IoUring => Arc::new(limbo_core::UringIO::new()?),
+                "io_uring" => Arc::new(limbo_core::UringIO::new()?),
+                _ => Arc::new(limbo_core::PlatformIO::new()?),
             }
         }
     })

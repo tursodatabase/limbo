@@ -1,6 +1,9 @@
 #[cfg(not(target_family = "wasm"))]
 mod dynamic;
-use crate::{function::ExternalFunc, Connection, LimboError};
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+use crate::UringIO;
+use crate::IO;
+use crate::{function::ExternalFunc, Connection, Database, LimboError};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl, VfsImpl,
 };
@@ -153,10 +156,40 @@ pub fn add_builtin_vfs_extensions(
 }
 
 fn register_static_vfs_modules(_api: &mut ExtensionApi) {
-    //#[cfg(feature = "testvfs")]
-    //unsafe {
-    //    limbo_testvfs::register_extension_static(_api);
-    //}
+    #[cfg(feature = "testvfs")]
+    unsafe {
+        limbo_testvfs::register_extension_static(_api);
+    }
+}
+
+impl Database {
+    #[cfg(feature = "fs")]
+    #[allow(clippy::arc_with_non_send_sync, dead_code)]
+    pub fn open_with_vfs(
+        &self,
+        path: &str,
+        vfs: &str,
+    ) -> crate::Result<(Arc<dyn IO>, Arc<Database>)> {
+        use crate::{MemoryIO, PlatformIO};
+
+        let io: Arc<dyn IO> = match vfs {
+            "memory" => Arc::new(MemoryIO::new()),
+            "syscall" => Arc::new(PlatformIO::new()?),
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            "io_uring" => Arc::new(UringIO::new()?),
+            other => match get_vfs_modules().iter().find(|v| v.0 == vfs) {
+                Some((_, vfs)) => vfs.clone(),
+                None => {
+                    return Err(LimboError::InvalidArgument(format!(
+                        "no such VFS: {}",
+                        other
+                    )));
+                }
+            },
+        };
+        let db = Self::open_file(io.clone(), path, false)?;
+        Ok((io, db))
+    }
 }
 
 impl Connection {
@@ -245,6 +278,10 @@ impl Connection {
         #[cfg(feature = "completion")]
         if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register completion extension".to_string());
+        }
+        let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
+        for (name, vfs) in vfslist {
+            add_vfs_module(name, vfs);
         }
         Ok(())
     }
