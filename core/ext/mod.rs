@@ -8,9 +8,12 @@ pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
 };
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
+type Vfs = (String, Arc<VfsMod>);
+
+static VFS_MODULES: OnceLock<Mutex<Vec<Vfs>>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct VTabImpl {
@@ -95,7 +98,7 @@ unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> R
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,
     };
-    // add_vfs_module(name_str, Arc::new(VfsMod { ctx: vfs }));
+    add_vfs_module(name_str, Arc::new(VfsMod { ctx: vfs }));
     ResultCode::OK
 }
 
@@ -245,4 +248,32 @@ impl Connection {
         }
         Ok(())
     }
+}
+
+fn add_vfs_module(name: String, vfs: Arc<VfsMod>) {
+    let mut modules = VFS_MODULES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap();
+    if !modules.iter().any(|v| v.0 == name) {
+        modules.push((name, vfs));
+    }
+}
+
+pub fn list_vfs_modules() -> Vec<String> {
+    VFS_MODULES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|v| v.0.clone())
+        .collect()
+}
+
+fn get_vfs_modules() -> Vec<Vfs> {
+    VFS_MODULES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .clone()
 }
