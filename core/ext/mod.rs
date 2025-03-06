@@ -2,7 +2,7 @@
 mod dynamic;
 use crate::{function::ExternalFunc, Connection};
 use limbo_ext::{
-    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
+    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl, VfsImpl,
 };
 pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 use std::{
@@ -76,6 +76,20 @@ unsafe extern "C" fn register_module(
     conn.register_module_impl(&name_str, module, kind)
 }
 
+#[allow(clippy::arc_with_non_send_sync)]
+unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> ResultCode {
+    if name.is_null() || vfs.is_null() {
+        return ResultCode::Error;
+    }
+    let c_str = unsafe { CString::from_raw(name as *mut i8) };
+    let name_str = match c_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return ResultCode::Error,
+    };
+    // add_vfs_module(name_str, Arc::new(VfsMod { ctx: vfs }));
+    ResultCode::OK
+}
+
 impl Connection {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
         self.syms.borrow_mut().functions.insert(
@@ -122,42 +136,43 @@ impl Connection {
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            register_vfs,
         }
     }
 
     pub fn register_builtins(&self) -> Result<(), String> {
         #[allow(unused_variables)]
-        let ext_api = self.build_limbo_ext();
+        let mut ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]
-        if unsafe { !limbo_uuid::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_uuid::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register uuid extension".to_string());
         }
         #[cfg(feature = "percentile")]
-        if unsafe { !limbo_percentile::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_percentile::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register percentile extension".to_string());
         }
         #[cfg(feature = "regexp")]
-        if unsafe { !limbo_regexp::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_regexp::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register regexp extension".to_string());
         }
         #[cfg(feature = "time")]
-        if unsafe { !limbo_time::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_time::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register time extension".to_string());
         }
         #[cfg(feature = "crypto")]
-        if unsafe { !limbo_crypto::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_crypto::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register crypto extension".to_string());
         }
         #[cfg(feature = "series")]
-        if unsafe { !limbo_series::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_series::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register series extension".to_string());
         }
         #[cfg(feature = "ipaddr")]
-        if unsafe { !limbo_ipaddr::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_ipaddr::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register ipaddr extension".to_string());
         }
         #[cfg(feature = "completion")]
-        if unsafe { !limbo_completion::register_extension_static(&ext_api).is_ok() } {
+        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register completion extension".to_string());
         }
         Ok(())
