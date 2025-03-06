@@ -1,7 +1,7 @@
 mod args;
 use args::{RegisterExtensionInput, ScalarInfo};
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DeriveInput, Item, ItemFn, ItemMod};
+use syn::{parse_macro_input, DeriveInput, ItemFn};
 extern crate proc_macro;
 use proc_macro::{token_stream::IntoIter, Group, TokenStream, TokenTree};
 use std::collections::HashMap;
@@ -979,43 +979,4 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
         };
 
     TokenStream::from(expanded)
-}
-
-/// Recursively search for a function in the module tree
-fn find_function_path(
-    function_name: &syn::Ident,
-    module_path: String,
-    items: &[Item],
-) -> Option<String> {
-    for item in items {
-        match item {
-            // if it's a function, check if its name matches
-            Item::Fn(func) if func.sig.ident == *function_name => {
-                return Some(module_path.clone());
-            }
-            // recursively search inside modules
-            Item::Mod(ItemMod {
-                ident,
-                content: Some((_, sub_items)),
-                ..
-            }) => {
-                let new_path = format!("{}::{}", module_path, ident);
-                if let Some(path) = find_function_path(function_name, new_path, sub_items) {
-                    return Some(path);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn locate_function(ident: syn::Ident) -> syn::Ident {
-    let syntax_tree: syn::File = syn::parse_file(include_str!("lib.rs")).unwrap();
-
-    if let Some(full_path) = find_function_path(&ident, "crate".to_string(), &syntax_tree.items) {
-        return format_ident!("{full_path}::{ident}");
-    }
-
-    panic!("Function `{}` not found in crate!", ident);
 }
