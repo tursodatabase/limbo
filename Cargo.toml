@@ -13,7 +13,7 @@ members = [
     "extensions/completion",
     "extensions/core",
     "extensions/crypto", 
-	"extensions/kvstore",
+	"extensions/tests",
     "extensions/percentile",
     "extensions/regexp",
     "extensions/series",
@@ -47,6 +47,7 @@ limbo_uuid = { path = "extensions/uuid", version = "0.0.16" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.16" }
 limbo_ipaddr = { path = "extensions/ipaddr", version = "0.0.16" }
 limbo_completion = { path = "extensions/completion", version = "0.0.16" }
+limbo_ext_tests = { path = "extensions/tests", version = "0.0.16" }
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

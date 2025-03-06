@@ -1,19 +1,21 @@
 use lazy_static::lazy_static;
+use limbo_ext::register_extension;
 use limbo_ext::{
-    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
-    VTabModuleDerive, Value, VfsDerive, VfsExtension, VfsFile,
+    scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
+    VfsDerive, VfsExtension, VfsFile,
 };
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 
-lazy_static! {
-    static ref GLOBAL_STORE: Mutex<BTreeMap<i64, (String, String)>> = Mutex::new(BTreeMap::new());
-}
-
 register_extension! {
     vtabs: { KVStoreVTab },
+    vfs: { TestFS },
+}
+
+lazy_static! {
+    static ref GLOBAL_STORE: Mutex<BTreeMap<i64, (String, String)>> = Mutex::new(BTreeMap::new());
 }
 
 #[derive(VTabModuleDerive, Default)]
@@ -149,12 +151,12 @@ impl VTabCursor for KVStoreCursor {
     }
 }
 
-struct TestFile {
+pub struct TestFile {
     file: File,
 }
 
 #[derive(VfsDerive, Default)]
-struct TestFS;
+pub struct TestFS;
 
 // Test that we can have additional extension types in the same file
 // and still register the vfs at comptime if linking staticly

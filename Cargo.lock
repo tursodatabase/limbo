@@ -1652,6 +1652,7 @@ dependencies = [
  "limbo_completion",
  "limbo_crypto",
  "limbo_ext",
+ "limbo_ext_tests",
  "limbo_ipaddr",
  "limbo_macros",
  "limbo_percentile",
@@ -1708,19 +1709,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_ipaddr"
+name = "limbo_ext_tests"
 version = "0.0.16"
 dependencies = [
- "ipnetwork",
+ "lazy_static",
  "limbo_ext",
  "mimalloc",
 ]
 
 [[package]]
-name = "limbo_kv"
+name = "limbo_ipaddr"
 version = "0.0.16"
 dependencies = [
- "lazy_static",
+ "ipnetwork",
  "limbo_ext",
  "mimalloc",
 ]
