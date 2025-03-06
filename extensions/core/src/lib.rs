@@ -15,6 +15,13 @@ pub struct ExtensionApi {
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
 }
+unsafe impl Send for ExtensionApi {}
+unsafe impl Send for ExtensionApiRef {}
+
+#[repr(C)]
+pub struct ExtensionApiRef {
+    pub api: *const ExtensionApi,
+}
 
 pub type ExtensionEntryPoint = unsafe extern "C" fn(api: *const ExtensionApi) -> ResultCode;
 

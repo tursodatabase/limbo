@@ -1,3 +1,5 @@
+#[cfg(not(target_family = "wasm"))]
+mod dynamic;
 use crate::{function::ExternalFunc, Connection};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,

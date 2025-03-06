@@ -24,10 +24,6 @@ mod vector;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use fallible_iterator::FallibleIterator;
-#[cfg(not(target_family = "wasm"))]
-use libloading::{Library, Symbol};
-#[cfg(not(target_family = "wasm"))]
-use limbo_ext::{ExtensionApi, ExtensionEntryPoint};
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
@@ -279,8 +275,7 @@ impl Connection {
             match cmd {
                 Cmd::Stmt(stmt) => {
                     let program = Rc::new(translate::translate(
-                        &self
-                            .schema
+                        self.schema
                             .try_read()
                             .ok_or(LimboError::SchemaLocked)?
                             .deref(),
@@ -447,30 +442,6 @@ impl Connection {
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
         let checkpoint_result = self.pager.clear_page_cache();
         Ok(checkpoint_result)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> Result<()> {
-        let api = Box::new(self.build_limbo_ext());
-        let lib =
-            unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
-        let entry: Symbol<ExtensionEntryPoint> = unsafe {
-            lib.get(b"register_extension")
-                .map_err(|e| LimboError::ExtensionError(e.to_string()))?
-        };
-        let api_ptr: *const ExtensionApi = Box::into_raw(api);
-        let result_code = unsafe { entry(api_ptr) };
-        if result_code.is_ok() {
-            self.syms.borrow_mut().extensions.push((lib, api_ptr));
-            Ok(())
-        } else {
-            if !api_ptr.is_null() {
-                let _ = unsafe { Box::from_raw(api_ptr.cast_mut()) };
-            }
-            Err(LimboError::ExtensionError(
-                "Extension registration failed".to_string(),
-            ))
-        }
     }
 
     /// Close a connection and checkpoint.
@@ -707,8 +678,6 @@ impl VirtualTable {
 
 pub(crate) struct SymbolTable {
     pub functions: HashMap<String, Rc<function::ExternalFunc>>,
-    #[cfg(not(target_family = "wasm"))]
-    extensions: Vec<(Library, *const ExtensionApi)>,
     pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
 }
@@ -753,8 +722,6 @@ impl SymbolTable {
         Self {
             functions: HashMap::new(),
             vtabs: HashMap::new(),
-            #[cfg(not(target_family = "wasm"))]
-            extensions: Vec::new(),
             vtab_modules: HashMap::new(),
         }
     }
