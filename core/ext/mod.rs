@@ -1,6 +1,6 @@
 #[cfg(not(target_family = "wasm"))]
 mod dynamic;
-use crate::{function::ExternalFunc, Connection};
+use crate::{function::ExternalFunc, Connection, LimboError};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl, VfsImpl,
 };
@@ -8,6 +8,7 @@ pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
+    sync::Arc,
 };
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
@@ -16,6 +17,14 @@ pub struct VTabImpl {
     pub module_kind: VTabKind,
     pub implementation: Rc<VTabModuleImpl>,
 }
+
+#[derive(Clone, Debug)]
+pub struct VfsMod {
+    pub ctx: *const VfsImpl,
+}
+
+unsafe impl Send for VfsMod {}
+unsafe impl Sync for VfsMod {}
 
 unsafe extern "C" fn register_scalar_function(
     ctx: *mut c_void,
@@ -90,6 +99,63 @@ unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> R
     ResultCode::OK
 }
 
+/// Get pointers to all the vfs extensions that need to be built in at compile time.
+/// any other types that are defined in the same extension will not be registered
+/// until the database file is opened and `register_builtins` is called.
+#[allow(clippy::arc_with_non_send_sync)]
+pub fn add_builtin_vfs_extensions(
+    api: Option<ExtensionApi>,
+) -> crate::Result<Vec<(String, Arc<VfsMod>)>> {
+    let mut vfslist: Vec<*const VfsImpl> = Vec::new();
+    let mut api = match api {
+        None => ExtensionApi {
+            ctx: std::ptr::null_mut(),
+            register_scalar_function,
+            register_aggregate_function,
+            register_vfs,
+            register_module,
+            builtin_vfs: vfslist.as_mut_ptr(),
+            builtin_vfs_count: 0,
+        },
+        Some(mut api) => {
+            api.builtin_vfs = vfslist.as_mut_ptr();
+            api
+        }
+    };
+    register_static_vfs_modules(&mut api);
+    let mut vfslist = Vec::with_capacity(api.builtin_vfs_count as usize);
+    let slice =
+        unsafe { std::slice::from_raw_parts_mut(api.builtin_vfs, api.builtin_vfs_count as usize) };
+    for vfs in slice {
+        if vfs.is_null() {
+            continue;
+        }
+        let vfsimpl = unsafe { &**vfs };
+        let name = unsafe {
+            CString::from_raw(vfsimpl.name as *mut i8)
+                .to_str()
+                .map_err(|_| {
+                    LimboError::ExtensionError("unable to register vfs extension".to_string())
+                })?
+                .to_string()
+        };
+        vfslist.push((
+            name,
+            Arc::new(VfsMod {
+                ctx: vfsimpl as *const _,
+            }),
+        ));
+    }
+    Ok(vfslist)
+}
+
+fn register_static_vfs_modules(_api: &mut ExtensionApi) {
+    //#[cfg(feature = "testvfs")]
+    //unsafe {
+    //    limbo_testvfs::register_extension_static(_api);
+    //}
+}
+
 impl Connection {
     fn register_scalar_function_impl(&self, name: &str, func: ScalarFunction) -> ResultCode {
         self.syms.borrow_mut().functions.insert(
@@ -137,6 +203,8 @@ impl Connection {
             register_aggregate_function,
             register_module,
             register_vfs,
+            builtin_vfs: std::ptr::null_mut(),
+            builtin_vfs_count: 0,
         }
     }
 

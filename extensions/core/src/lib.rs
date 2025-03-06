@@ -18,6 +18,8 @@ pub struct ExtensionApi {
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
     pub register_vfs: RegisterVfsFn,
+    pub builtin_vfs: *mut *const VfsImpl,
+    pub builtin_vfs_count: i32,
 }
 unsafe impl Send for ExtensionApi {}
 unsafe impl Send for ExtensionApiRef {}
