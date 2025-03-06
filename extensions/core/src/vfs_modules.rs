@@ -2,7 +2,7 @@ use crate::{ExtResult, ResultCode};
 use std::ffi::{c_char, c_void};
 
 #[cfg(not(target_family = "wasm"))]
-pub trait VfsExtension: Default {
+pub trait VfsExtension: Default + Send + Sync {
     const NAME: &'static str;
     type File: VfsFile;
     fn open_file(&self, path: &str, flags: i32, direct: bool) -> ExtResult<Self::File>;
@@ -23,7 +23,7 @@ pub trait VfsExtension: Default {
 }
 
 #[cfg(not(target_family = "wasm"))]
-pub trait VfsFile: Sized {
+pub trait VfsFile: Send + Sync {
     fn lock(&mut self, _exclusive: bool) -> ExtResult<()> {
         Ok(())
     }

@@ -1,13 +1,13 @@
 mod types;
 mod vfs_modules;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
+pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive, VfsDerive};
 use std::{
     fmt::Display,
     os::raw::{c_char, c_void},
 };
 pub use types::{ResultCode, Value, ValueType};
 use vfs_modules::RegisterVfsFn;
-pub use vfs_modules::{VfsFileImpl, VfsImpl};
+pub use vfs_modules::{VfsExtension, VfsFile, VfsFileImpl, VfsImpl};
 
 pub type ExtResult<T> = std::result::Result<T, ResultCode>;
 
