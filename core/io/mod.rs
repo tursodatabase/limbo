@@ -24,6 +24,15 @@ pub enum OpenFlags {
     Create,
 }
 
+impl OpenFlags {
+    pub fn to_flags(&self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Create => 1,
+        }
+    }
+}
+
 pub trait IO: Send + Sync {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>>;
 
@@ -203,5 +212,6 @@ cfg_block! {
 }
 
 mod memory;
+mod vfs;
 pub use memory::MemoryIO;
 mod common;

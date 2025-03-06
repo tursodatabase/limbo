@@ -90,6 +90,8 @@ pub struct VfsFileImpl {
     pub file: *const c_void,
     pub vfs: *const VfsImpl,
 }
+unsafe impl Send for VfsFileImpl {}
+unsafe impl Sync for VfsFileImpl {}
 
 impl VfsFileImpl {
     pub fn new(file: *const c_void, vfs: *const VfsImpl) -> ExtResult<Self> {
