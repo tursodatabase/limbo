@@ -19,6 +19,7 @@ pub trait File: Send + Sync {
     fn size(&self) -> Result<u64>;
 }
 
+#[derive(Copy, Clone)]
 pub enum OpenFlags {
     None,
     Create,
