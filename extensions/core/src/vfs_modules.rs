@@ -21,7 +21,6 @@ pub trait VfsExtension: Default + Send + Sync {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
     }
 }
-
 #[cfg(not(target_family = "wasm"))]
 pub trait VfsFile: Send + Sync {
     fn lock(&mut self, _exclusive: bool) -> ExtResult<()> {

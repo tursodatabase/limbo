@@ -108,6 +108,7 @@ unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> R
 /// Get pointers to all the vfs extensions that need to be built in at compile time.
 /// any other types that are defined in the same extension will not be registered
 /// until the database file is opened and `register_builtins` is called.
+#[cfg(feature = "fs")]
 #[allow(clippy::arc_with_non_send_sync)]
 pub fn add_builtin_vfs_extensions(
     api: Option<ExtensionApi>,
@@ -158,7 +159,7 @@ pub fn add_builtin_vfs_extensions(
 fn register_static_vfs_modules(_api: &mut ExtensionApi) {
     #[cfg(feature = "testvfs")]
     unsafe {
-        limbo_testvfs::register_extension_static(_api);
+        limbo_ext_tests::register_extension_static(_api);
     }
 }
 

@@ -1,9 +1,10 @@
 use lazy_static::lazy_static;
-use limbo_ext::register_extension;
 use limbo_ext::{
-    scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
-    VfsDerive, VfsExtension, VfsFile,
+    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, Value,
 };
+#[cfg(not(target_family = "wasm"))]
+use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -155,6 +156,10 @@ pub struct TestFile {
     file: File,
 }
 
+#[cfg(target_family = "wasm")]
+pub struct TestFS;
+
+#[cfg(not(target_family = "wasm"))]
 #[derive(VfsDerive, Default)]
 pub struct TestFS;
 
@@ -165,6 +170,7 @@ fn test_scalar(_args: limbo_ext::Value) -> limbo_ext::Value {
     limbo_ext::Value::from_integer(42)
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl VfsExtension for TestFS {
     const NAME: &'static str = "testvfs";
     type File = TestFile;
@@ -179,6 +185,7 @@ impl VfsExtension for TestFS {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl VfsFile for TestFile {
     fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> ExtResult<i32> {
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {

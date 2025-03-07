@@ -207,9 +207,7 @@ impl Database {
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
-        use ext::add_builtin_vfs_extensions;
-
-        let vfsmods = add_builtin_vfs_extensions(None)?;
+        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
         let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
             Some(vfs) => vfs,
             None => match vfs.trim() {
