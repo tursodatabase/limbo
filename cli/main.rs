@@ -1,9 +1,9 @@
 #![allow(clippy::arc_with_non_send_sync)]
 mod app;
 mod helper;
-mod import;
 mod input;
 mod opcodes_dictionary;
+mod commands;
 
 use rustyline::{error::ReadlineError, Config, Editor};
 use std::sync::atomic::Ordering;

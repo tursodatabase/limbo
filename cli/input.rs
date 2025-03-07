@@ -209,3 +209,13 @@ Usage Examples:
 Note:
 - All SQL commands must end with a semicolon (;).
 - Special commands do not require a semicolon."#;
+
+pub const BEFORE_HELP_MSG: &str = r#"
+
+Limbo SQL Shell Help
+==============
+Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
+In addition to standard SQL commands, the following special commands are available:"#;
+pub const AFTER_HELP_MSG: &str = r#"Note:
+- All SQL commands must end with a semicolon (;).
+- Special commands start with a dot and do not require a semicolon."#;

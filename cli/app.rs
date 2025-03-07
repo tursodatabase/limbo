@@ -1,6 +1,6 @@
 use crate::{
+    commands::{args::EchoMode, import::ImportFile, Command, CommandParser},
     helper::LimboHelper,
-    import::{ImportFile, IMPORT_HELP},
     input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings, HELP_MSG},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
@@ -14,7 +14,7 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     rc::Rc,
-    str::FromStr,
+    str::FromStr as _,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -53,111 +53,6 @@ pub struct Opts {
     pub io: Io,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
-}
-
-#[derive(Debug, Clone)]
-pub enum Command {
-    /// Exit this program with return-code CODE
-    Exit,
-    /// Quit the shell
-    Quit,
-    /// Open a database file
-    Open,
-    /// Display help message
-    Help,
-    /// Display schema for a table
-    Schema,
-    /// Set output file (or stdout if empty)
-    SetOutput,
-    /// Set output display mode
-    OutputMode,
-    /// Show vdbe opcodes
-    Opcodes,
-    /// Change the current working directory
-    Cwd,
-    /// Display information about settings
-    ShowInfo,
-    /// Set the value of NULL to be printed in 'list' mode
-    NullValue,
-    /// Toggle 'echo' mode to repeat commands before execution
-    Echo,
-    /// Display tables
-    Tables,
-    /// Import data from FILE into TABLE
-    Import,
-    /// Loads an extension library
-    LoadExtension,
-    /// Dump the current database as a list of SQL statements
-    Dump,
-}
-
-impl Command {
-    fn min_args(&self) -> usize {
-        1 + match self {
-            Self::Exit
-            | Self::Quit
-            | Self::Schema
-            | Self::Help
-            | Self::Opcodes
-            | Self::ShowInfo
-            | Self::Tables
-            | Self::SetOutput
-            | Self::Dump => 0,
-            Self::Open
-            | Self::OutputMode
-            | Self::Cwd
-            | Self::Echo
-            | Self::NullValue
-            | Self::LoadExtension => 1,
-            Self::Import => 2,
-        }
-    }
-
-    fn usage(&self) -> &str {
-        match self {
-            Self::Exit => ".exit ?<CODE>",
-            Self::Quit => ".quit",
-            Self::Open => ".open <file>",
-            Self::Help => ".help",
-            Self::Schema => ".schema ?<table>?",
-            Self::Opcodes => ".opcodes",
-            Self::OutputMode => ".mode list|pretty",
-            Self::SetOutput => ".output ?file?",
-            Self::Cwd => ".cd <directory>",
-            Self::ShowInfo => ".show",
-            Self::NullValue => ".nullvalue <string>",
-            Self::Echo => ".echo on|off",
-            Self::Tables => ".tables",
-            Self::LoadExtension => ".load",
-            Self::Dump => ".dump",
-            Self::Import => &IMPORT_HELP,
-        }
-    }
-}
-
-impl FromStr for Command {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            ".exit" => Ok(Self::Exit),
-            ".quit" => Ok(Self::Quit),
-            ".open" => Ok(Self::Open),
-            ".help" => Ok(Self::Help),
-            ".schema" => Ok(Self::Schema),
-            ".tables" => Ok(Self::Tables),
-            ".opcodes" => Ok(Self::Opcodes),
-            ".mode" => Ok(Self::OutputMode),
-            ".output" => Ok(Self::SetOutput),
-            ".cd" => Ok(Self::Cwd),
-            ".show" => Ok(Self::ShowInfo),
-            ".nullvalue" => Ok(Self::NullValue),
-            ".echo" => Ok(Self::Echo),
-            ".import" => Ok(Self::Import),
-            ".load" => Ok(Self::LoadExtension),
-            ".dump" => Ok(Self::Dump),
-            _ => Err("Unknown command".to_string()),
-        }
-    }
 }
 
 const PROMPT: &str = "limbo> ";
@@ -248,7 +143,7 @@ impl<'a> Limbo<'a> {
 
     fn handle_first_input(&mut self, cmd: &str) {
         if cmd.trim().starts_with('.') {
-            self.handle_dot_command(cmd);
+            self.handle_dot_command(&cmd[1..]);
         } else {
             self.run_query(cmd);
         }
@@ -397,12 +292,16 @@ impl<'a> Limbo<'a> {
         self.conn.close()
     }
 
-    fn toggle_echo(&mut self, arg: &str) {
-        match arg.trim().to_lowercase().as_str() {
-            "on" => self.opts.echo = true,
-            "off" => self.opts.echo = false,
-            _ => {}
+    fn toggle_echo(&mut self, arg: EchoMode) {
+        match arg {
+            EchoMode::On => self.opts.echo = true,
+            EchoMode::Off => self.opts.echo = false,
         }
+        // match arg.trim().to_lowercase().as_str() {
+        //     "on" => self.opts.echo = true,
+        //     "off" => self.opts.echo = false,
+        //     _ => {}
+        // }
     }
 
     fn open_db(&mut self, path: &str) -> anyhow::Result<()> {
@@ -494,7 +393,7 @@ impl<'a> Limbo<'a> {
                 return Ok(());
             }
             if line.starts_with('.') {
-                self.handle_dot_command(line);
+                self.handle_dot_command(&line[1..]);
                 let _ = self.reset_line(line);
                 return Ok(());
             }
@@ -550,45 +449,44 @@ impl<'a> Limbo<'a> {
         if args.is_empty() {
             return;
         }
-        if let Ok(ref cmd) = Command::from_str(args[0]) {
-            if args.len() < cmd.min_args() {
-                let _ = self.write_fmt(format_args!(
-                    "Insufficient arguments: USAGE: {}",
-                    cmd.usage()
-                ));
-                return;
+        // else {
+        //     // let _ = self.write_fmt(format_args!(
+        //     //     "Unknown command: {}\nenter: .help for all available commands",
+        //     //     args[0]
+        //     // ));
+        match CommandParser::try_parse_from(args) {
+            Err(err) => {
+                let _ = self.write_fmt(format_args!("{err}"));
             }
-            match cmd {
-                Command::Exit => {
-                    let code = args.get(1).and_then(|c| c.parse::<i32>().ok()).unwrap_or(0);
-                    std::process::exit(code);
+            Ok(cmd) => match cmd.command {
+                Command::Exit(args) => {
+                    // let code = args.get(1).and_then(|c| c.parse::<i32>().ok()).unwrap_or(0);
+                    std::process::exit(args.code);
                 }
                 Command::Quit => {
                     let _ = self.writeln("Exiting Limbo SQL Shell.");
                     let _ = self.close_conn();
                     std::process::exit(0)
                 }
-                Command::Open => {
-                    if self.open_db(args[1]).is_err() {
+                Command::Open(args) => {
+                    if self.open_db(&args.path).is_err() {
                         let _ = self.writeln("Error: Unable to open database file.");
                     }
                 }
-                Command::Schema => {
-                    let table_name = args.get(1).copied();
-                    if let Err(e) = self.display_schema(table_name) {
+                Command::Schema(args) => {
+                    if let Err(e) = self.display_schema(args.table_name.as_deref()) {
                         let _ = self.writeln(e.to_string());
                     }
                 }
-                Command::Tables => {
-                    let pattern = args.get(1).copied();
-                    if let Err(e) = self.display_tables(pattern) {
+                Command::Tables(args) => {
+                    if let Err(e) = self.display_tables(args.pattern.as_deref()) {
                         let _ = self.writeln(e.to_string());
                     }
                 }
-                Command::Opcodes => {
-                    if args.len() > 1 {
+                Command::Opcodes(args) => {
+                    if let Some(opcode) = args.opcode {
                         for op in &OPCODE_DESCRIPTIONS {
-                            if op.name.eq_ignore_ascii_case(args.get(1).unwrap().trim()) {
+                            if op.name.eq_ignore_ascii_case(opcode.trim()) {
                                 let _ = self.write_fmt(format_args!("{}", op));
                             }
                         }
@@ -598,51 +496,56 @@ impl<'a> Limbo<'a> {
                         }
                     }
                 }
-                Command::NullValue => {
-                    self.opts.null_value = args[1].to_string();
+                Command::NullValue(args) => {
+                    self.opts.null_value = args.value;
                 }
-                Command::OutputMode => match OutputMode::from_str(args[1], true) {
-                    Ok(mode) => {
-                        if let Err(e) = self.set_mode(mode) {
-                            let _ = self.write_fmt(format_args!("Error: {}", e));
-                        }
+                Command::OutputMode(args) => {
+                    if let Err(e) = self.set_mode(args.mode) {
+                        let _ = self.write_fmt(format_args!("{}", e));
                     }
-                    Err(e) => {
-                        let _ = self.writeln(e);
-                    }
-                },
-                Command::SetOutput => {
-                    if args.len() == 2 {
-                        if let Err(e) = self.set_output_file(args[1]) {
+                }
+                // OutputMode::from_str(args[1], true) {
+                //     Ok(mode) => {
+                //         if let Err(e) = self.set_mode(mode) {
+                //             let _ = self.write_fmt(format_args!("Error: {}", e));
+                //         }
+                //     }
+                //     Err(e) => {
+                //         let _ = self.writeln(e);
+                //     }
+                // },
+                Command::SetOutput(args) => {
+                    if let Some(path) = args.path {
+                        if let Err(e) = self.set_output_file(&path) {
                             let _ = self.write_fmt(format_args!("Error: {}", e));
                         }
                     } else {
                         self.set_output_stdout();
                     }
                 }
-                Command::Echo => {
-                    self.toggle_echo(args[1]);
+                Command::Echo(args) => {
+                    self.toggle_echo(args.mode);
                 }
-                Command::Cwd => {
-                    let _ = std::env::set_current_dir(args[1]);
+                Command::Cwd(args) => {
+                    let _ = std::env::set_current_dir(args.directory);
                 }
                 Command::ShowInfo => {
                     let _ = self.show_info();
                 }
-                Command::Help => {
-                    let _ = self.writeln(HELP_MSG);
-                }
-                Command::Import => {
+                // Command::Help => {
+                //     let _ = self.writeln(HELP_MSG);
+                // }
+                Command::Import(args) => {
                     let mut import_file =
                         ImportFile::new(self.conn.clone(), self.io.clone(), &mut self.writer);
-                    if let Err(e) = import_file.import(&args) {
-                        let _ = self.writeln(e.to_string());
-                    };
+                    import_file.import(args)
+                    // if let Err(e) = import_file.import(args) {
+                    //     let _ = self.writeln(e.to_string());
+                    // };
                 }
-                Command::LoadExtension =>
-                {
+                Command::LoadExtension(args) => {
                     #[cfg(not(target_family = "wasm"))]
-                    if let Err(e) = self.handle_load_extension(args[1]) {
+                    if let Err(e) = self.handle_load_extension(&args.path) {
                         let _ = self.writeln(&e);
                     }
                 }
@@ -651,13 +554,19 @@ impl<'a> Limbo<'a> {
                         let _ = self.write_fmt(format_args!("/****** ERROR: {} ******/", e));
                     }
                 }
-            }
-        } else {
-            let _ = self.write_fmt(format_args!(
-                "Unknown command: {}\nenter: .help for all available commands",
-                args[0]
-            ));
-        }
+            },
+        };
+        // if let Ok(ref cmd) = CommandParser::try_parse_from(args) {
+        //     if args.len() < cmd.min_args() {
+        //         let _ = self.write_fmt(format_args!(
+        //             "Insufficient arguments: USAGE: {}",
+        //             cmd.usage()
+        //         ));
+        //         return;
+        //     }
+        //     match cmd {
+
+        // }
     }
 
     fn print_query_result(
