@@ -14,6 +14,7 @@ pub trait File: Send + Sync {
     fn size(&self) -> Result<u64>;
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum OpenFlags {
     None,
     Create,
@@ -113,6 +114,7 @@ impl SyncCompletion {
 #[derive(Debug, Clone)]
 pub struct IOBuff(Arc<UnsafeCell<Buffer>>);
 
+#[allow(clippy::arc_with_non_send_sync)]
 impl IOBuff {
     pub fn new(buf: Buffer) -> Self {
         Self(Arc::new(UnsafeCell::new(buf)))
