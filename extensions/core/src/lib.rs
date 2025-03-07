@@ -29,6 +29,26 @@ pub struct ExtensionApiRef {
     pub api: *const ExtensionApi,
 }
 
+impl ExtensionApi {
+    /// Since we want the option to build in extensions at compile time as well,
+    /// we add a slice of VfsImpls to the extension API, and this is called with any
+    /// libraries that we load staticly that will add their VFS implementations to the list.
+    pub fn add_builtin_vfs(&mut self, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() || self.builtin_vfs.is_null() {
+            return ResultCode::Error;
+        }
+        let mut new = unsafe {
+            let slice =
+                std::slice::from_raw_parts_mut(self.builtin_vfs, self.builtin_vfs_count as usize);
+            Vec::from(slice)
+        };
+        new.push(vfs);
+        self.builtin_vfs = Box::into_raw(new.into_boxed_slice()) as *mut *const VfsImpl;
+        self.builtin_vfs_count += 1;
+        ResultCode::OK
+    }
+}
+
 pub type ExtensionEntryPoint = unsafe extern "C" fn(api: *const ExtensionApi) -> ResultCode;
 
 pub type ScalarFunction = unsafe extern "C" fn(argc: i32, *const Value) -> Value;
