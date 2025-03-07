@@ -12,6 +12,8 @@ core_only = []
 static = []
 
 [dependencies]
-chrono = "0.4.40"
-getrandom = { version = "0.2.15", features = ["js"] }
 limbo_macros = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+getrandom = "0.3.1"
+chrono = "0.4.40"

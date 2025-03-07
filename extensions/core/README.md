@@ -59,8 +59,13 @@ register_extension!{
     scalars: { double }, // name of your function, if different from attribute name
     aggregates: { Percentile },
     vtabs: { CsvVTable },
+    vfs: { ExampleFS },
 }
 ```
+
+**NOTE**: Currently, any Derive macro used from this crate is required to be in the same
+file as the `register_extension` macro.
+
 
 ### Scalar Example:
 ```rust
