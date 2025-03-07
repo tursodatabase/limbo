@@ -1,20 +1,19 @@
 use crate::{
     commands::{args::EchoMode, import::ImportFile, Command, CommandParser},
     helper::LimboHelper,
-    input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings, HELP_MSG},
+    input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use rustyline::{history::DefaultHistory, Editor};
 use std::{
     fmt,
     io::{self, Write},
     path::PathBuf,
     rc::Rc,
-    str::FromStr as _,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -297,11 +296,6 @@ impl<'a> Limbo<'a> {
             EchoMode::On => self.opts.echo = true,
             EchoMode::Off => self.opts.echo = false,
         }
-        // match arg.trim().to_lowercase().as_str() {
-        //     "on" => self.opts.echo = true,
-        //     "off" => self.opts.echo = false,
-        //     _ => {}
-        // }
     }
 
     fn open_db(&mut self, path: &str) -> anyhow::Result<()> {
@@ -449,18 +443,12 @@ impl<'a> Limbo<'a> {
         if args.is_empty() {
             return;
         }
-        // else {
-        //     // let _ = self.write_fmt(format_args!(
-        //     //     "Unknown command: {}\nenter: .help for all available commands",
-        //     //     args[0]
-        //     // ));
         match CommandParser::try_parse_from(args) {
             Err(err) => {
                 let _ = self.write_fmt(format_args!("{err}"));
             }
             Ok(cmd) => match cmd.command {
                 Command::Exit(args) => {
-                    // let code = args.get(1).and_then(|c| c.parse::<i32>().ok()).unwrap_or(0);
                     std::process::exit(args.code);
                 }
                 Command::Quit => {
@@ -504,16 +492,6 @@ impl<'a> Limbo<'a> {
                         let _ = self.write_fmt(format_args!("{}", e));
                     }
                 }
-                // OutputMode::from_str(args[1], true) {
-                //     Ok(mode) => {
-                //         if let Err(e) = self.set_mode(mode) {
-                //             let _ = self.write_fmt(format_args!("Error: {}", e));
-                //         }
-                //     }
-                //     Err(e) => {
-                //         let _ = self.writeln(e);
-                //     }
-                // },
                 Command::SetOutput(args) => {
                     if let Some(path) = args.path {
                         if let Err(e) = self.set_output_file(&path) {
@@ -532,16 +510,10 @@ impl<'a> Limbo<'a> {
                 Command::ShowInfo => {
                     let _ = self.show_info();
                 }
-                // Command::Help => {
-                //     let _ = self.writeln(HELP_MSG);
-                // }
                 Command::Import(args) => {
                     let mut import_file =
                         ImportFile::new(self.conn.clone(), self.io.clone(), &mut self.writer);
                     import_file.import(args)
-                    // if let Err(e) = import_file.import(args) {
-                    //     let _ = self.writeln(e.to_string());
-                    // };
                 }
                 Command::LoadExtension(args) => {
                     #[cfg(not(target_family = "wasm"))]
@@ -556,17 +528,6 @@ impl<'a> Limbo<'a> {
                 }
             },
         };
-        // if let Ok(ref cmd) = CommandParser::try_parse_from(args) {
-        //     if args.len() < cmd.min_args() {
-        //         let _ = self.write_fmt(format_args!(
-        //             "Insufficient arguments: USAGE: {}",
-        //             cmd.usage()
-        //         ));
-        //         return;
-        //     }
-        //     match cmd {
-
-        // }
     }
 
     fn print_query_result(
