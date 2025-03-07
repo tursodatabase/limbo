@@ -69,7 +69,7 @@ pub const MIN_PAGE_CACHE_SIZE: usize = 10;
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.
 /// All multibyte fields in the database file header are stored with the most significant byte first (big-endian).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DatabaseHeader {
     /// The header string: "SQLite format 3\0"
     magic: [u8; 16],
@@ -156,7 +156,7 @@ pub const WAL_MAGIC_BE: u32 = 0x377f0683;
 /// The Write-Ahead Log (WAL) header.
 /// The first 32 bytes of a WAL file comprise the WAL header.
 /// The WAL header is divided into the following fields stored in big-endian order.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 #[repr(C)] // This helps with encoding because rust does not respect the order in structs, so in
            // this case we want to keep the order
 pub struct WalHeader {
@@ -190,7 +190,7 @@ pub struct WalHeader {
 /// Each frame consists of a 24-byte frame-header followed by <page-size> bytes of page data.
 /// The frame-header is six big-endian 32-bit unsigned integer values, as follows:
 #[allow(dead_code)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct WalFrameHeader {
     /// Page number
     page_number: u32,
@@ -295,8 +295,7 @@ fn finish_read_database_header(
     Ok(())
 }
 
-pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Result<()> {
-    let header = Rc::new(header.clone());
+pub fn begin_write_database_header(header: DatabaseHeader, pager: &Pager) -> Result<()> {
     let page_source = pager.page_io.clone();
 
     let drop_fn = Rc::new(|_buf| {});

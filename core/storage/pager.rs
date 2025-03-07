@@ -122,7 +122,7 @@ impl Page {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum FlushState {
     Start,
     WaitAppendFrames,
@@ -132,7 +132,7 @@ enum FlushState {
     WaitSyncDbFile,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 enum CheckpointState {
     Checkpoint,
     SyncDbFile,
@@ -327,7 +327,7 @@ impl Pager {
     }
 
     /// Writes the database header.
-    pub fn write_database_header(&self, header: &DatabaseHeader) {
+    pub fn write_database_header(&self, header: DatabaseHeader) {
         sqlite3_ondisk::begin_write_database_header(header, self).expect("failed to write header");
     }
 
@@ -346,7 +346,7 @@ impl Pager {
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
         let mut checkpoint_result = CheckpointResult::new();
         loop {
-            let state = self.flush_info.borrow().state.clone();
+            let state = self.flush_info.borrow().state;
             match state {
                 FlushState::Start => {
                     let db_size = self.db_header.lock().unwrap().database_size;
@@ -419,7 +419,7 @@ impl Pager {
     pub fn checkpoint(&self) -> Result<CheckpointStatus> {
         let mut checkpoint_result = CheckpointResult::new();
         loop {
-            let state = self.checkpoint_state.borrow().clone();
+            let state = *self.checkpoint_state.borrow();
             trace!("pager_checkpoint(state={:?})", state);
             match state {
                 CheckpointState::Checkpoint => {
@@ -450,8 +450,7 @@ impl Pager {
                     }
                 }
                 CheckpointState::CheckpointDone => {
-                    let in_flight = self.checkpoint_inflight.clone();
-                    return if *in_flight.borrow() > 0 {
+                    return if *self.checkpoint_inflight.borrow() > 0 {
                         Ok(CheckpointStatus::IO)
                     } else {
                         self.checkpoint_state.replace(CheckpointState::Checkpoint);
