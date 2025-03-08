@@ -165,6 +165,7 @@ impl TextValue {
         })
     }
 
+    #[cfg(feature = "core_only")]
     fn free(self) {
         if !self.text.is_null() {
             let _ = unsafe { Box::from_raw(self.text as *mut u8) };
@@ -231,7 +232,7 @@ impl Blob {
         }
         unsafe { std::slice::from_raw_parts(self.data, self.size as usize) }
     }
-
+    #[cfg(feature = "core_only")]
     fn free(self) {
         if !self.data.is_null() {
             let _ = unsafe { Box::from_raw(self.data as *mut u8) };
