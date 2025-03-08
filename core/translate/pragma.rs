@@ -286,8 +286,8 @@ fn update_cache_size(value: i64, header: Arc<Mutex<DatabaseHeader>>, pager: Rc<P
         .unwrap_or_else(|_| panic!("invalid value, too big for a i32 {}", value));
 
     // update in disk
-    let header_copy = header.lock().unwrap().clone();
-    pager.write_database_header(&header_copy);
+    let header_copy = *header.lock().unwrap();
+    pager.write_database_header(header_copy);
 
     // update cache size
     pager.change_page_cache_size(cache_size);

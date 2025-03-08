@@ -32,10 +32,7 @@ unsafe impl Sync for FileStorage {}
 #[cfg(feature = "fs")]
 impl DatabaseStorage for FileStorage {
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<()> {
-        let r = match c {
-            Completion::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {
