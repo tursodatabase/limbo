@@ -60,13 +60,12 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 use crate::storage::wal::CheckpointResult;
 use crate::translate::optimizer::optimize_plan;
-pub use io::OpenFlags;
-pub use io::PlatformIO;
 #[cfg(all(feature = "fs", target_family = "unix"))]
 pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
 pub use io::{Buffer, Completion, File, MemoryIO, WriteCompletion, IO};
+pub use io::{IOBuff, OpenFlags, PlatformIO};
 pub use storage::buffer_pool::BufferPool;
 pub use storage::database::DatabaseStorage;
 pub use storage::pager::Page;
