@@ -2324,6 +2324,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
     while pc <= maxpc {
         let next = u16::from_be_bytes(buf[pc..pc + 2].try_into().unwrap());
         let size = u16::from_be_bytes(buf[pc + 2..pc + 4].try_into().unwrap());
+        println!("size after reading = {}", size);
         if amount <= size as usize {
             if amount == size as usize {
                 // delete whole thing
@@ -2331,6 +2332,8 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
             } else {
                 // take only the part we are interested in by reducing the size
                 let new_size = size - amount as u16;
+                println!("size = {}", size);
+                println!("amount = {}", amount);
                 // size includes 4 bytes of freeblock
                 // we need to leave the free block at least
                 if new_size >= 4 {
@@ -2341,14 +2344,19 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
                     let frag = page_ref.num_frag_free_bytes() + new_size as u8;
                     page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
                 }
+                println!("find_free_cell new_size = {}", new_size);
                 pc += new_size as usize;
             }
+            println!("find_free_cell pc = {}", pc);
             return Ok(pc);
         }
         prev_pc = pc;
         pc = next as usize;
-        if pc <= prev_pc && pc != 0 {
-            return_corrupt!("Free list not in ascending order");
+        if pc <= prev_pc {
+            if pc != 0 {
+                return_corrupt!("Free list not in ascending order");
+            }
+            return Ok(0);
         }
     }
     if pc > maxpc + amount - 4 {
@@ -2523,8 +2531,19 @@ fn free_cell_range(
     len: u16,
     usable_space: u16,
 ) -> Result<()> {
+    println!("Before free_cell_range(offset={}, len={})", offset, len);
+
+    if len < 4 {
+        return_corrupt!("Minimum cell size is 4");
+    }
+    
+    if offset > usable_space.saturating_sub(4) {
+        return_corrupt!("Start offset beyond usable space");
+    }
+
     let mut size = len;
     let mut end = offset + len;
+    println!("free_cell_range end = {}", end);
     let mut pointer_to_pc = page.offset as u16 + 1;
     // if the freeblock list is empty, we set this block as the first freeblock in the page header.
     let pc = if page.first_freeblock() == 0 {
@@ -2602,6 +2621,8 @@ fn free_cell_range(
         page.write_u16_no_offset(offset as usize, pc);
         page.write_u16_no_offset(offset as usize + 2, size);
     }
+    println!("After free_cell_range");
+
     Ok(())
 }
 
@@ -3925,12 +3946,16 @@ mod tests {
         let usable_space = 4096;
         let mut i = 1000;
         let seed = thread_rng().gen();
+        // let seed = 15292777653676891381;
+        println!("SEED = {}", seed);
         tracing::info!("seed {}", seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         while i > 0 {
             i -= 1;
             match rng.next_u64() % 3 {
                 0 => {
+                    println!("#######################");
+                    println!("INSERT");
                     // allow appends with extra place to insert
                     let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
                     let free = compute_free_space(page, usable_space);
@@ -3954,6 +3979,8 @@ mod tests {
                     cells.push(Cell { pos: i, payload });
                 }
                 1 => {
+                    println!("#######################");
+                    println!("DROP CELL");
                     if page.cell_count() == 0 {
                         continue;
                     }
@@ -3969,12 +3996,15 @@ mod tests {
                     cells.remove(cell_idx);
                 }
                 2 => {
+                    println!("#######################");
+                    println!("DEFRAG PAGE");
                     defragment_page(page, usable_space);
                 }
                 _ => unreachable!(),
             }
             let free = compute_free_space(page, usable_space);
             assert_eq!(free, 4096 - total_size - header_size);
+            println!("SEED = {}", seed);
         }
     }
 
