@@ -37,7 +37,11 @@ cfg-if = "1.0.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing = "0.1.41"
 syntect = "5.2.0"
-nu-ansi-term = "0.50.1"
+nu-ansi-term = {version = "0.50.1", features = ["serde", "derive_serde_style"]}
+toml = {version = "0.8.20", features = ["preserve_order"]}
+schemars = {version = "0.8.22", features = ["preserve_order"]}
+serde = {version = "1.0.218", features = ["derive"]}
+indexmap = "2.7.1"
 
 
 [features]
