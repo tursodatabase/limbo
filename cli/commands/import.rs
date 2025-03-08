@@ -1,22 +1,8 @@
-use anyhow::Error;
-use clap::Parser;
+use clap::Args;
 use limbo_core::Connection;
-use std::{
-    fs::File,
-    io::Write,
-    path::PathBuf,
-    rc::Rc,
-    sync::{Arc, LazyLock},
-};
+use std::{fs::File, io::Write, path::PathBuf, rc::Rc, sync::Arc};
 
-pub static IMPORT_HELP: LazyLock<String> = LazyLock::new(|| {
-    let empty: [&'static str; 2] = [".import", "--help"];
-    let opts = ImportArgs::try_parse_from(empty);
-    opts.map_err(|e| e.to_string()).unwrap_err()
-});
-
-#[derive(Debug, Parser)]
-#[command(name = ".import")]
+#[derive(Debug, Clone, Args)]
 pub struct ImportArgs {
     /// Use , and \n as column and row separators
     #[arg(long, default_value = "true")]
@@ -46,15 +32,8 @@ impl<'a> ImportFile<'a> {
         Self { conn, io, writer }
     }
 
-    pub fn import(&mut self, args: &[&str]) -> Result<(), Error> {
-        let import_args = ImportArgs::try_parse_from(args.iter());
-        match import_args {
-            Ok(args) => {
-                self.import_csv(args);
-                Ok(())
-            }
-            Err(err) => Err(anyhow::anyhow!(err.to_string())),
-        }
+    pub fn import(&mut self, args: ImportArgs) {
+        self.import_csv(args);
     }
 
     pub fn import_csv(&mut self, args: ImportArgs) {
