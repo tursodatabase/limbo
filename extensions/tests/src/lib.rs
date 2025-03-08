@@ -12,6 +12,7 @@ use std::sync::Mutex;
 
 register_extension! {
     vtabs: { KVStoreVTab },
+    scalars: { test_scalar },
     vfs: { TestFS },
 }
 
@@ -134,7 +135,7 @@ impl VTabCursor for KVStoreCursor {
         if self.index.is_some_and(|c| c < self.rows.len()) {
             self.rows[self.index.unwrap_or(0)].0
         } else {
-            println!("rowid: -1");
+            log::error!("rowid: -1");
             -1
         }
     }
@@ -175,6 +176,8 @@ impl VfsExtension for TestFS {
     const NAME: &'static str = "testvfs";
     type File = TestFile;
     fn open_file(&self, path: &str, flags: i32, _direct: bool) -> ExtResult<Self::File> {
+        let _ = env_logger::try_init();
+        log::debug!("opening file with testing VFS: {} flags: {}", path, flags);
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -188,6 +191,7 @@ impl VfsExtension for TestFS {
 #[cfg(not(target_family = "wasm"))]
 impl VfsFile for TestFile {
     fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> ExtResult<i32> {
+        log::debug!("reading file with testing VFS: bytes: {count} offset: {offset}");
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
             return Err(ResultCode::Error);
         }
@@ -198,6 +202,7 @@ impl VfsFile for TestFile {
     }
 
     fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> ExtResult<i32> {
+        log::debug!("writing to file with testing VFS: bytes: {count} offset: {offset}");
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
             return Err(ResultCode::Error);
         }
@@ -208,6 +213,7 @@ impl VfsFile for TestFile {
     }
 
     fn sync(&self) -> ExtResult<()> {
+        log::debug!("syncing file with testing VFS");
         self.file.sync_all().map_err(|_| ResultCode::Error)
     }
 
