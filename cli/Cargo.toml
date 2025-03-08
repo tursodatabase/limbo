@@ -1,14 +1,14 @@
 # Copyright 2023 the Limbo authors. All rights reserved. MIT license.
 
 [package]
-name = "limbo_cli"
-version.workspace = true
 authors.workspace = true
 default-run = "limbo"
+description = "The Limbo interactive SQL shell"
 edition.workspace = true
 license.workspace = true
+name = "limbo_cli"
 repository.workspace = true
-description = "The Limbo interactive SQL shell"
+version.workspace = true
 
 [package.metadata.dist]
 dist = true
@@ -36,7 +36,14 @@ miette = { version = "7.4.0", features = ["fancy"] }
 cfg-if = "1.0.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing = "0.1.41"
+syntect = "5.2.0"
+nu-ansi-term = "0.50.1"
+
 
 [features]
 default = ["io_uring"]
 io_uring = ["limbo_core/io_uring"]
+
+[build-dependencies]
+syntect = "5.2.0"
+
