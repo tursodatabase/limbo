@@ -2314,42 +2314,43 @@ impl CellArray {
 fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> Result<usize> {
     // NOTE: freelist is in ascending order of keys and pc
     // unuse_space is reserved bytes at the end of page, therefore we must substract from maxpc
-    let mut pc = page_ref.first_freeblock() as usize;
+    println!("Before find_free_cell(amount={})", amount);
+    page_ref.debug_print_freelist(usable_space);
     let mut prev_pc = page_ref.offset + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK;
-
+    let mut pc = page_ref.first_freeblock() as usize;
     let buf = page_ref.as_ptr();
+    let maxpc = usable_space as usize - amount;
 
-    let usable_space = usable_space as usize;
-    let maxpc = usable_space - amount;
     while pc <= maxpc {
+        println!("PC VALUE = {}", pc);
+        if pc + 4 > usable_space as usize {
+            return_corrupt!("Free block header extends beyond page");
+        }
+
         let next = u16::from_be_bytes(buf[pc..pc + 2].try_into().unwrap());
         let size = u16::from_be_bytes(buf[pc + 2..pc + 4].try_into().unwrap());
-        println!("size after reading = {}", size);
+
+        println!("Processing block: pc={}, next={}, size={}, maxpc={}", pc, next, size, maxpc);
         if amount <= size as usize {
-            if amount == size as usize {
-                // delete whole thing
-                page_ref.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, next);
-            } else {
-                // take only the part we are interested in by reducing the size
-                let new_size = size - amount as u16;
-                println!("size = {}", size);
-                println!("amount = {}", amount);
-                // size includes 4 bytes of freeblock
-                // we need to leave the free block at least
-                if new_size >= 4 {
-                    buf[pc + 2..pc + 4].copy_from_slice(&new_size.to_be_bytes());
-                } else {
-                    // increase fragment size and delete entry from free list
-                    buf[prev_pc..prev_pc + 2].copy_from_slice(&next.to_be_bytes());
-                    let frag = page_ref.num_frag_free_bytes() + new_size as u8;
-                    page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
+            let new_size = size as usize - amount;
+            println!("Found fitting block: new_size={}", new_size);            
+            if new_size < 4 {
+                if page_ref.num_frag_free_bytes() > 57 {
+                    return Ok(0);
                 }
-                println!("find_free_cell new_size = {}", new_size);
-                pc += new_size as usize;
+                buf[prev_pc..prev_pc + 2].copy_from_slice(&next.to_be_bytes());
+                let frag = page_ref.num_frag_free_bytes() + new_size as u8;
+                page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
+                return Ok(pc);
+            } else if new_size + pc > maxpc {
+                println!("new_size = {}", new_size);
+                return_corrupt!("Free block extends beyond page end");
+            } else {
+                buf[pc + 2..pc + 4].copy_from_slice(&(new_size as u16).to_be_bytes());
+                return Ok(pc + new_size);
             }
-            println!("find_free_cell pc = {}", pc);
-            return Ok(pc);
         }
+
         prev_pc = pc;
         pc = next as usize;
         if pc <= prev_pc {
@@ -2532,7 +2533,7 @@ fn free_cell_range(
     usable_space: u16,
 ) -> Result<()> {
     println!("Before free_cell_range(offset={}, len={})", offset, len);
-
+    page.debug_print_freelist(usable_space);
     if len < 4 {
         return_corrupt!("Minimum cell size is 4");
     }
@@ -2603,7 +2604,6 @@ fn free_cell_range(
         }
         let frag = page.num_frag_free_bytes() - removed_fragmentation;
         page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
-
         pc
     };
 
@@ -2622,6 +2622,7 @@ fn free_cell_range(
         page.write_u16_no_offset(offset as usize + 2, size);
     }
     println!("After free_cell_range");
+    page.debug_print_freelist(usable_space);
 
     Ok(())
 }
@@ -2703,6 +2704,7 @@ fn insert_into_cell(
         cell_idx,
         page.cell_count()
     );
+    println!(">>> INSERT Cell <<<");
     let free = compute_free_space(page, usable_space);
     const CELL_POINTER_SIZE_BYTES: usize = 2;
     let enough_space = payload.len() + CELL_POINTER_SIZE_BYTES <= free as usize;
@@ -2748,6 +2750,8 @@ fn insert_into_cell(
 /// and end of cell pointer area.
 #[allow(unused_assignments)]
 fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
+    println!("COMPUTE FREE SPACE");
+    page.debug_print_freelist(usable_space);
     // TODO(pere): maybe free space is not calculated correctly with offset
 
     // Usable space, not the same as free space, simply means:
@@ -3945,8 +3949,9 @@ mod tests {
         let mut cells = Vec::new();
         let usable_space = 4096;
         let mut i = 1000;
-        let seed = thread_rng().gen();
+        // let seed = thread_rng().gen();
         // let seed = 15292777653676891381;
+        let seed = 9261043168681395159;
         println!("SEED = {}", seed);
         tracing::info!("seed {}", seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -4004,6 +4009,7 @@ mod tests {
             }
             let free = compute_free_space(page, usable_space);
             assert_eq!(free, 4096 - total_size - header_size);
+            println!("calculated {} vs actual {}", free, 4096 - total_size - header_size);
             println!("SEED = {}", seed);
         }
     }
