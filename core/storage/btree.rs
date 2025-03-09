@@ -4015,6 +4015,85 @@ mod tests {
     }
 
     #[test]
+    pub fn test_fuzz_drop_defragment_insert_issue_1085() {
+        // This test is used to demonstrate that issue at https://github.com/tursodatabase/limbo/issues/1085
+        // is FIXED.
+        let db = get_database();
+        let conn = db.connect().unwrap();
+
+        let page = get_page(2);
+        let page = page.get_contents();
+        let header_size = 8;
+
+        let mut total_size = 0;
+        let mut cells = Vec::new();
+        let usable_space = 4096;
+        let mut i = 1000;
+        for seed in [15292777653676891381, 9261043168681395159] {
+            println!("SEED = {}", seed);
+            tracing::info!("seed {}", seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            while i > 0 {
+                i -= 1;
+                match rng.next_u64() % 3 {
+                    0 => {
+                        println!("#######################");
+                        println!("INSERT");
+                        // allow appends with extra place to insert
+                        let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
+                        let free = compute_free_space(page, usable_space);
+                        let record = Record::new([OwnedValue::Integer(i as i64)].to_vec());
+                        let mut payload: Vec<u8> = Vec::new();
+                        fill_cell_payload(
+                            page.page_type(),
+                            Some(i as u64),
+                            &mut payload,
+                            &record,
+                            4096,
+                            conn.pager.clone(),
+                        );
+                        if (free as usize) < payload.len() - 2 {
+                            // do not try to insert overflow pages because they require balancing
+                            continue;
+                        }
+                        insert_into_cell(page, &payload, cell_idx, 4096).unwrap();
+                        assert!(page.overflow_cells.is_empty());
+                        total_size += payload.len() as u16 + 2;
+                        cells.push(Cell { pos: i, payload });
+                    }
+                    1 => {
+                        println!("#######################");
+                        println!("DROP CELL");
+                        if page.cell_count() == 0 {
+                            continue;
+                        }
+                        let cell_idx = rng.next_u64() as usize % page.cell_count();
+                        let (_, len) = page.cell_get_raw_region(
+                            cell_idx,
+                            payload_overflow_threshold_max(page.page_type(), 4096),
+                            payload_overflow_threshold_min(page.page_type(), 4096),
+                            usable_space as usize,
+                        );
+                        drop_cell(page, cell_idx, usable_space).unwrap();
+                        total_size -= len as u16 + 2;
+                        cells.remove(cell_idx);
+                    }
+                    2 => {
+                        println!("#######################");
+                        println!("DEFRAG PAGE");
+                        defragment_page(page, usable_space);
+                    }
+                    _ => unreachable!(),
+                }
+                let free = compute_free_space(page, usable_space);
+                assert_eq!(free, 4096 - total_size - header_size);
+                println!("calculated {} vs actual {}", free, 4096 - total_size - header_size);
+                println!("SEED = {}", seed);
+            }
+        }
+    }
+
+    #[test]
     pub fn test_free_space() {
         let db = get_database();
         let conn = db.connect().unwrap();
