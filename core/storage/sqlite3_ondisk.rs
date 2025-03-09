@@ -682,12 +682,15 @@ impl PageContent {
         println!("first freeblock pointer: {}", pc);
         println!("cell content area: {}", self.cell_content_area());
         println!("fragmented bytes: {}", self.num_frag_free_bytes());
-        
+
         while pc != 0 && pc <= usable_space as usize {
             let next = self.read_u16_no_offset(pc);
             let size = self.read_u16_no_offset(pc + 2);
-            
-            println!("block {}: position={}, size={}, next={}", block_num, pc, size, next);
+
+            println!(
+                "block {}: position={}, size={}, next={}",
+                block_num, pc, size, next
+            );
             pc = next as usize;
             block_num += 1;
         }

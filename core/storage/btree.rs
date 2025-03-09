@@ -1658,7 +1658,7 @@ impl BTreeCursor {
     }
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
-        if let Some(_) = &self.mv_cursor {
+        if self.mv_cursor.is_some() {
             let (rowid, record) = return_if_io!(self.get_next_record(None));
             self.rowid.replace(rowid);
             self.record.replace(record);
@@ -2314,15 +2314,12 @@ impl CellArray {
 fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> Result<usize> {
     // NOTE: freelist is in ascending order of keys and pc
     // unuse_space is reserved bytes at the end of page, therefore we must substract from maxpc
-    println!("Before find_free_cell(amount={})", amount);
-    page_ref.debug_print_freelist(usable_space);
     let mut prev_pc = page_ref.offset + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK;
     let mut pc = page_ref.first_freeblock() as usize;
     let buf = page_ref.as_ptr();
     let maxpc = usable_space as usize - amount;
 
     while pc <= maxpc {
-        println!("PC VALUE = {}", pc);
         if pc + 4 > usable_space as usize {
             return_corrupt!("Free block header extends beyond page");
         }
@@ -2330,10 +2327,8 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
         let next = u16::from_be_bytes(buf[pc..pc + 2].try_into().unwrap());
         let size = u16::from_be_bytes(buf[pc + 2..pc + 4].try_into().unwrap());
 
-        println!("Processing block: pc={}, next={}, size={}, maxpc={}", pc, next, size, maxpc);
         if amount <= size as usize {
             let new_size = size as usize - amount;
-            println!("Found fitting block: new_size={}", new_size);            
             if new_size < 4 {
                 if page_ref.num_frag_free_bytes() > 57 {
                     return Ok(0);
@@ -2343,7 +2338,6 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
                 page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
                 return Ok(pc);
             } else if new_size + pc > maxpc {
-                println!("new_size = {}", new_size);
                 return_corrupt!("Free block extends beyond page end");
             } else {
                 buf[pc + 2..pc + 4].copy_from_slice(&(new_size as u16).to_be_bytes());
@@ -2532,19 +2526,16 @@ fn free_cell_range(
     len: u16,
     usable_space: u16,
 ) -> Result<()> {
-    println!("Before free_cell_range(offset={}, len={})", offset, len);
-    page.debug_print_freelist(usable_space);
     if len < 4 {
         return_corrupt!("Minimum cell size is 4");
     }
-    
+
     if offset > usable_space.saturating_sub(4) {
         return_corrupt!("Start offset beyond usable space");
     }
 
     let mut size = len;
     let mut end = offset + len;
-    println!("free_cell_range end = {}", end);
     let mut pointer_to_pc = page.offset as u16 + 1;
     // if the freeblock list is empty, we set this block as the first freeblock in the page header.
     let pc = if page.first_freeblock() == 0 {
@@ -2621,8 +2612,6 @@ fn free_cell_range(
         page.write_u16_no_offset(offset as usize, pc);
         page.write_u16_no_offset(offset as usize + 2, size);
     }
-    println!("After free_cell_range");
-    page.debug_print_freelist(usable_space);
 
     Ok(())
 }
@@ -2704,7 +2693,6 @@ fn insert_into_cell(
         cell_idx,
         page.cell_count()
     );
-    println!(">>> INSERT Cell <<<");
     let free = compute_free_space(page, usable_space);
     const CELL_POINTER_SIZE_BYTES: usize = 2;
     let enough_space = payload.len() + CELL_POINTER_SIZE_BYTES <= free as usize;
@@ -2750,8 +2738,6 @@ fn insert_into_cell(
 /// and end of cell pointer area.
 #[allow(unused_assignments)]
 fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
-    println!("COMPUTE FREE SPACE");
-    page.debug_print_freelist(usable_space);
     // TODO(pere): maybe free space is not calculated correctly with offset
 
     // Usable space, not the same as free space, simply means:
@@ -3062,7 +3048,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    use rand::{thread_rng, Rng};
     use tempfile::TempDir;
 
     use crate::{
@@ -3952,15 +3937,12 @@ mod tests {
         // let seed = thread_rng().gen();
         // let seed = 15292777653676891381;
         let seed = 9261043168681395159;
-        println!("SEED = {}", seed);
         tracing::info!("seed {}", seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         while i > 0 {
             i -= 1;
             match rng.next_u64() % 3 {
                 0 => {
-                    println!("#######################");
-                    println!("INSERT");
                     // allow appends with extra place to insert
                     let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
                     let free = compute_free_space(page, usable_space);
@@ -3984,8 +3966,6 @@ mod tests {
                     cells.push(Cell { pos: i, payload });
                 }
                 1 => {
-                    println!("#######################");
-                    println!("DROP CELL");
                     if page.cell_count() == 0 {
                         continue;
                     }
@@ -4001,16 +3981,12 @@ mod tests {
                     cells.remove(cell_idx);
                 }
                 2 => {
-                    println!("#######################");
-                    println!("DEFRAG PAGE");
                     defragment_page(page, usable_space);
                 }
                 _ => unreachable!(),
             }
             let free = compute_free_space(page, usable_space);
             assert_eq!(free, 4096 - total_size - header_size);
-            println!("calculated {} vs actual {}", free, 4096 - total_size - header_size);
-            println!("SEED = {}", seed);
         }
     }
 
@@ -4030,15 +4006,12 @@ mod tests {
         let usable_space = 4096;
         let mut i = 1000;
         for seed in [15292777653676891381, 9261043168681395159] {
-            println!("SEED = {}", seed);
             tracing::info!("seed {}", seed);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             while i > 0 {
                 i -= 1;
                 match rng.next_u64() % 3 {
                     0 => {
-                        println!("#######################");
-                        println!("INSERT");
                         // allow appends with extra place to insert
                         let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
                         let free = compute_free_space(page, usable_space);
@@ -4062,8 +4035,6 @@ mod tests {
                         cells.push(Cell { pos: i, payload });
                     }
                     1 => {
-                        println!("#######################");
-                        println!("DROP CELL");
                         if page.cell_count() == 0 {
                             continue;
                         }
@@ -4079,16 +4050,12 @@ mod tests {
                         cells.remove(cell_idx);
                     }
                     2 => {
-                        println!("#######################");
-                        println!("DEFRAG PAGE");
                         defragment_page(page, usable_space);
                     }
                     _ => unreachable!(),
                 }
                 let free = compute_free_space(page, usable_space);
                 assert_eq!(free, 4096 - total_size - header_size);
-                println!("calculated {} vs actual {}", free, 4096 - total_size - header_size);
-                println!("SEED = {}", seed);
             }
         }
     }
@@ -4117,7 +4084,7 @@ mod tests {
         let page = page.get_contents();
         let usable_space = 4096;
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let payload = add_record(0, 0, page, record, &conn);
 
         assert_eq!(page.cell_count(), 1);
@@ -4155,7 +4122,7 @@ mod tests {
         drop_cell(page, 0, usable_space).unwrap();
         assert_eq!(page.cell_count(), 0);
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let payload = add_record(0, 0, page, record, &conn);
         assert_eq!(page.cell_count(), 1);
 
