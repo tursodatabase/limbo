@@ -1,10 +1,11 @@
 #![allow(clippy::arc_with_non_send_sync)]
 mod app;
+mod config;
 mod commands;
 mod helper;
 mod input;
 mod opcodes_dictionary;
-mod config;
+mod utils;
 
 use rustyline::{error::ReadlineError, Config, Editor};
 use std::sync::atomic::Ordering;
@@ -26,8 +27,11 @@ fn main() -> anyhow::Result<()> {
         )
         .with(EnvFilter::from_default_env())
         .init();
-    let mut app = app::Limbo::new(&mut rl)?;
     let home = dirs::home_dir().expect("Could not determine home directory");
+    let config_file = home.join(".config/limbo.toml");
+    let config = config::Config::from_config_file(config_file);
+
+    let mut app = app::Limbo::new(&mut rl, config)?;
     let history_file = home.join(".limbo_history");
     if history_file.exists() {
         app.rl.load_history(history_file.as_path())?;

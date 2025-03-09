@@ -1,5 +1,6 @@
 use crate::{
     commands::{args::EchoMode, import::ImportFile, Command, CommandParser},
+    config::Config,
     helper::LimboHelper,
     input::{get_io, get_writer, DbLocation, OutputMode, Settings},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
@@ -62,6 +63,7 @@ pub struct Limbo<'a> {
     input_buff: String,
     opts: Settings,
     pub rl: &'a mut Editor<LimboHelper, DefaultHistory>,
+    config: Config,
 }
 
 macro_rules! query_internal {
@@ -92,7 +94,10 @@ macro_rules! query_internal {
 static COLORS: &[Color] = &[Color::Green, Color::Black, Color::Grey];
 
 impl<'a> Limbo<'a> {
-    pub fn new(rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>) -> anyhow::Result<Self> {
+    pub fn new(
+        rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>,
+        config: Config,
+    ) -> anyhow::Result<Self> {
         let opts = Opts::parse();
         let db_file = opts
             .database
@@ -139,6 +144,7 @@ impl<'a> Limbo<'a> {
             input_buff: String::new(),
             opts: Settings::from(&opts),
             rl,
+            config,
         };
 
         if opts.sql.is_some() {
