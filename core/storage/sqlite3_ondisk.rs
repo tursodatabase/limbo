@@ -674,6 +674,25 @@ impl PageContent {
         let buf = self.as_ptr();
         write_header_to_buf(buf, header);
     }
+
+    pub fn debug_print_freelist(&self, usable_space: u16) {
+        let mut pc = self.first_freeblock() as usize;
+        let mut block_num = 0;
+        println!("---- Free List Blocks ----");
+        println!("first freeblock pointer: {}", pc);
+        println!("cell content area: {}", self.cell_content_area());
+        println!("fragmented bytes: {}", self.num_frag_free_bytes());
+        
+        while pc != 0 && pc <= usable_space as usize {
+            let next = self.read_u16_no_offset(pc);
+            let size = self.read_u16_no_offset(pc + 2);
+            
+            println!("block {}: position={}, size={}, next={}", block_num, pc, size, next);
+            pc = next as usize;
+            block_num += 1;
+        }
+        println!("--------------");
+    }
 }
 
 pub fn begin_read_page(
