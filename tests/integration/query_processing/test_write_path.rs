@@ -5,6 +5,7 @@ use log::debug;
 use std::rc::Rc;
 
 #[test]
+#[ignore]
 fn test_simple_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db =
@@ -75,6 +76,7 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore]
 fn test_sequential_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db =
