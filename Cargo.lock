@@ -1721,9 +1721,9 @@ dependencies = [
  "rustyline",
  "schemars",
  "serde",
- "strsim",
  "syntect",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "validator",
@@ -2270,6 +2270,7 @@ version = "0.50.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a28e057d01f97e61255210fcff094d74ed0466038633e95017f5beb68e4399"
 dependencies = [
+ "serde",
  "windows-sys 0.52.0",
 ]
 
