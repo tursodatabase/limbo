@@ -7,8 +7,10 @@ mod input;
 mod opcodes_dictionary;
 mod utils;
 
+use config::CONFIG_DIR;
+use once_cell::sync::Lazy;
 use rustyline::{error::ReadlineError, Config, Editor};
-use std::sync::atomic::Ordering;
+use std::{path::PathBuf, sync::atomic::Ordering};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn rustyline_config() -> Config {
@@ -16,6 +18,9 @@ fn rustyline_config() -> Config {
         .completion_type(rustyline::CompletionType::List)
         .build()
 }
+
+pub static HOME_DIR: Lazy<PathBuf> =
+    Lazy::new(|| dirs::home_dir().expect("Could not determine home directory"));
 
 fn main() -> anyhow::Result<()> {
     let mut rl = Editor::with_config(rustyline_config())?;
@@ -27,14 +32,14 @@ fn main() -> anyhow::Result<()> {
         )
         .with(EnvFilter::from_default_env())
         .init();
-    let home = dirs::home_dir().expect("Could not determine home directory");
-    let config_file = home.join(".config/limbo.toml");
+    // let home = dirs::home_dir().expect("Could not determine home directory");
+    let config_file = CONFIG_DIR.join("limbo.toml");
 
     let config = config::Config::from_config_file(config_file);
     tracing::info!("Configuration: {:?}", config);
 
     let mut app = app::Limbo::new(&mut rl, config)?;
-    let history_file = home.join(".limbo_history");
+    let history_file = HOME_DIR.join(".limbo_history");
     if history_file.exists() {
         app.rl.load_history(history_file.as_path())?;
     }
