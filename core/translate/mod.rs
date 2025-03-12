@@ -24,6 +24,7 @@ pub(crate) mod select;
 pub(crate) mod subquery;
 pub(crate) mod transaction;
 
+use crate::fast_lock::FastLock;
 use crate::schema::Schema;
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
@@ -45,7 +46,7 @@ use transaction::{translate_tx_begin, translate_tx_commit};
 pub fn translate(
     schema: &Schema,
     stmt: ast::Stmt,
-    database_header: Arc<Mutex<DatabaseHeader>>,
+    database_header: Arc<FastLock<DatabaseHeader>>,
     pager: Rc<Pager>,
     connection: Weak<Connection>,
     syms: &SymbolTable,

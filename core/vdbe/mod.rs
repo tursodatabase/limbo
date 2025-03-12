@@ -25,6 +25,7 @@ pub mod sorter;
 
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::ext::ExtValue;
+use crate::fast_lock::FastLock;
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
@@ -332,7 +333,7 @@ pub struct Program {
     pub max_registers: usize,
     pub insns: Vec<Insn>,
     pub cursor_ref: Vec<(Option<String>, CursorType)>,
-    pub database_header: Arc<Mutex<DatabaseHeader>>,
+    pub database_header: Arc<FastLock<DatabaseHeader>>,
     pub comments: Option<HashMap<InsnReference, &'static str>>,
     pub parameters: crate::parameters::Parameters,
     pub connection: Weak<Connection>,
@@ -3065,7 +3066,7 @@ impl Program {
                     }
                     // SQLite returns "0" on an empty database, and 2 on the first insertion,
                     // so we'll mimic that behavior.
-                    let mut pages = pager.db_header.lock().unwrap().database_size.into();
+                    let mut pages = pager.db_header.lock().get_mut().database_size.into();
                     if pages == 1 {
                         pages = 0;
                     }
@@ -3099,7 +3100,7 @@ impl Program {
                         todo!("temp databases not implemented yet");
                     }
                     let cookie_value = match cookie {
-                        Cookie::UserVersion => pager.db_header.lock().unwrap().user_version.into(),
+                        Cookie::UserVersion => pager.db_header.lock().get_mut().user_version.into(),
                         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
                     };
                     state.registers[*dest] = OwnedValue::Integer(cookie_value);
