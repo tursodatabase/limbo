@@ -37,14 +37,21 @@ impl<T> FastLock<T> {
     }
 
     pub fn lock(&self) -> FastLockGuard<T> {
-        while self.lock.compare_and_swap(false, true, Ordering::Acquire) {
+        while self
+            .lock
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .is_err()
+        {
             std::thread::yield_now();
         }
         FastLockGuard { lock: self }
     }
 
     pub fn unlock(&self) {
-        assert!(self.lock.compare_and_swap(true, false, Ordering::Acquire));
+        assert!(self
+            .lock
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Acquire)
+            .is_ok());
     }
 
     pub fn get_mut(&self) -> &mut T {
