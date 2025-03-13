@@ -26,7 +26,7 @@ pub const NO_LOCK: u32 = 0;
 pub const SHARED_LOCK: u32 = 1;
 pub const WRITE_LOCK: u32 = 2;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct CheckpointResult {
     /// number of frames in WAL
     pub num_wal_frames: u64,
@@ -43,7 +43,7 @@ impl CheckpointResult {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum CheckpointMode {
     Passive,
     Full,
@@ -199,6 +199,7 @@ pub enum CheckpointState {
     Done,
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum CheckpointStatus {
     Done(CheckpointResult),
     IO,
