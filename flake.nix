@@ -17,10 +17,10 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        toolchain = break ((pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+        toolchain = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
           extensions = [ "rust-analyzer" "rust-src" ];
           targets = [ "wasm32-unknown-unknown" ];
-        });
+        };
 
         lib = pkgs.lib;
 
@@ -64,6 +64,13 @@
             python3
             nodejs
             toolchain
+          ] ++ lib.optionals pkgs.stdenv.isDarwin [
+            apple-sdk
+          ];
+        };
+        devShells.fuzz = with pkgs; mkShell {
+          nativeBuildInputs = [
+            (pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.minimal))
           ] ++ lib.optionals pkgs.stdenv.isDarwin [
             apple-sdk
           ];
