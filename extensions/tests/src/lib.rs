@@ -1,17 +1,18 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
-    VTabModuleDerive, Value,
+    register_extension, scalar, Connection, ExtResult, ResultCode, StepResult, VTabCursor,
+    VTabKind, VTabModule, VTabModuleDerive, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::rc::Rc;
 use std::sync::Mutex;
 
 register_extension! {
-    vtabs: { KVStoreVTab },
+    vtabs: { KVStoreVTab, TestVTab },
     scalars: { test_scalar },
     vfs: { TestFS },
 }
@@ -39,7 +40,7 @@ impl VTabModule for KVStoreVTab {
         "CREATE TABLE x (key TEXT PRIMARY KEY, value TEXT);".to_string()
     }
 
-    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
         Ok(KVStoreCursor {
             rows: Vec::new(),
             index: None,
@@ -219,5 +220,90 @@ impl VfsFile for TestFile {
 
     fn size(&self) -> i64 {
         self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
+    }
+}
+
+#[derive(VTabModuleDerive, Default)]
+pub struct TestVTab;
+
+pub struct TestCursor {
+    pos: usize,
+    conn: Option<Rc<Connection>>,
+    values: Vec<String>,
+}
+
+impl VTabModule for TestVTab {
+    type VCursor = TestCursor;
+    const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
+    const NAME: &'static str = "test";
+    type Error = String;
+
+    fn create_schema(_args: &[Value]) -> String {
+        "CREATE TABLE x (first TEXT, second TEXT, third TEXT, fourth TEXT);".to_string()
+    }
+
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
+        Ok(TestCursor {
+            conn,
+            pos: 0,
+            values: Vec::new(),
+        })
+    }
+
+    fn filter(cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
+        if cursor.pos >= 10 {
+            return ResultCode::EOF;
+        }
+        if let Some(conn) = &cursor.conn {
+            if let Ok(mut stmt) = conn.prepare("SELECT * FROM test;") {
+                while stmt.step() == StepResult::Row {
+                    let row = stmt.get_row();
+                    for val in row {
+                        cursor.values.push(val.to_text().unwrap().to_string());
+                    }
+                }
+            }
+        }
+        ResultCode::OK
+    }
+
+    fn eof(cursor: &Self::VCursor) -> bool {
+        cursor.pos >= 10
+    }
+
+    fn next(cursor: &mut Self::VCursor) -> ResultCode {
+        cursor.pos += 1;
+        if cursor.pos >= 10 {
+            return ResultCode::EOF;
+        }
+        ResultCode::OK
+    }
+
+    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
+        cursor
+            .values
+            .get(idx as usize)
+            .map(|s| Value::from_text(s.clone()))
+            .ok_or(String::from("out of range"))
+    }
+}
+
+impl VTabCursor for TestCursor {
+    type Error = String;
+
+    fn rowid(&self) -> i64 {
+        self.pos as i64
+    }
+
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        <TestVTab as VTabModule>::column(self, idx)
+    }
+
+    fn eof(&self) -> bool {
+        <TestVTab as VTabModule>::eof(self)
+    }
+
+    fn next(&mut self) -> ResultCode {
+        <TestVTab as VTabModule>::next(self)
     }
 }

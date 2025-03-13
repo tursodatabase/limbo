@@ -1,9 +1,12 @@
-#[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "fs")]
 mod dynamic;
+mod vtab_connect;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
 use crate::IO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError};
+#[cfg(feature = "fs")]
+pub use dynamic::{list_vfs_modules, VfsMod};
 use limbo_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl, VfsImpl,
 };
@@ -11,26 +14,15 @@ pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
-    sync::{Arc, Mutex, OnceLock},
+    sync::Arc,
 };
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
-type Vfs = (String, Arc<VfsMod>);
-
-static VFS_MODULES: OnceLock<Mutex<Vec<Vfs>>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct VTabImpl {
     pub module_kind: VTabKind,
     pub implementation: Rc<VTabModuleImpl>,
 }
-
-#[derive(Clone, Debug)]
-pub struct VfsMod {
-    pub ctx: *const VfsImpl,
-}
-
-unsafe impl Send for VfsMod {}
-unsafe impl Sync for VfsMod {}
 
 unsafe extern "C" fn register_scalar_function(
     ctx: *mut c_void,
@@ -92,6 +84,7 @@ unsafe extern "C" fn register_module(
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
+#[cfg(feature = "fs")]
 unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> ResultCode {
     if name.is_null() || vfs.is_null() {
         return ResultCode::Error;
@@ -101,7 +94,7 @@ unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> R
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,
     };
-    add_vfs_module(name_str, Arc::new(VfsMod { ctx: vfs }));
+    dynamic::add_vfs_module(name_str, Arc::new(dynamic::VfsMod { ctx: vfs }));
     ResultCode::OK
 }
 
@@ -112,15 +105,17 @@ unsafe extern "C" fn register_vfs(name: *const c_char, vfs: *const VfsImpl) -> R
 #[allow(clippy::arc_with_non_send_sync)]
 pub fn add_builtin_vfs_extensions(
     api: Option<ExtensionApi>,
-) -> crate::Result<Vec<(String, Arc<VfsMod>)>> {
+) -> crate::Result<Vec<(String, Arc<dynamic::VfsMod>)>> {
     let mut vfslist: Vec<*const VfsImpl> = Vec::new();
     let mut api = match api {
         None => ExtensionApi {
             ctx: std::ptr::null_mut(),
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
-            register_vfs,
             register_module,
+            connect: vtab_connect::connect,
+            register_vfs,
             builtin_vfs: vfslist.as_mut_ptr(),
             builtin_vfs_count: 0,
         },
@@ -148,7 +143,7 @@ pub fn add_builtin_vfs_extensions(
         };
         vfslist.push((
             name,
-            Arc::new(VfsMod {
+            Arc::new(dynamic::VfsMod {
                 ctx: vfsimpl as *const _,
             }),
         ));
@@ -156,6 +151,7 @@ pub fn add_builtin_vfs_extensions(
     Ok(vfslist)
 }
 
+#[cfg(feature = "fs")]
 fn register_static_vfs_modules(_api: &mut ExtensionApi) {
     #[cfg(feature = "testvfs")]
     unsafe {
@@ -178,7 +174,7 @@ impl Database {
             "syscall" => Arc::new(PlatformIO::new()?),
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             "io_uring" => Arc::new(UringIO::new()?),
-            other => match get_vfs_modules().iter().find(|v| v.0 == vfs) {
+            other => match dynamic::get_vfs_modules().iter().find(|v| v.0 == vfs) {
                 Some((_, vfs)) => vfs.clone(),
                 None => {
                     return Err(LimboError::InvalidArgument(format!(
@@ -233,19 +229,23 @@ impl Connection {
         ResultCode::OK
     }
 
-    pub fn build_limbo_ext(&self) -> ExtensionApi {
+    pub fn build_limbo_ext(self: &Rc<Connection>) -> ExtensionApi {
         ExtensionApi {
-            ctx: self as *const _ as *mut c_void,
+            ctx: Rc::into_raw(self.clone()) as *const _ as *mut c_void,
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
             register_module,
+            #[cfg(feature = "fs")]
             register_vfs,
+            #[cfg(feature = "fs")]
             builtin_vfs: std::ptr::null_mut(),
             builtin_vfs_count: 0,
+            connect: vtab_connect::connect,
         }
     }
 
-    pub fn register_builtins(&self) -> Result<(), String> {
+    pub fn register_builtins(self: &Rc<Connection>) -> Result<(), String> {
         #[allow(unused_variables)]
         let mut ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]
@@ -284,37 +284,9 @@ impl Connection {
         {
             let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
             for (name, vfs) in vfslist {
-                add_vfs_module(name, vfs);
+                dynamic::add_vfs_module(name, vfs);
             }
         }
         Ok(())
     }
-}
-
-fn add_vfs_module(name: String, vfs: Arc<VfsMod>) {
-    let mut modules = VFS_MODULES
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .unwrap();
-    if !modules.iter().any(|v| v.0 == name) {
-        modules.push((name, vfs));
-    }
-}
-
-pub fn list_vfs_modules() -> Vec<String> {
-    VFS_MODULES
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|v| v.0.clone())
-        .collect()
-}
-
-fn get_vfs_modules() -> Vec<Vfs> {
-    VFS_MODULES
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .unwrap()
-        .clone()
 }
