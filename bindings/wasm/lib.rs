@@ -27,7 +27,7 @@ impl Database {
         // ensure db header is there
         io.run_once().unwrap();
 
-        let page_size = db_header.lock().unwrap().page_size;
+        let page_size = db_header.lock().get_mut().page_size;
 
         let wal_path = format!("{}-wal", path);
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size).unwrap();

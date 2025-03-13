@@ -1,5 +1,6 @@
 mod error;
 mod ext;
+mod fast_lock;
 mod function;
 mod functions;
 mod info;
@@ -24,6 +25,7 @@ mod vector;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use fallible_iterator::FallibleIterator;
+use fast_lock::FastLock;
 #[cfg(not(target_family = "wasm"))]
 use libloading::{Library, Symbol};
 #[cfg(not(target_family = "wasm"))]
@@ -91,7 +93,7 @@ pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
-    header: Arc<Mutex<DatabaseHeader>>,
+    header: Arc<FastLock<DatabaseHeader>>,
     page_io: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
     page_size: u16,
@@ -115,7 +117,7 @@ impl Database {
         let wal_path = format!("{}-wal", path);
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;
-        let page_size = db_header.lock().unwrap().page_size;
+        let page_size = db_header.lock().get_mut().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
         Self::open(io, page_io, wal_shared, enable_mvcc)
     }
@@ -130,7 +132,7 @@ impl Database {
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;
         DATABASE_VERSION.get_or_init(|| {
-            let version = db_header.lock().unwrap().version_number;
+            let version = db_header.lock().get_mut().version_number;
             version.to_string()
         });
         let mv_store = if enable_mvcc {
@@ -142,7 +144,7 @@ impl Database {
             None
         };
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
-        let page_size = db_header.lock().unwrap().page_size;
+        let page_size = db_header.lock().get_mut().page_size;
         let header = db_header;
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
@@ -258,7 +260,7 @@ pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
-    header: Arc<Mutex<DatabaseHeader>>,
+    header: Arc<FastLock<DatabaseHeader>>,
     auto_commit: RefCell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: RefCell<TransactionState>,

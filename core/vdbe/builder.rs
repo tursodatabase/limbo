@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{
+    fast_lock::FastLock,
     parameters::Parameters,
     schema::{BTreeTable, Index, PseudoTable},
     storage::sqlite3_ondisk::DatabaseHeader,
@@ -435,7 +436,7 @@ impl ProgramBuilder {
 
     pub fn build(
         mut self,
-        database_header: Arc<Mutex<DatabaseHeader>>,
+        database_header: Arc<FastLock<DatabaseHeader>>,
         connection: Weak<Connection>,
         change_cnt_on: bool,
     ) -> Program {
