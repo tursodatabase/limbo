@@ -1,11 +1,10 @@
 use crate::ext::VfsMod;
 use crate::{LimboError, Result};
 use limbo_ext::{VfsFileImpl, VfsImpl};
-use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::sync::Arc;
 
-use super::{Buffer, Completion, File, OpenFlags, IO};
+use super::{Completion, File, IOBuff, OpenFlags, IO};
 
 impl IO for VfsMod {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
@@ -82,7 +81,7 @@ impl File for VfsFileImpl {
             _ => unreachable!(),
         };
         let result = {
-            let mut buf = r.buf_mut();
+            let buf = r.buf_mut();
             let count = buf.len();
             let vfs = unsafe { &*self.vfs };
             unsafe { (vfs.read)(self.file, buf.as_mut_ptr(), count, pos as i64) }
@@ -95,9 +94,8 @@ impl File for VfsFileImpl {
         }
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Completion) -> Result<()> {
-        let buf = buffer.borrow();
-        let count = buf.as_slice().len();
+    fn pwrite(&self, pos: usize, buffer: IOBuff, c: Completion) -> Result<()> {
+        let count = buffer.len();
         if self.vfs.is_null() {
             return Err(LimboError::ExtensionError("VFS is null".to_string()));
         }
@@ -105,7 +103,7 @@ impl File for VfsFileImpl {
         let result = unsafe {
             (vfs.write)(
                 self.file,
-                buf.as_slice().as_ptr() as *mut u8,
+                buffer.buf_mut().as_ptr() as *mut u8,
                 count,
                 pos as i64,
             )
