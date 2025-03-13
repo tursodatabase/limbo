@@ -145,7 +145,7 @@ pub fn get_io(db_location: DbLocation, io_choice: Io) -> anyhow::Result<Arc<dyn 
     })
 }
 
-pub const HELP_MSG: &str = r#"
+pub const _HELP_MSG: &str = r#"
 Limbo SQL Shell Help
 ==============
 Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
@@ -209,3 +209,51 @@ Usage Examples:
 Note:
 - All SQL commands must end with a semicolon (;).
 - Special commands do not require a semicolon."#;
+
+pub const BEFORE_HELP_MSG: &str = r#"
+
+Limbo SQL Shell Help
+==============
+Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
+In addition to standard SQL commands, the following special commands are available:"#;
+pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
+---------------
+1. To quit the Limbo SQL Shell:
+   .quit
+
+2. To open a database file at path './employees.db':
+   .open employees.db
+
+3. To view the schema of a table named 'employees':
+   .schema employees
+
+4. To list all tables:
+   .tables
+
+5. To list all available SQL opcodes:
+   .opcodes
+
+6. To change the current output mode to 'pretty':
+   .mode pretty
+
+7. Send output to STDOUT if no file is specified:
+   .output
+
+8. To change the current working directory to '/tmp':
+   .cd /tmp
+
+9. Show the current values of settings:
+   .show
+
+10. To import csv file 'sample.csv' into 'csv_table' table:
+   .import --csv sample.csv csv_table
+
+11. To display the database contents as SQL:
+   .dump
+
+12. To load an extension library:
+   .load /target/debug/liblimbo_regexp
+
+Note:
+- All SQL commands must end with a semicolon (;).
+- Special commands start with a dot (.) and are not required to end with a semicolon."#;
