@@ -28,8 +28,7 @@ Add the crate to your `extensions/your_crate_name/Cargo.toml`:
 static = ["limbo_ext/static"]
 
 [dependencies]
-limbo_ext = { path = "path/to/limbo/extensions/core", features = ["static"] } # temporary until crate is published
-
+limbo_ext = { path = "path/to/limbo/extensions/core", features = ["static", "vfs"] } # temporary until crate is published
 
 # mimalloc is required if you intend on linking dynamically. It is imported for you by the register_extension
 # macro, so no configuration is needed. But it must be added to your Cargo.toml
@@ -286,6 +285,7 @@ impl VTabCursor for CsvCursor {
 
 ### VFS Example
 
+**NOTE**: Requires 'vfs' feature enabled.
 
 ```rust
 use limbo_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
