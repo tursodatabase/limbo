@@ -23,54 +23,48 @@ mod vector;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use ext::list_vfs_modules;
-use fallible_iterator::FallibleIterator;
-use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
-use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
-use parking_lot::RwLock;
-use schema::{Column, Schema};
-use std::borrow::Cow;
-use std::cell::Cell;
-use std::collections::HashMap;
-use std::num::NonZero;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::{cell::RefCell, rc::Rc};
-use storage::btree::btree_init_page;
-#[cfg(feature = "fs")]
-use storage::database::FileStorage;
-use storage::page_cache::DumbLruPageCache;
-use storage::pager::allocate_page;
-pub use storage::pager::PageRef;
-use storage::sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE};
-pub use storage::wal::CheckpointMode;
-pub use storage::wal::WalFile;
-pub use storage::wal::WalFileShared;
-pub use types::OwnedValue;
-use util::{columns_from_create_table_body, parse_schema_rows};
-use vdbe::builder::QueryMode;
-use vdbe::VTabOpaqueCursor;
-
-pub use error::LimboError;
-use translate::select::prepare_select_plan;
-pub type Result<T, E = LimboError> = std::result::Result<T, E>;
-
-use crate::storage::wal::CheckpointResult;
 use crate::translate::optimizer::optimize_plan;
-pub use io::OpenFlags;
-pub use io::PlatformIO;
+pub use error::LimboError;
+use fallible_iterator::FallibleIterator;
 #[cfg(all(feature = "fs", target_family = "unix"))]
 pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
-pub use io::{Buffer, Completion, File, MemoryIO, WriteCompletion, IO};
-pub use storage::buffer_pool::BufferPool;
-pub use storage::database::DatabaseStorage;
-pub use storage::pager::Page;
-pub use storage::pager::Pager;
-pub use storage::wal::CheckpointStatus;
-pub use storage::wal::Wal;
+pub use io::{Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO};
+use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
+use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
+use parking_lot::RwLock;
+use schema::{Column, Schema};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    num::NonZero,
+    ops::Deref,
+    rc::Rc,
+    sync::{Arc, Mutex, OnceLock},
+};
+use storage::btree::btree_init_page;
+#[cfg(feature = "fs")]
+use storage::database::FileStorage;
+pub use storage::{
+    buffer_pool::BufferPool,
+    database::DatabaseStorage,
+    pager::PageRef,
+    pager::{Page, Pager},
+    wal::{CheckpointMode, CheckpointResult, CheckpointStatus, Wal, WalFile, WalFileShared},
+};
+use storage::{
+    page_cache::DumbLruPageCache,
+    pager::allocate_page,
+    sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE},
+};
+use translate::select::prepare_select_plan;
+pub use types::OwnedValue;
+use util::{columns_from_create_table_body, parse_schema_rows};
+use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 
+pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
 
 #[derive(Clone, PartialEq, Eq)]
@@ -207,7 +201,7 @@ impl Database {
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
-        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
+        let vfsmods = crate::ext::add_builtin_vfs_extensions(None)?;
         let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
             Some(vfs) => vfs,
             None => match vfs.trim() {
@@ -518,16 +512,16 @@ impl Connection {
         let mut all_vfs = vec![String::from("memory")];
         #[cfg(feature = "fs")]
         {
-            #[cfg(all(feature = "fs", target_family = "unix"))]
+            #[cfg(target_family = "unix")]
             {
                 all_vfs.push("syscall".to_string());
             }
-            #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
             {
                 all_vfs.push("io_uring".to_string());
             }
+            all_vfs.extend(crate::ext::list_vfs_modules());
         }
-        all_vfs.extend(list_vfs_modules());
         all_vfs
     }
 }

@@ -213,6 +213,7 @@ cfg_block! {
 }
 
 mod memory;
+#[cfg(feature = "fs")]
 mod vfs;
 pub use memory::MemoryIO;
 mod common;

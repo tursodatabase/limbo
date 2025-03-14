@@ -15,7 +15,7 @@ path = "lib.rs"
 
 [features]
 default = ["fs", "json", "uuid", "time"]
-fs = []
+fs = ["limbo_ext/vfs"]
 json = ["dep:jsonb", "dep:pest", "dep:pest_derive", "dep:serde", "dep:indexmap"]
 uuid = ["limbo_uuid/static"]
 io_uring = ["dep:io-uring", "rustix/io_uring", "dep:libc"]

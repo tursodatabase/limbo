@@ -1335,7 +1335,7 @@ pub fn translate_expr(
                             });
                             Ok(target_register)
                         }
-                        #[cfg(not(target_family = "wasm"))]
+                        #[cfg(feature = "fs")]
                         ScalarFunc::LoadExtension => {
                             let args = expect_arguments_exact!(args, 1, srf);
                             let start_reg = program.alloc_register();

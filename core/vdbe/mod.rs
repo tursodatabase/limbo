@@ -2618,7 +2618,7 @@ impl Program {
                                 let replacement = &state.registers[*start_reg + 2];
                                 state.registers[*dest] = exec_replace(source, pattern, replacement);
                             }
-                            #[cfg(not(target_family = "wasm"))]
+                            #[cfg(feature = "fs")]
                             ScalarFunc::LoadExtension => {
                                 let extension = &state.registers[*start_reg];
                                 let ext = resolve_ext_path(&extension.to_string())?;
