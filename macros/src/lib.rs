@@ -615,7 +615,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     update: Self::#update_fn_name,
                     rowid: Self::#rowid_fn_name,
                 };
-                (api.register_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
+                (api.register_vtab_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }
         }
     };
@@ -686,7 +686,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 current_time: #get_current_time_fn_name,
             };
             let vfsimpl = ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_mod)) as *const ::limbo_ext::VfsImpl;
-            (api.register_vfs)(name, vfsimpl)
+            (api.vfs_interface.register_vfs)(name, vfsimpl)
         }
 
         #[no_mangle]

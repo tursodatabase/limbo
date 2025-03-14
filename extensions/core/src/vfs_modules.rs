@@ -1,7 +1,16 @@
-use crate::{ExtResult, ResultCode};
+use crate::{ExtResult, ExtensionApi, ResultCode};
 use std::ffi::{c_char, c_void};
 
-#[cfg(not(target_family = "wasm"))]
+/// Field for ExtensionApi to interface with VFS extensions,
+/// separated to more easily feature flag out for WASM builds.
+#[repr(C)]
+pub struct VfsInterface {
+    pub register_vfs: RegisterVfsFn,
+    pub builtin_vfs: *mut *const VfsImpl,
+    pub builtin_vfs_count: i32,
+}
+unsafe impl Send for VfsInterface {}
+
 pub trait VfsExtension: Default + Send + Sync {
     const NAME: &'static str;
     type File: VfsFile;
@@ -21,7 +30,7 @@ pub trait VfsExtension: Default + Send + Sync {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
     }
 }
-#[cfg(not(target_family = "wasm"))]
+
 pub trait VfsFile: Send + Sync {
     fn lock(&mut self, _exclusive: bool) -> ExtResult<()> {
         Ok(())
@@ -110,5 +119,28 @@ impl Drop for VfsFileImpl {
         unsafe {
             (vfs.close)(self.file);
         }
+    }
+}
+
+impl ExtensionApi {
+    /// Since we want the option to build in extensions at compile time as well,
+    /// we add a slice of VfsImpls to the extension API, and this is called with any
+    /// libraries that we load staticly that will add their VFS implementations to the list.
+    pub fn add_builtin_vfs(&mut self, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() || self.vfs_interface.builtin_vfs.is_null() {
+            return ResultCode::Error;
+        }
+        let mut new = unsafe {
+            let slice = std::slice::from_raw_parts_mut(
+                self.vfs_interface.builtin_vfs,
+                self.vfs_interface.builtin_vfs_count as usize,
+            );
+            Vec::from(slice)
+        };
+        new.push(vfs);
+        self.vfs_interface.builtin_vfs =
+            Box::into_raw(new.into_boxed_slice()) as *mut *const VfsImpl;
+        self.vfs_interface.builtin_vfs_count += 1;
+        ResultCode::OK
     }
 }
