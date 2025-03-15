@@ -90,7 +90,7 @@ impl File for VfsFileImpl {
         if result < 0 {
             Err(LimboError::ExtensionError("pread failed".to_string()))
         } else {
-            c.complete(0);
+            c.complete(result);
             Ok(())
         }
     }
