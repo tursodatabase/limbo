@@ -4,7 +4,7 @@ use crate::{
     input::{get_io, get_writer, DbLocation, OutputMode, Settings, HELP_MSG},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
-use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
+use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
 use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 
 use clap::{Parser, ValueEnum};
@@ -200,6 +200,8 @@ macro_rules! query_internal {
     }};
 }
 
+static COLORS: &[Color] = &[Color::DarkRed, Color::DarkGreen, Color::DarkBlue];
+
 impl<'a> Limbo<'a> {
     pub fn new(rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>) -> anyhow::Result<Self> {
         let opts = Opts::parse();
@@ -249,6 +251,7 @@ impl<'a> Limbo<'a> {
             opts: Settings::from(&opts),
             rl,
         };
+
         if opts.sql.is_some() {
             app.handle_first_input(opts.sql.as_ref().unwrap());
         }
@@ -752,7 +755,9 @@ impl<'a> Limbo<'a> {
                         let header = (0..rows.num_columns())
                             .map(|i| {
                                 let name = rows.get_column_name(i);
-                                Cell::new(name).add_attribute(Attribute::Bold)
+                                Cell::new(name)
+                                    .add_attribute(Attribute::Bold)
+                                    .fg(Color::AnsiValue(49)) // Green color for headers
                             })
                             .collect::<Vec<_>>();
                         table.set_header(header);
@@ -763,7 +768,7 @@ impl<'a> Limbo<'a> {
                                 let record = rows.row().unwrap();
                                 let mut row = Row::new();
                                 row.max_height(1);
-                                for value in record.get_values() {
+                                for (idx, value) in record.get_values().iter().enumerate() {
                                     let (content, alignment) = match value {
                                         OwnedValue::Null => {
                                             (self.opts.null_value.clone(), CellAlignment::Left)
@@ -781,7 +786,11 @@ impl<'a> Limbo<'a> {
                                         ),
                                         _ => unreachable!(),
                                     };
-                                    row.add_cell(Cell::new(content).set_alignment(alignment));
+                                    row.add_cell(
+                                        Cell::new(content)
+                                            .set_alignment(alignment)
+                                            .fg(COLORS[idx % COLORS.len()]),
+                                    );
                                 }
                                 table.add_row(row);
                             }
