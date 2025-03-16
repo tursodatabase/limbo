@@ -1,16 +1,23 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
+    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, Value,
 };
+#[cfg(not(target_family = "wasm"))]
+use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
-
-lazy_static! {
-    static ref GLOBAL_STORE: Mutex<BTreeMap<i64, (String, String)>> = Mutex::new(BTreeMap::new());
-}
 
 register_extension! {
     vtabs: { KVStoreVTab },
+    scalars: { test_scalar },
+    vfs: { TestFS },
+}
+
+lazy_static! {
+    static ref GLOBAL_STORE: Mutex<BTreeMap<i64, (String, String)>> = Mutex::new(BTreeMap::new());
 }
 
 #[derive(VTabModuleDerive, Default)]
@@ -128,7 +135,7 @@ impl VTabCursor for KVStoreCursor {
         if self.index.is_some_and(|c| c < self.rows.len()) {
             self.rows[self.index.unwrap_or(0)].0
         } else {
-            println!("rowid: -1");
+            log::error!("rowid: -1");
             -1
         }
     }
@@ -143,5 +150,74 @@ impl VTabCursor for KVStoreCursor {
 
     fn next(&mut self) -> ResultCode {
         <KVStoreVTab as VTabModule>::next(self)
+    }
+}
+
+pub struct TestFile {
+    file: File,
+}
+
+#[cfg(target_family = "wasm")]
+pub struct TestFS;
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(VfsDerive, Default)]
+pub struct TestFS;
+
+// Test that we can have additional extension types in the same file
+// and still register the vfs at comptime if linking staticly
+#[scalar(name = "test_scalar")]
+fn test_scalar(_args: limbo_ext::Value) -> limbo_ext::Value {
+    limbo_ext::Value::from_integer(42)
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl VfsExtension for TestFS {
+    const NAME: &'static str = "testvfs";
+    type File = TestFile;
+    fn open_file(&self, path: &str, flags: i32, _direct: bool) -> ExtResult<Self::File> {
+        let _ = env_logger::try_init();
+        log::debug!("opening file with testing VFS: {} flags: {}", path, flags);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(flags & 1 != 0)
+            .open(path)
+            .map_err(|_| ResultCode::Error)?;
+        Ok(TestFile { file })
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl VfsFile for TestFile {
+    fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> ExtResult<i32> {
+        log::debug!("reading file with testing VFS: bytes: {count} offset: {offset}");
+        if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
+            return Err(ResultCode::Error);
+        }
+        self.file
+            .read(&mut buf[..count])
+            .map_err(|_| ResultCode::Error)
+            .map(|n| n as i32)
+    }
+
+    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> ExtResult<i32> {
+        log::debug!("writing to file with testing VFS: bytes: {count} offset: {offset}");
+        if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
+            return Err(ResultCode::Error);
+        }
+        self.file
+            .write(&buf[..count])
+            .map_err(|_| ResultCode::Error)
+            .map(|n| n as i32)
+    }
+
+    fn sync(&self) -> ExtResult<()> {
+        log::debug!("syncing file with testing VFS");
+        self.file.sync_all().map_err(|_| ResultCode::Error)
+    }
+
+    fn size(&self) -> i64 {
+        self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
     }
 }

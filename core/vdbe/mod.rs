@@ -52,7 +52,7 @@ use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
-    json::json_quote, json::json_remove, json::json_set, json::json_type,
+    json::json_quote, json::json_remove, json::json_set, json::json_type, json::jsonb,
 };
 use crate::{info, CheckpointStatus};
 use crate::{
@@ -2127,6 +2127,14 @@ impl Program {
                                 let json_value = &state.registers[*start_reg];
                                 let json_str = get_json(json_value, None);
                                 match json_str {
+                                    Ok(json) => state.registers[*dest] = json,
+                                    Err(e) => return Err(e),
+                                }
+                            }
+                            JsonFunc::Jsonb => {
+                                let json_value = &state.registers[*start_reg];
+                                let json_blob = jsonb(json_value);
+                                match json_blob {
                                     Ok(json) => state.registers[*dest] = json,
                                     Err(e) => return Err(e),
                                 }

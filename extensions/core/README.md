@@ -10,7 +10,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Scalar Functions**: Create scalar functions using the `scalar` macro.
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
- - [] **VFS Modules** 
+ - [ x ] **VFS Modules**: Extend Limbo's OS interface by implementing `VfsExtension` and `VfsFile` traits.
 ---
 
 ## Installation
@@ -59,8 +59,13 @@ register_extension!{
     scalars: { double }, // name of your function, if different from attribute name
     aggregates: { Percentile },
     vtabs: { CsvVTable },
+    vfs: { ExampleFS },
 }
 ```
+
+**NOTE**: Currently, any Derive macro used from this crate is required to be in the same
+file as the `register_extension` macro.
+
 
 ### Scalar Example:
 ```rust
@@ -275,6 +280,106 @@ impl VTabCursor for CsvCursor {
 
     fn rowid(&self) -> i64 {
         self.index as i64
+    }
+}
+```
+
+### VFS Example
+
+
+```rust
+use limbo_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
+
+/// Your struct must also impl Default
+#[derive(VfsDerive, Default)]
+struct ExampleFS;
+
+
+struct ExampleFile {
+    file: std::fs::File,
+}
+
+impl VfsExtension for ExampleFS {
+    /// The name of your vfs module
+    const NAME: &'static str = "example";
+
+    type File = ExampleFile;
+
+    fn open(&self, path: &str, flags: i32, _direct: bool) -> Result<Self::File> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(flags & 1 != 0)
+            .open(path)
+            .map_err(|_| ResultCode::Error)?;
+        Ok(TestFile { file })
+    }
+
+    fn run_once(&self) -> Result<()> {
+    // (optional) method to cycle/advance IO, if your extension is asynchronous
+        Ok(())
+    }
+
+    fn close(&self, file: Self::File) -> Result<()> {
+    // (optional) method to close or drop the file
+        Ok(())
+    }
+
+    fn generate_random_number(&self) -> i64 {
+    // (optional) method to generate random number. Used for testing
+        let mut buf = [0u8; 8];
+        getrandom::fill(&mut buf).unwrap();
+        i64::from_ne_bytes(buf)
+    }
+
+   fn get_current_time(&self) -> String {
+    // (optional) method to generate random number. Used for testing
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+}
+
+impl VfsFile for ExampleFile {
+    fn read(
+        &mut self,
+        buf: &mut [u8],
+        count: usize,
+        offset: i64,
+    ) -> Result<i32> {
+        if file.file.seek(SeekFrom::Start(offset as u64)).is_err() {
+            return Err(ResultCode::Error);
+        }
+        file.file
+            .read(&mut buf[..count])
+            .map_err(|_| ResultCode::Error)
+            .map(|n| n as i32)
+    }
+
+    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> Result<i32> {
+        if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
+            return Err(ResultCode::Error);
+        }
+        self.file
+            .write(&buf[..count])
+            .map_err(|_| ResultCode::Error)
+            .map(|n| n as i32)
+    }
+
+    fn sync(&self) -> Result<()> {
+        self.file.sync_all().map_err(|_| ResultCode::Error)
+    }
+
+    fn lock(&self, _exclusive: bool) -> Result<()> {
+        // (optional) method to lock the file
+        Ok(())
+    }
+
+    fn unlock(&self) -> Result<()> {
+       // (optional) method to lock the file
+        Ok(())
+    }
+
+    fn size(&self) -> i64 {
+        self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
     }
 }
 ```

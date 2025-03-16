@@ -2,20 +2,23 @@ mod de;
 mod error;
 mod json_operations;
 mod json_path;
+mod jsonb;
 mod ser;
 
 pub use crate::json::de::from_str;
-use crate::json::de::ordered_object;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{json_patch, json_remove};
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, Text, TextSubtype};
+use crate::{bail_parse_error, json::de::ordered_object};
 use indexmap::IndexMap;
-use jsonb::Error as JsonbError;
+use jsonb::Jsonb;
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::rc::Rc;
+use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(untagged)]
@@ -49,13 +52,12 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
             Ok(OwnedValue::Text(Text::json(&json)))
         }
         OwnedValue::Blob(b) => {
-            // TODO: use get_json_value after we implement a single Struct
-            //   to represent both JSON and JSONB
-            if let Ok(json) = jsonb::from_slice(b) {
-                Ok(OwnedValue::Text(Text::json(&json.to_string())))
-            } else {
-                crate::bail_parse_error!("malformed JSON");
-            }
+            let jsonbin = Jsonb::new(b.len(), Some(b));
+            jsonbin.is_valid()?;
+            Ok(OwnedValue::Text(Text {
+                value: Rc::new(jsonbin.to_string()?.into_bytes()),
+                subtype: TextSubtype::Json,
+            }))
         }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => {
@@ -70,6 +72,28 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
     }
 }
 
+pub fn jsonb(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
+    let jsonbin = match json_value {
+        OwnedValue::Null | OwnedValue::Integer(_) | OwnedValue::Float(_) | OwnedValue::Text(_) => {
+            Jsonb::from_str(&json_value.to_text().unwrap())
+        }
+        OwnedValue::Blob(blob) => {
+            let blob = Jsonb::new(blob.len(), Some(&blob));
+            blob.is_valid()?;
+            Ok(blob)
+        }
+        _ => {
+            unimplemented!()
+        }
+    };
+    match jsonbin {
+        Ok(jsonbin) => Ok(OwnedValue::Blob(Rc::new(jsonbin.data()))),
+        Err(_) => {
+            bail_parse_error!("malformed JSON")
+        }
+    }
+}
+
 fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
     match json_value {
         OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
@@ -78,12 +102,8 @@ fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
                 crate::bail_parse_error!("malformed JSON")
             }
         },
-        OwnedValue::Blob(b) => {
-            if let Ok(_json) = jsonb::from_slice(b) {
-                todo!("jsonb to json conversion");
-            } else {
-                crate::bail_parse_error!("malformed JSON");
-            }
+        OwnedValue::Blob(_) => {
+            crate::bail_parse_error!("malformed JSON");
         }
         OwnedValue::Null => Ok(Val::Null),
         OwnedValue::Float(f) => Ok(Val::Float(*f)),
@@ -625,13 +645,9 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
                 }
             }
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(0)),
-            Err(JsonbError::Syntax(_, pos)) => Ok(OwnedValue::Integer(pos as i64)),
-            _ => Err(crate::error::LimboError::InternalError(
-                "failed to determine json error position".into(),
-            )),
-        },
+        OwnedValue::Blob(_) => {
+            bail_parse_error!("Unsupported")
+        }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(0)),
     }
@@ -667,10 +683,9 @@ pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
             Ok(_) => Ok(OwnedValue::Integer(1)),
             Err(_) => Ok(OwnedValue::Integer(0)),
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(1)),
-            Err(_) => Ok(OwnedValue::Integer(0)),
-        },
+        OwnedValue::Blob(_) => {
+            bail_parse_error!("Unsuported!")
+        }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(1)),
     }
@@ -814,11 +829,11 @@ mod tests {
 
     #[test]
     fn test_get_json_blob_valid_jsonb() {
-        let binary_json = b"\x40\0\0\x01\x10\0\0\x03\x10\0\0\x03\x61\x73\x64\x61\x64\x66".to_vec();
+        let binary_json = vec![124, 55, 104, 101, 121, 39, 121, 111];
         let input = OwnedValue::Blob(Rc::new(binary_json));
         let result = get_json(&input, None).unwrap();
         if let OwnedValue::Text(result_str) = result {
-            assert!(result_str.as_str().contains("\"asd\":\"adf\""));
+            assert!(result_str.as_str().contains(r#"{"hey":"yo"}"#));
             assert_eq!(result_str.subtype, TextSubtype::Json);
         } else {
             panic!("Expected OwnedValue::Text");
@@ -830,6 +845,7 @@ mod tests {
         let binary_json: Vec<u8> = vec![0xA2, 0x62, 0x6B, 0x31, 0x62, 0x76]; // Incomplete binary JSON
         let input = OwnedValue::Blob(Rc::new(binary_json));
         let result = get_json(&input, None);
+        println!("{:?}", result);
         match result {
             Ok(_) => panic!("Expected error for malformed JSON"),
             Err(e) => assert!(e.to_string().contains("malformed JSON")),
@@ -1068,13 +1084,6 @@ mod tests {
         let input = OwnedValue::Float(-5.5);
         let result = json_error_position(&input).unwrap();
         assert_eq!(result, OwnedValue::Integer(0));
-    }
-
-    #[test]
-    fn test_json_error_position_blob() {
-        let input = OwnedValue::Blob(Rc::new(r#"["a",55,"b",72,,]"#.as_bytes().to_owned()));
-        let result = json_error_position(&input).unwrap();
-        assert_eq!(result, OwnedValue::Integer(16));
     }
 
     #[test]

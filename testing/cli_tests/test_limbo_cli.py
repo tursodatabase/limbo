@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import os
 import select
+from time import sleep
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -10,16 +10,14 @@ from typing import Callable, List, Optional
 PIPE_BUF = 4096
 
 
-@dataclass
 class ShellConfig:
-    sqlite_exec: str = os.getenv("LIMBO_TARGET", "./target/debug/limbo")
-    sqlite_flags: List[str] = field(
-        default_factory=lambda: os.getenv("SQLITE_FLAGS", "-q").split()
-    )
-    cwd = os.getcwd()
-    test_dir: Path = field(default_factory=lambda: Path("testing"))
-    py_folder: Path = field(default_factory=lambda: Path("cli_tests"))
-    test_files: Path = field(default_factory=lambda: Path("test_files"))
+    def __init__(self, exe_name, flags: str = "-q"):
+        self.sqlite_exec: str = exe_name
+        self.sqlite_flags: List[str] = flags.split()
+        self.cwd = os.getcwd()
+        self.test_dir: Path = Path("testing")
+        self.py_folder: Path = Path("cli_tests")
+        self.test_files: Path = Path("test_files")
 
 
 class LimboShell:
@@ -92,14 +90,24 @@ class LimboShell:
 
     def quit(self) -> None:
         self._write_to_pipe(".quit")
+        sleep(0.3)
         self.pipe.terminate()
+        self.pipe.kill()
 
 
 class TestLimboShell:
     def __init__(
-        self, init_commands: Optional[str] = None, init_blobs_table: bool = False
+        self,
+        init_commands: Optional[str] = None,
+        init_blobs_table: bool = False,
+        exec_name: Optional[str] = None,
+        flags="",
     ):
-        self.config = ShellConfig()
+        if exec_name is None:
+            exec_name = "./target/debug/limbo"
+            if flags == "":
+                flags = "-q"
+        self.config = ShellConfig(exe_name=exec_name, flags=flags)
         if init_commands is None:
             # Default initialization
             init_commands = """
@@ -131,6 +139,11 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
             f"Expected:\n{repr(expected)}\n"
             f"Actual:\n{repr(actual)}"
         )
+
+    def debug_print(self, sql: str):
+        print(f"debugging: {sql}")
+        actual = self.shell.execute(sql)
+        print(f"OUTPUT:\n{repr(actual)}")
 
     def run_test_fn(
         self, sql: str, validate: Callable[[str], bool], desc: str = ""
