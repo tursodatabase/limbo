@@ -31,6 +31,12 @@
 
 #define SQLITE_STATE_BUSY 109
 
+/* WAL Checkpoint modes */
+#define SQLITE_CHECKPOINT_PASSIVE  0
+#define SQLITE_CHECKPOINT_FULL    1
+#define SQLITE_CHECKPOINT_RESTART 2
+#define SQLITE_CHECKPOINT_TRUNCATE 3
+
 typedef struct sqlite3 sqlite3;
 
 typedef struct sqlite3_stmt sqlite3_stmt;
@@ -243,6 +249,17 @@ int sqlite3_threadsafe(void);
 const char *sqlite3_libversion(void);
 
 int sqlite3_libversion_number(void);
+
+/* WAL Checkpoint functions */
+int sqlite3_wal_checkpoint(sqlite3 *db, const char *db_name);
+
+int sqlite3_wal_checkpoint_v2(
+    sqlite3 *db,
+    const char *db_name,
+    int mode,
+    int *log_size,
+    int *checkpoint_count
+);
 
 #ifdef __cplusplus
 }  // extern "C"

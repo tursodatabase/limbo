@@ -337,7 +337,7 @@ def test_series():
 
 
 def test_kv():
-    ext_path = "./target/debug/liblimbo_kv"
+    ext_path = "target/debug/liblimbo_ext_tests"
     limbo = TestLimboShell()
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
@@ -401,17 +401,18 @@ def test_kv():
     )
     limbo.quit()
 
+
 def test_ipaddr():
     limbo = TestLimboShell()
     ext_path = "./target/debug/liblimbo_ipaddr"
- 
+
     limbo.run_test_fn(
         "SELECT ipfamily('192.168.1.1');",
         lambda res: "error: no such function: " in res,
         "ipfamily function returns null when ext not loaded",
     )
     limbo.execute_dot(f".load {ext_path}")
- 
+
     limbo.run_test_fn(
         "SELECT ipfamily('192.168.1.1');",
         lambda res: "4" == res,
@@ -455,7 +456,7 @@ def test_ipaddr():
         lambda res: "128" == res,
         "ipmasklen function returns the mask length for IPv6",
     )
-    
+
     limbo.run_test_fn(
         "SELECT ipnetwork('192.168.16.12/24');",
         lambda res: "192.168.16.0/24" == res,
@@ -466,7 +467,76 @@ def test_ipaddr():
         lambda res: "2001:db8::1/128" == res,
         "ipnetwork function returns the network for IPv6",
     )
-    
+    limbo.quit()
+
+
+def test_vfs():
+    limbo = TestLimboShell()
+    ext_path = "target/debug/liblimbo_ext_tests"
+    limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.run_test_fn(
+        ".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded"
+    )
+    limbo.execute_dot(".open testing/vfs.db testvfs")
+    limbo.execute_dot("create table test (id integer primary key, value float);")
+    limbo.execute_dot("create table vfs (id integer primary key, value blob);")
+    for i in range(50):
+        limbo.execute_dot("insert into test (value) values (randomblob(32*1024));")
+        limbo.execute_dot(f"insert into vfs (value) values ({i});")
+    limbo.run_test_fn(
+        "SELECT count(*) FROM test;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
+    )
+    limbo.run_test_fn(
+        "SELECT count(*) FROM vfs;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
+    )
+    print("Tested large write to testfs")
+    # open regular db file to ensure we don't segfault when vfs file is dropped
+    limbo.execute_dot(".open testing/vfs.db")
+    limbo.execute_dot("create table test (id integer primary key, value float);")
+    limbo.execute_dot("insert into test (value) values (1.0);")
+    limbo.quit()
+
+
+def test_sqlite_vfs_compat():
+    sqlite = TestLimboShell(
+        init_commands="",
+        exec_name="sqlite3",
+        flags="testing/vfs.db",
+    )
+    sqlite.run_test_fn(
+        ".show",
+        lambda res: "filename: testing/vfs.db" in res,
+        "Opened db file created with vfs extension in sqlite3",
+    )
+    sqlite.run_test_fn(
+        ".schema",
+        lambda res: "CREATE TABLE test (id integer PRIMARY KEY, value float);" in res,
+        "Tables created by vfs extension exist in db file",
+    )
+    sqlite.run_test_fn(
+        "SELECT count(*) FROM test;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
+    )
+    sqlite.run_test_fn(
+        "SELECT count(*) FROM vfs;",
+        lambda res: res == "50",
+        "Tested large write to testfs",
+    )
+    sqlite.quit()
+
+
+def cleanup():
+    if os.path.exists("testing/vfs.db"):
+        os.remove("testing/vfs.db")
+    if os.path.exists("testing/vfs.db-wal"):
+        os.remove("testing/vfs.db-wal")
+
 
 if __name__ == "__main__":
     try:
@@ -477,7 +547,11 @@ if __name__ == "__main__":
         test_series()
         test_kv()
         test_ipaddr()
+        test_vfs()
+        test_sqlite_vfs_compat()
     except Exception as e:
         print(f"Test FAILED: {e}")
+        cleanup()
         exit(1)
+    cleanup()
     print("All tests passed successfully.")

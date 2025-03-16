@@ -113,7 +113,7 @@ pub unsafe extern "C" fn sqlite3_open(
         ":memory:" => Arc::new(limbo_core::MemoryIO::new()),
         _ => match limbo_core::PlatformIO::new() {
             Ok(io) => Arc::new(io),
-            Err(_) => return SQLITE_MISUSE,
+            Err(_) => return SQLITE_CANTOPEN,
         },
     };
     match limbo_core::Database::open_file(io, filename, false) {
@@ -122,7 +122,10 @@ pub unsafe extern "C" fn sqlite3_open(
             *db_out = Box::leak(Box::new(sqlite3::new(db, conn)));
             SQLITE_OK
         }
-        Err(_e) => SQLITE_CANTOPEN,
+        Err(e) => {
+            log::error!("error opening database {:?}", e);
+            SQLITE_CANTOPEN
+        }
     }
 }
 
@@ -1078,4 +1081,188 @@ pub unsafe extern "C" fn sqlite3_wal_checkpoint_v2(
         return SQLITE_ERROR;
     }
     SQLITE_OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr;
+
+    #[test]
+    fn test_libversion() {
+        unsafe {
+            let version = sqlite3_libversion();
+            assert!(!version.is_null());
+        }
+    }
+
+    #[test]
+    fn test_libversion_number() {
+        unsafe {
+            let version_num = sqlite3_libversion_number();
+            assert_eq!(version_num, 3042000);
+        }
+    }
+
+    #[test]
+    fn test_open_misuse() {
+        unsafe {
+            let mut db = ptr::null_mut();
+            assert_eq!(sqlite3_open(ptr::null(), &mut db), SQLITE_MISUSE);
+        }
+    }
+
+    #[test]
+    fn test_open_not_found() {
+        unsafe {
+            let mut db = ptr::null_mut();
+            assert_eq!(
+                sqlite3_open(b"not-found/local.db\0".as_ptr() as *const i8, &mut db),
+                SQLITE_CANTOPEN
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_open_existing() {
+        unsafe {
+            let mut db = ptr::null_mut();
+            assert_eq!(
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_close() {
+        unsafe {
+            assert_eq!(sqlite3_close(ptr::null_mut()), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_prepare_misuse() {
+        unsafe {
+            let mut db = ptr::null_mut();
+            assert_eq!(
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                SQLITE_OK
+            );
+
+            let mut stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    b"SELECT 1\0".as_ptr() as *const i8,
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_wal_checkpoint() {
+        unsafe {
+            // Test with NULL db handle
+            assert_eq!(
+                sqlite3_wal_checkpoint(ptr::null_mut(), ptr::null()),
+                SQLITE_MISUSE
+            );
+
+            // Test with valid db
+            let mut db = ptr::null_mut();
+            assert_eq!(
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_wal_checkpoint(db, ptr::null()), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_wal_checkpoint_v2() {
+        unsafe {
+            // Test with NULL db handle
+            assert_eq!(
+                sqlite3_wal_checkpoint_v2(
+                    ptr::null_mut(),
+                    ptr::null(),
+                    SQLITE_CHECKPOINT_PASSIVE,
+                    ptr::null_mut(),
+                    ptr::null_mut()
+                ),
+                SQLITE_MISUSE
+            );
+
+            // Test with valid db
+            let mut db = ptr::null_mut();
+            assert_eq!(
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                SQLITE_OK
+            );
+
+            let mut log_size = 0;
+            let mut checkpoint_count = 0;
+
+            // Test different checkpoint modes
+            assert_eq!(
+                sqlite3_wal_checkpoint_v2(
+                    db,
+                    ptr::null(),
+                    SQLITE_CHECKPOINT_PASSIVE,
+                    &mut log_size,
+                    &mut checkpoint_count
+                ),
+                SQLITE_OK
+            );
+
+            assert_eq!(
+                sqlite3_wal_checkpoint_v2(
+                    db,
+                    ptr::null(),
+                    SQLITE_CHECKPOINT_FULL,
+                    &mut log_size,
+                    &mut checkpoint_count
+                ),
+                SQLITE_OK
+            );
+
+            assert_eq!(
+                sqlite3_wal_checkpoint_v2(
+                    db,
+                    ptr::null(),
+                    SQLITE_CHECKPOINT_RESTART,
+                    &mut log_size,
+                    &mut checkpoint_count
+                ),
+                SQLITE_OK
+            );
+
+            assert_eq!(
+                sqlite3_wal_checkpoint_v2(
+                    db,
+                    ptr::null(),
+                    SQLITE_CHECKPOINT_TRUNCATE,
+                    &mut log_size,
+                    &mut checkpoint_count
+                ),
+                SQLITE_OK
+            );
+
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
 }

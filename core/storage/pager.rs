@@ -122,7 +122,7 @@ impl Page {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum FlushState {
     Start,
     WaitAppendFrames,
@@ -247,6 +247,7 @@ impl Pager {
         match checkpoint_status {
             CheckpointStatus::IO => Ok(checkpoint_status),
             CheckpointStatus::Done(_) => {
+                self.wal.borrow().end_write_tx()?;
                 self.wal.borrow().end_read_tx()?;
                 Ok(checkpoint_status)
             }
@@ -260,11 +261,11 @@ impl Pager {
 
     /// Reads a page from the database.
     pub fn read_page(&self, page_idx: usize) -> Result<PageRef> {
-        trace!("read_page(page_idx = {})", page_idx);
+        tracing::debug!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx, Some(self.wal.borrow().get_max_frame()));
         if let Some(page) = page_cache.get(&page_key) {
-            trace!("read_page(page_idx = {}) = cached", page_idx);
+            tracing::debug!("read_page(page_idx = {}) = cached", page_idx);
             return Ok(page.clone());
         }
         let page = Arc::new(Page::new(page_idx));
@@ -347,6 +348,7 @@ impl Pager {
         let mut checkpoint_result = CheckpointResult::new();
         loop {
             let state = self.flush_info.borrow().state.clone();
+            trace!("cacheflush {:?}", state);
             match state {
                 FlushState::Start => {
                     let db_size = self.db_header.lock().unwrap().database_size;
@@ -362,6 +364,10 @@ impl Pager {
                             db_size,
                             self.flush_info.borrow().in_flight_writes.clone(),
                         )?;
+                        // This page is no longer valid.
+                        // For example:
+                        // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame so it must be invalidated.
+                        cache.delete(page_key);
                     }
                     self.dirty_pages.borrow_mut().clear();
                     self.flush_info.borrow_mut().state = FlushState::WaitAppendFrames;

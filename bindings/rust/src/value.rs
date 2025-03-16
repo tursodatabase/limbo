@@ -110,6 +110,18 @@ impl Value {
     }
 }
 
+impl Into<limbo_core::OwnedValue> for Value {
+    fn into(self) -> limbo_core::OwnedValue {
+        match self {
+            Value::Null => limbo_core::OwnedValue::Null,
+            Value::Integer(n) => limbo_core::OwnedValue::Integer(n),
+            Value::Real(n) => limbo_core::OwnedValue::Float(n),
+            Value::Text(t) => limbo_core::OwnedValue::from_text(&t),
+            Value::Blob(items) => limbo_core::OwnedValue::from_blob(items),
+        }
+    }
+}
+
 impl From<i8> for Value {
     fn from(value: i8) -> Value {
         Value::Integer(value as i64)

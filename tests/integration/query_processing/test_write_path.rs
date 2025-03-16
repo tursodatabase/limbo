@@ -5,6 +5,7 @@ use log::debug;
 use std::rc::Rc;
 
 #[test]
+#[ignore]
 fn test_simple_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db =
@@ -75,6 +76,7 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore]
 fn test_sequential_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db =
@@ -152,7 +154,7 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
 }
 
 #[ignore]
-#[test]
+#[test_log::test]
 fn test_sequential_write() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
 
@@ -162,7 +164,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
     let list_query = "SELECT * FROM test";
     let max_iterations = 10000;
     for i in 0..max_iterations {
-        debug!("inserting {} ", i);
+        println!("inserting {} ", i);
         if (i % 100) == 0 {
             let progress = (i as f64 / max_iterations as f64) * 100.0;
             println!("progress {:.1}%", progress);

@@ -52,7 +52,7 @@ use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
-    json::json_quote, json::json_remove, json::json_set, json::json_type,
+    json::json_quote, json::json_remove, json::json_set, json::json_type, json::jsonb,
 };
 use crate::{info, CheckpointStatus};
 use crate::{
@@ -2131,6 +2131,14 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+                            JsonFunc::Jsonb => {
+                                let json_value = &state.registers[*start_reg];
+                                let json_blob = jsonb(json_value);
+                                match json_blob {
+                                    Ok(json) => state.registers[*dest] = json,
+                                    Err(e) => return Err(e),
+                                }
+                            }
                             JsonFunc::JsonArray | JsonFunc::JsonObject => {
                                 let reg_values =
                                     &state.registers[*start_reg..*start_reg + arg_count];
@@ -3200,6 +3208,7 @@ impl Program {
                             connection.deref(),
                         ),
                         TransactionState::Read => {
+                            connection.transaction_state.replace(TransactionState::None);
                             pager.end_read_tx()?;
                             Ok(StepResult::Done)
                         }
@@ -3226,17 +3235,18 @@ impl Program {
         let checkpoint_status = pager.end_tx()?;
         match checkpoint_status {
             CheckpointStatus::Done(_) => {
+                if self.change_cnt_on {
+                    if let Some(conn) = self.connection.upgrade() {
+                        conn.set_changes(self.n_change.get());
+                    }
+                }
                 connection.transaction_state.replace(TransactionState::None);
                 let _ = halt_state.take();
             }
             CheckpointStatus::IO => {
+                tracing::trace!("Checkpointing IO");
                 *halt_state = Some(HaltState::Checkpointing);
                 return Ok(StepResult::IO);
-            }
-        }
-        if self.change_cnt_on {
-            if let Some(conn) = self.connection.upgrade() {
-                conn.set_changes(self.n_change.get());
             }
         }
         Ok(StepResult::Done)

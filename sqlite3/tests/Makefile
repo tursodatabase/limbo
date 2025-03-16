@@ -1,44 +1,39 @@
-V =
-ifeq ($(strip $(V)),)
-	E = @echo
-	Q = @
-else
-	E = @\#
-	Q =
-endif
-export E Q
+# Compiler settings
+CC = gcc
+CFLAGS = -g -Wall -std=c17 -I../include
 
-PROGRAM = sqlite3-tests
-
-CFLAGS = -g -Wall -std=c17 -MMD -MP
-
+# Libraries
 LIBS ?= -lsqlite3
 LIBS += -lm
 
-OBJS += main.o
-OBJS += test-aux.o
-OBJS += test-close.o
-OBJS += test-open.o
-OBJS += test-prepare.o
+# Target program
+PROGRAM = sqlite3-tests
 
+# Object files
+OBJS = main.o \
+       test-aux.o \
+       test-close.o \
+       test-open.o \
+       test-prepare.o \
+       test-wal.o
+
+# Default target
 all: $(PROGRAM)
 
+# Test target
 test: $(PROGRAM)
-	$(E) "  TEST"
-	$(Q) $(CURDIR)/$(PROGRAM)
+	./$(PROGRAM)
 
+# Compile source files
 %.o: %.c
-	$(E) "  CC      " $@
-	$(Q) $(CC) $(CFLAGS) -c $< -o $@ -I$(HEADERS)
+	$(CC) $(CFLAGS) -c $< -o $@
 
+# Link program
 $(PROGRAM): $(OBJS)
-	$(E) "  LINK    " $@
-	$(Q) $(CC) -o $@ $^ $(LIBS)
+	$(CC) -o $@ $(OBJS) $(LIBS)
 
+# Clean target
 clean:
-	$(E) "  CLEAN"
-	$(Q) rm -f $(PROGRAM)
-	$(Q) rm -f $(OBJS) *.d
-.PHONY: clean
+	rm -f $(PROGRAM) $(OBJS)
 
--include $(OBJS:.o=.d)
+.PHONY: all test clean

@@ -19,9 +19,19 @@ pub trait File: Send + Sync {
     fn size(&self) -> Result<u64>;
 }
 
+#[derive(Copy, Clone)]
 pub enum OpenFlags {
     None,
     Create,
+}
+
+impl OpenFlags {
+    pub fn to_flags(&self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Create => 1,
+        }
+    }
 }
 
 pub trait IO: Send + Sync {
@@ -203,5 +213,6 @@ cfg_block! {
 }
 
 mod memory;
+mod vfs;
 pub use memory::MemoryIO;
 mod common;

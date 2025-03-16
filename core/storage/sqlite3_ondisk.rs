@@ -454,25 +454,25 @@ impl PageContent {
     }
 
     pub fn write_u8(&self, pos: usize, value: u8) {
-        tracing::debug!("write_u8(pos={}, value={})", pos, value);
+        tracing::trace!("write_u8(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos] = value;
     }
 
     pub fn write_u16(&self, pos: usize, value: u16) {
-        tracing::debug!("write_u16(pos={}, value={})", pos, value);
+        tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
-        tracing::debug!("write_u16(pos={}, value={})", pos, value);
+        tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u32(&self, pos: usize, value: u32) {
-        tracing::debug!("write_u32(pos={}, value={})", pos, value);
+        tracing::trace!("write_u32(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -562,7 +562,7 @@ impl PageContent {
         payload_overflow_threshold_min: usize,
         usable_size: usize,
     ) -> Result<BTreeCell> {
-        tracing::debug!("cell_get(idx={})", idx);
+        tracing::trace!("cell_get(idx={})", idx);
         let buf = self.as_ptr();
 
         let ncells = self.cell_count();
@@ -673,6 +673,28 @@ impl PageContent {
     pub fn write_database_header(&self, header: &DatabaseHeader) {
         let buf = self.as_ptr();
         write_header_to_buf(buf, header);
+    }
+
+    pub fn debug_print_freelist(&self, usable_space: u16) {
+        let mut pc = self.first_freeblock() as usize;
+        let mut block_num = 0;
+        println!("---- Free List Blocks ----");
+        println!("first freeblock pointer: {}", pc);
+        println!("cell content area: {}", self.cell_content_area());
+        println!("fragmented bytes: {}", self.num_frag_free_bytes());
+
+        while pc != 0 && pc <= usable_space as usize {
+            let next = self.read_u16_no_offset(pc);
+            let size = self.read_u16_no_offset(pc + 2);
+
+            println!(
+                "block {}: position={}, size={}, next={}",
+                block_num, pc, size, next
+            );
+            pc = next as usize;
+            block_num += 1;
+        }
+        println!("--------------");
     }
 }
 
@@ -1308,7 +1330,7 @@ pub fn begin_read_wal_frame(
     let frame = page.clone();
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
         let frame = frame.clone();
-        finish_read_page(2, buf, frame).unwrap();
+        finish_read_page(page.get().id, buf, frame).unwrap();
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
     io.pread(offset, c)?;

@@ -1,10 +1,16 @@
 mod types;
+mod vfs_modules;
+#[cfg(not(target_family = "wasm"))]
+pub use limbo_macros::VfsDerive;
 pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 use std::{
     fmt::Display,
     os::raw::{c_char, c_void},
 };
 pub use types::{ResultCode, Value, ValueType};
+pub use vfs_modules::{RegisterVfsFn, VfsFileImpl, VfsImpl};
+#[cfg(not(target_family = "wasm"))]
+pub use vfs_modules::{VfsExtension, VfsFile};
 
 pub type ExtResult<T> = std::result::Result<T, ResultCode>;
 
@@ -14,6 +20,36 @@ pub struct ExtensionApi {
     pub register_scalar_function: RegisterScalarFn,
     pub register_aggregate_function: RegisterAggFn,
     pub register_module: RegisterModuleFn,
+    pub register_vfs: RegisterVfsFn,
+    pub builtin_vfs: *mut *const VfsImpl,
+    pub builtin_vfs_count: i32,
+}
+unsafe impl Send for ExtensionApi {}
+unsafe impl Send for ExtensionApiRef {}
+
+#[repr(C)]
+pub struct ExtensionApiRef {
+    pub api: *const ExtensionApi,
+}
+
+impl ExtensionApi {
+    /// Since we want the option to build in extensions at compile time as well,
+    /// we add a slice of VfsImpls to the extension API, and this is called with any
+    /// libraries that we load staticly that will add their VFS implementations to the list.
+    pub fn add_builtin_vfs(&mut self, vfs: *const VfsImpl) -> ResultCode {
+        if vfs.is_null() || self.builtin_vfs.is_null() {
+            return ResultCode::Error;
+        }
+        let mut new = unsafe {
+            let slice =
+                std::slice::from_raw_parts_mut(self.builtin_vfs, self.builtin_vfs_count as usize);
+            Vec::from(slice)
+        };
+        new.push(vfs);
+        self.builtin_vfs = Box::into_raw(new.into_boxed_slice()) as *mut *const VfsImpl;
+        self.builtin_vfs_count += 1;
+        ResultCode::OK
+    }
 }
 
 pub type ExtensionEntryPoint = unsafe extern "C" fn(api: *const ExtensionApi) -> ResultCode;

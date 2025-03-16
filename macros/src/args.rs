@@ -7,6 +7,7 @@ pub(crate) struct RegisterExtensionInput {
     pub aggregates: Vec<Ident>,
     pub scalars: Vec<Ident>,
     pub vtabs: Vec<Ident>,
+    pub vfs: Vec<Ident>,
 }
 
 impl syn::parse::Parse for RegisterExtensionInput {
@@ -14,11 +15,12 @@ impl syn::parse::Parse for RegisterExtensionInput {
         let mut aggregates = Vec::new();
         let mut scalars = Vec::new();
         let mut vtabs = Vec::new();
+        let mut vfs = Vec::new();
         while !input.is_empty() {
             if input.peek(syn::Ident) && input.peek2(Token![:]) {
                 let section_name: Ident = input.parse()?;
                 input.parse::<Token![:]>()?;
-                let names = ["aggregates", "scalars", "vtabs"];
+                let names = ["aggregates", "scalars", "vtabs", "vfs"];
                 if names.contains(&section_name.to_string().as_str()) {
                     let content;
                     syn::braced!(content in input);
@@ -30,6 +32,7 @@ impl syn::parse::Parse for RegisterExtensionInput {
                         "aggregates" => aggregates = parsed_items,
                         "scalars" => scalars = parsed_items,
                         "vtabs" => vtabs = parsed_items,
+                        "vfs" => vfs = parsed_items,
                         _ => unreachable!(),
                     };
 
@@ -48,6 +51,7 @@ impl syn::parse::Parse for RegisterExtensionInput {
             aggregates,
             scalars,
             vtabs,
+            vfs,
         })
     }
 }
