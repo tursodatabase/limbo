@@ -339,33 +339,38 @@ impl VfsExtension for ExampleFS {
 }
 
 impl VfsFile for ExampleFile {
+    /// A callback is provided to call with the eventual result of the bytes read/written
+    /// when your IO operation has completed.
     fn read(
         &mut self,
-        buf: &mut [u8],
-        count: usize,
+        mut buf: BufferRef,
         offset: i64,
-    ) -> Result<i32> {
+        callback: Box<dyn FnOnce(i32) + Send>
+    ) {
         if file.file.seek(SeekFrom::Start(offset as u64)).is_err() {
-            return Err(ResultCode::Error);
+            callback(-1);
+            return;
         }
-        file.file
-            .read(&mut buf[..count])
-            .map_err(|_| ResultCode::Error)
+        let res = file.file
+            .read(&mut buf)
             .map(|n| n as i32)
+            .unwrap_or(-1);
+        callback(res);
     }
 
-    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> Result<i32> {
+    fn write(&mut self, buf: &[u8], offset: i64, callback: Box<dyn FnOnce(i32) + Send>) {
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
-            return Err(ResultCode::Error);
+            callback(-1);
+            return;
         }
-        self.file
-            .write(&buf[..count])
-            .map_err(|_| ResultCode::Error)
-            .map(|n| n as i32)
+       callback(self.file
+            .write(&buf)
+            .map(|n| n as i32).unwrap_or(-1));
     }
 
-    fn sync(&self) -> Result<()> {
-        self.file.sync_all().map_err(|_| ResultCode::Error)
+    fn sync(&self, callback: Box<dyn FnOnce() + Send>) {
+        self.file.sync_all();
+        callback();
     }
 
     fn lock(&self, _exclusive: bool) -> Result<()> {
