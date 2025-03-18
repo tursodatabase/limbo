@@ -11,6 +11,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
  - [ x ] **VFS Modules**: Extend Limbo's OS interface by implementing `VfsExtension` and `VfsFile` traits.
+ - [ x ] **Custom Types**: Create a custom type alias to define columns and handle insert behavior.
 ---
 
 ## Installation
@@ -53,6 +54,9 @@ crate-type = ["cdylib", "lib"]
 
 Extensions can be registered with the `register_extension!` macro:
 
+**NOTE**: Currently, any Derive macro used from this crate is required to be in the same
+file as the `register_extension` macro.
+
 ```rust
 
 register_extension!{
@@ -60,14 +64,14 @@ register_extension!{
     aggregates: { Percentile },
     vtabs: { CsvVTable },
     vfs: { ExampleFS },
+    types: { UUID },
 }
 ```
+<details>
+<summary>Scalar Example:</summary>
 
-**NOTE**: Currently, any Derive macro used from this crate is required to be in the same
-file as the `register_extension` macro.
 
 
-### Scalar Example:
 ```rust
 use limbo_ext::{register_extension, Value, scalar};
 
@@ -92,7 +96,12 @@ fn double(&self, args: &[Value]) -> Value {
 }
 ```
 
-### Aggregates Example:
+</details>
+
+<details>
+<summary>Aggregates Example: </summary>
+
+<br />
 
 ```rust
 
@@ -162,8 +171,10 @@ impl AggFunc for Percentile {
     }
 }
 ```
+</details>
 
-### Virtual Table Example:
+<details>
+<summary> Virtual Table Example:</summary>
 
 ```rust
 
@@ -283,6 +294,45 @@ impl VTabCursor for CsvCursor {
     }
 }
 ```
+</details>
+
+<details>
+<summary> Custom type example:</summary>
+
+```rust
+
+#[derive(CustomTypeDerive, Default)]
+pub struct UUID;
+
+impl CustomType for UUID {
+    const NAME: &'static str = "UUID";
+    const TYPE: ValueType = ValueType::Text;
+
+    fn on_insert(_col_name: Option<&str>, insert_val: Option<&Value>) -> Value {
+        // This example stores a uuid7 using a timestamp if one is inserted, otherwise it uses 'now'
+        match insert_val {
+            Some(val) => {
+                if let Some(val) = val.to_integer() {
+                    let ctx = uuid::ContextV7::new();
+                    let ts = if val > 0 {
+                        uuid::Timestamp::from_unix(ctx, val as u64, 0)
+                    } else {
+                        uuid::Timestamp::now(ctx)
+                    };
+                    Value::from_text(uuid::Uuid::new_v7(ts).to_string())
+                } else {
+                    // an error can be returned if the inserted value isn't a valid timestamp
+                    Value::error_with_message(String::from("Invalid timestamp"))
+                }
+            }
+            None => Value::from_text(uuid::Uuid::now_v7().to_string()),
+        }
+    }
+}
+```
+
+</details>
+
 
 ### VFS Example
 

@@ -24,7 +24,7 @@ pub mod likeop;
 pub mod sorter;
 
 use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
-use crate::ext::ExtValue;
+use crate::ext::{foreign_types::ForeignTypeOp, ExtValue};
 use crate::fast_lock::SpinLock;
 use crate::function::{AggFunc, ExtFunc, FuncCtx, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
@@ -2725,6 +2725,20 @@ impl Program {
                                 }
                             }
                             _ => unreachable!("aggregate called in scalar context"),
+                        },
+                        crate::function::Func::ForeignType(ts) => match ts.op {
+                            ForeignTypeOp::OnInsertHook => {
+                                let col_name = state.registers[*start_reg].to_text();
+                                let insert_val = &state.registers[*start_reg + 1];
+                                let insert_val = if let OwnedValue::Null = insert_val {
+                                    None
+                                } else {
+                                    Some(insert_val)
+                                };
+                                let result =
+                                    ts.ext_type.on_insert(col_name, insert_val.cloned())?;
+                                state.registers[*dest] = result;
+                            }
                         },
                         crate::function::Func::Math(math_func) => match math_func.arity() {
                             MathFuncArity::Nullary => match math_func {
