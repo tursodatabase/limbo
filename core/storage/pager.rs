@@ -102,10 +102,12 @@ impl Page {
     }
 
     pub fn set_dirty(&self) {
+        tracing::debug!("set_dirty(page={})", self.get().id);
         self.get().flags.fetch_or(PAGE_DIRTY, Ordering::SeqCst);
     }
 
     pub fn clear_dirty(&self) {
+        tracing::debug!("clear_dirty(page={})", self.get().id);
         self.get().flags.fetch_and(!PAGE_DIRTY, Ordering::SeqCst);
     }
 
