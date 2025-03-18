@@ -198,9 +198,8 @@ impl Database {
             syms: RefCell::new(SymbolTable::new()),
             total_changes: Cell::new(0),
         });
-        if let Err(e) = conn.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
+        conn.register_builtins()
+            .map_err(LimboError::ExtensionError)?;
         Ok(conn)
     }
 
@@ -528,8 +527,8 @@ impl Connection {
             {
                 all_vfs.push("io_uring".to_string());
             }
+            all_vfs.extend(crate::list_vfs_modules());
         }
-        all_vfs.extend(list_vfs_modules());
         all_vfs
     }
 }
@@ -666,7 +665,9 @@ impl VirtualTable {
     }
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
+        let cursor = unsafe {
+            (self.implementation.open)(self.implementation.ctx, self.implementation.conn)
+        };
         VTabOpaqueCursor::new(cursor)
     }
 

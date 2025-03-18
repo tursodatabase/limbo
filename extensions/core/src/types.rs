@@ -23,6 +23,10 @@ pub enum ResultCode {
     EOF = 15,
     ReadOnly = 16,
     RowID = 17,
+    Row = 18,
+    IO = 19,
+    Busy = 20,
+    Interrupt = 21,
 }
 
 impl ResultCode {
@@ -37,6 +41,15 @@ impl ResultCode {
     pub fn has_error_set(&self) -> bool {
         matches!(self, Self::CustomError)
     }
+}
+
+#[derive(Copy, Debug, Clone, PartialEq)]
+pub enum StepResult {
+    Error,
+    Row,
+    Done,
+    Interrupt,
+    Busy,
 }
 
 impl Display for ResultCode {
@@ -60,6 +73,10 @@ impl Display for ResultCode {
             ResultCode::EOF => write!(f, "EOF"),
             ResultCode::ReadOnly => write!(f, "Read Only"),
             ResultCode::RowID => write!(f, "RowID"),
+            ResultCode::Row => write!(f, "Row"),
+            ResultCode::IO => write!(f, "IO"),
+            ResultCode::Busy => write!(f, "Busy"),
+            ResultCode::Interrupt => write!(f, "Interrupt"),
         }
     }
 }
@@ -79,6 +96,12 @@ pub enum ValueType {
 pub struct Value {
     value_type: ValueType,
     value: ValueData,
+}
+
+impl Default for Value {
+    fn default() -> Self {
+        Self::null()
+    }
 }
 
 #[repr(C)]
@@ -232,6 +255,7 @@ impl Blob {
         }
         unsafe { std::slice::from_raw_parts(self.data, self.size as usize) }
     }
+
     #[cfg(feature = "core_only")]
     fn free(self) {
         if !self.data.is_null() {
@@ -443,7 +467,7 @@ impl Value {
         }
     }
 
-    /// Extension authors should __not__ use this function, or enable the 'core_only' feature
+    /// Extension authors should __not__ use this function
     ///
     /// # Safety
     /// consumes the value while freeing the underlying memory with null check.
