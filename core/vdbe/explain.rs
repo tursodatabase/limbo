@@ -1346,16 +1346,15 @@ pub fn insn_to_str(
             ),
             Insn::OpenEphemeral {
                 cursor_id,
-                is_btree,
                 root_page,
             } => (
                 "OpenEphemeral",
                 *cursor_id as i32,
-                *is_btree as i32,
                 *root_page as i32,
+                0,
                 OwnedValue::build_text(""),
                 0,
-                format!("Is BTreeTable: {}", is_btree),
+                "".to_string(),
             ),
         };
     format!(
