@@ -3248,6 +3248,10 @@ impl Program {
                     cursor_id,
                     root_page,
                 } => {
+                    // OpenEphemeral works by using a in-memory storage for the pages regardless 
+                    // of the underlying storage, and passing it to BTreeCursor. This is useful for temporary tables and indices.
+
+                    // TODO: Optimize to avoid recreating the pager every time OpenEphemeral is called
                     let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
                     let file = io.open_file("", OpenFlags::Create, true)?;
                     let page_io = Arc::new(DatabaseFile::new(file));
@@ -3293,6 +3297,7 @@ impl Program {
                     let cursor = BTreeCursor::new(mv_cursor, pager, *root_page);
                     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
                         state.cursors.borrow_mut();
+                    // Table content is erased if the cursor already exists
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
                             cursors
