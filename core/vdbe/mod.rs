@@ -3248,7 +3248,7 @@ impl Program {
                     cursor_id,
                     root_page,
                 } => {
-                    // OpenEphemeral works by using a in-memory storage for the pages regardless 
+                    // OpenEphemeral works by using a in-memory storage for the pages regardless
                     // of the underlying storage, and passing it to BTreeCursor. This is useful for temporary tables and indices.
 
                     // TODO: Optimize to avoid recreating the pager every time OpenEphemeral is called
