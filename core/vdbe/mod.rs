@@ -3246,7 +3246,6 @@ impl Program {
                 }
                 Insn::OpenEphemeral {
                     cursor_id,
-                    is_btree,
                     root_page,
                 } => {
                     let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
@@ -3262,13 +3261,12 @@ impl Program {
 
                     let page_size = db_header.lock().page_size;
 
-                    let shared_wal =
-                        WalFileShared::open_shared(&io, "", db_header.lock().page_size)?;
+                    let shared_wal = WalFileShared::open_shared(&io, "", page_size)?;
 
                     let wal = Rc::new(RefCell::new(WalFile::new(
                         io.clone(),
                         page_size as usize,
-                        shared_wal.clone(),
+                        shared_wal,
                         buffer_pool.clone(),
                     )));
 
@@ -3278,7 +3276,7 @@ impl Program {
                         db_header,
                         page_io,
                         wal,
-                        io.clone(),
+                        io,
                         page_cache,
                         buffer_pool,
                     )?);
@@ -3295,7 +3293,7 @@ impl Program {
                         None => None,
                     };
 
-                    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
+                    let cursor = BTreeCursor::new(mv_cursor, pager, *root_page);
                     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
                         state.cursors.borrow_mut();
                     match cursor_type {
