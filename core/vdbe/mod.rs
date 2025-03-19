@@ -3252,10 +3252,7 @@ impl Program {
                     let file = io.open_file("", OpenFlags::Create, true)?;
                     let page_io = Arc::new(DatabaseFile::new(file));
 
-                    let db_header = match Pager::begin_open(page_io.clone()) {
-                        Ok(header) => header,
-                        Err(e) => return Err(e), // look at this later
-                    };
+                    let db_header = Pager::begin_open(page_io.clone())?;
 
                     let buffer_pool = Rc::new(BufferPool::new(512));
 
@@ -3310,13 +3307,13 @@ impl Program {
                                 .replace(Cursor::new_btree(cursor));
                         }
                         CursorType::Pseudo(_) => {
-                            panic!("OpenReadAsync on pseudo cursor");
+                            panic!("OpenEphemeral on pseudo cursor");
                         }
                         CursorType::Sorter => {
-                            panic!("OpenReadAsync on sorter cursor");
+                            panic!("OpenEphemeral on sorter cursor");
                         }
                         CursorType::VirtualTable(_) => {
-                            panic!("OpenReadAsync on virtual table cursor, use Insn::VOpenAsync instead");
+                            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpenAsync instead");
                         }
                     }
                     state.pc += 1;
