@@ -34,7 +34,7 @@ use crate::functions::printf::exec_printf;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
-use crate::storage::database::FileStorage;
+use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::wal::CheckpointResult;
@@ -3193,13 +3193,13 @@ impl Program {
                     cursor_id,
                     root_page,
                 } => {
-                    // OpenEphemeral works by using a in-memory storage for the pages regardless 
+                    // OpenEphemeral works by using a in-memory storage for the pages regardless
                     // of the underlying storage, and passing it to BTreeCursor. This is useful for temporary tables and indices.
 
                     // TODO: Optimize to avoid recreating the pager every time OpenEphemeral is called
                     let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
                     let file = io.open_file("", OpenFlags::Create, true)?;
-                    let page_io = Arc::new(FileStorage::new(file));
+                    let page_io = Arc::new(FileMemoryStorage::new(file));
 
                     let db_header = Pager::begin_open(page_io.clone())?;
 
