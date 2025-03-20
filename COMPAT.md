@@ -54,7 +54,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | ALTER TABLE               | No      |                                                                                   |
 | ANALYZE                   | No      |                                                                                   |
 | ATTACH DATABASE           | No      |                                                                                   |
-| BEGIN TRANSACTION         | Partial | `BEGIN DEFERRED` is not supported, transaction names are not supported.           |
+| BEGIN TRANSACTION         | Partial | Transaction names are not supported.                                              |
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
 | CREATE INDEX              | No      |                                                                                   |
 | CREATE TABLE              | Partial |                                                                                   |
@@ -498,7 +498,7 @@ Modifiers:
 | Next           | No     |         |
 | NextAsync      | Yes    |         |
 | NextAwait      | Yes    |         |
-| Noop           | Yes     |         |
+| Noop           | Yes    |         |
 | Not            | Yes    |         |
 | NotExists      | Yes    |         |
 | NotFound       | No     |         |
@@ -507,7 +507,7 @@ Modifiers:
 | NullRow        | Yes    |         |
 | Once           | No     |         |
 | OpenAutoindex  | No     |         |
-| OpenEphemeral  | No     |         |
+| OpenEphemeral  | Yes    |         |
 | OpenPseudo     | Yes    |         |
 | OpenRead       | Yes    |         |
 | OpenReadAsync  | Yes    |         |
