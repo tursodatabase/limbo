@@ -1,0 +1,68 @@
+#!/usr/bin/env tclsh
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
+
+do_execsql_test_on_specific_db {:memory:} basic-update {
+    create table temp (t1 integer);
+    insert into temp values (1);
+	update temp set t1 = 2;
+	select * from temp;
+} {2}
+
+do_execsql_test_on_specific_db {:memory:} update-mul {
+    create table temp (t1 integer);
+    insert into temp values (1),(2.0),('3'),('4.0');
+	update temp set t1 = 2;
+	select * from temp;
+} {2
+2
+2
+2}
+
+do_execsql_test_on_specific_db {:memory:} update-where {
+    create table temp (a,b,c);
+    insert into temp values (1,2,33);
+    insert into temp values (1,22,33);
+    insert into temp values (1,22,33);
+	update temp set a = 6 where b = 2;
+	select * from temp;
+} {6|2|33
+1|22|33
+1|22|33}
+
+
+do_execsql_test_on_specific_db {:memory:} update-where-2 {
+    create table temp (a,b,c);
+    insert into temp values (1,22,33);
+    insert into temp values (1,22,33);
+    insert into temp values (1,22,33);
+    insert into temp values (6,22,33);
+    insert into temp values (1,22,33);
+    insert into temp values (1,22,33);
+	update temp set b = 100000 where a = 6;
+	select b from temp where a = 6;
+} {100000}
+
+
+do_execsql_test_on_specific_db {:memory:} update-all-many {
+    create table temp (a,b,c);
+    insert into temp values (1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33);
+	update temp set a = 1234234234234234;
+	select COUNT(*) from temp where a = 1234234234234234;
+} {8}
+
+
+do_execsql_test_on_specific_db {:memory:} update-large {
+    create table temp (a text);
+    insert into temp values ('a smol string');
+	update temp set a = 'a very long string that is garaunteed to overflow the original btree cell that will be overwritten, causing the updated row to be stored on an overflow page';
+	select * from temp;
+} {{a very long string that is garaunteed to overflow the original btree cell that will be overwritten, causing the updated row to be stored on an overflow page}}
+
+do_execsql_test_on_specific_db {:memory:} update-large-small {
+	create table temp (a,b,c);
+	insert into temp values (randomblob(1024), 1, 2);
+	update temp set a = 'a';
+	select * from temp;
+} {a|1|2}
