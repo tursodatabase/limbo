@@ -3191,7 +3191,7 @@ impl Program {
                 }
                 Insn::OpenEphemeral {
                     cursor_id,
-                    root_page,
+                    is_btree,
                 } => {
                     // OpenEphemeral works by using a in-memory storage for the pages regardless
                     // of the underlying storage, and passing it to BTreeCursor. This is useful for temporary tables and indices.
@@ -3226,10 +3226,12 @@ impl Program {
                         page_cache,
                         buffer_pool,
                     )?);
+                    let root_page = pager.btree_create(*is_btree as usize);
+
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
                     let mv_cursor = match state.mv_tx_id {
                         Some(tx_id) => {
-                            let table_id = *root_page as u64;
+                            let table_id = root_page as u64;
                             let mv_store = mv_store.as_ref().unwrap().clone();
                             let mv_cursor = Rc::new(RefCell::new(
                                 MvCursor::new(mv_store, tx_id, table_id).unwrap(),
@@ -3238,8 +3240,7 @@ impl Program {
                         }
                         None => None,
                     };
-
-                    let cursor = BTreeCursor::new(mv_cursor, pager, *root_page);
+                    let cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
                     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
                         state.cursors.borrow_mut();
                     // Table content is erased if the cursor already exists
