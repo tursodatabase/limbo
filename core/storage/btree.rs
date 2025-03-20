@@ -100,7 +100,7 @@ enum WriteState {
     Finish,
 }
 
-enum ReadPayloadOverlow {
+enum ReadPayloadOverflow {
     ProcessPage {
         payload: Vec<u8>,
         next_page: u32,
@@ -141,7 +141,7 @@ impl WriteInfo {
 /// was suspended due to IO.
 enum CursorState {
     None,
-    Read(ReadPayloadOverlow),
+    Read(ReadPayloadOverflow),
     Write(WriteInfo),
     Destroy(DestroyInfo),
 }
@@ -339,13 +339,7 @@ impl BTreeCursor {
                     payload_size,
                 }) => {
                     let record = if let Some(next_page) = first_overflow_page {
-                        if let Some(record) =
-                            self.process_overflow_read(_payload, next_page, payload_size)?
-                        {
-                            record
-                        } else {
-                            return Ok(CursorResult::IO);
-                        }
+                        return_if_io!(self.process_overflow_read(_payload, next_page, payload_size))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(_payload)?
                     };
@@ -365,30 +359,31 @@ impl BTreeCursor {
         payload: &'static [u8],
         start_next_page: u32,
         payload_size: u64,
-    ) -> Result<Option<Record>> {
+    ) -> Result<CursorResult<Record>> {
         let res = match &mut self.state {
             CursorState::None => {
                 tracing::debug!("start reading overflow page payload_size={}", payload_size);
                 let page = self.pager.read_page(start_next_page as usize)?;
-                self.state = CursorState::Read(ReadPayloadOverlow::ProcessPage {
+                self.state = CursorState::Read(ReadPayloadOverflow::ProcessPage {
                     payload: payload.to_vec(),
                     next_page: start_next_page,
                     remaining_to_read: payload_size as usize - payload.len(),
                     page,
                 });
-                None
+                CursorResult::IO
             }
-            CursorState::Read(ReadPayloadOverlow::ProcessPage {
+            CursorState::Read(ReadPayloadOverflow::ProcessPage {
                 payload,
                 next_page,
                 remaining_to_read,
                 page,
             }) => {
                 if page.is_locked() {
-                    return Ok(None);
+                    return Ok(CursorResult::IO);
                 }
                 tracing::debug!("reading overflow page {} {}", next_page, remaining_to_read);
                 let contents = page.get_contents();
+                // The first four bytes of each overflow page are a big-endian integer which is the page number of the next page in the chain, or zero for the final page in the chain.
                 let next = contents.read_u32_no_offset(0);
                 let buf = contents.as_ptr();
                 let usable_space = self.pager.usable_space();
@@ -401,17 +396,17 @@ impl BTreeCursor {
                         "we can't have more pages to read while also have read everything"
                     );
                     let record = crate::storage::sqlite3_ondisk::read_record(&payload)?;
-                    Some(record)
+                    CursorResult::Ok(record)
                 } else {
                     let new_page = self.pager.read_page(next as usize)?;
                     *page = new_page;
                     *next_page = next;
-                    None
+                    CursorResult::IO
                 }
             }
             _ => unreachable!(),
         };
-        if res.is_some() {
+        if matches!(res, CursorResult::Ok(..)) {
             self.state = CursorState::None;
         }
         Ok(res)
@@ -512,13 +507,11 @@ impl BTreeCursor {
                 }) => {
                     assert!(predicate.is_none());
                     let record = if let Some(next_page) = first_overflow_page {
-                        if let Some(record) =
-                            self.process_overflow_read(_payload, *next_page, *payload_size)?
-                        {
-                            record
-                        } else {
-                            return Ok(CursorResult::IO);
-                        }
+                        return_if_io!(self.process_overflow_read(
+                            _payload,
+                            *next_page,
+                            *payload_size
+                        ))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(_payload)?
                     };
@@ -537,13 +530,11 @@ impl BTreeCursor {
                         continue;
                     }
                     let record = if let Some(next_page) = first_overflow_page {
-                        if let Some(record) =
-                            self.process_overflow_read(payload, *next_page, *payload_size)?
-                        {
-                            record
-                        } else {
-                            return Ok(CursorResult::IO);
-                        }
+                        return_if_io!(self.process_overflow_read(
+                            payload,
+                            *next_page,
+                            *payload_size
+                        ))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
@@ -583,13 +574,11 @@ impl BTreeCursor {
                     payload_size,
                 }) => {
                     let record = if let Some(next_page) = first_overflow_page {
-                        if let Some(record) =
-                            self.process_overflow_read(payload, *next_page, *payload_size)?
-                        {
-                            record
-                        } else {
-                            return Ok(CursorResult::IO);
-                        }
+                        return_if_io!(self.process_overflow_read(
+                            payload,
+                            *next_page,
+                            *payload_size
+                        ))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
@@ -672,13 +661,11 @@ impl BTreeCursor {
                         };
                         if found {
                             let record = if let Some(next_page) = first_overflow_page {
-                                if let Some(record) =
-                                    self.process_overflow_read(payload, *next_page, *payload_size)?
-                                {
-                                    record
-                                } else {
-                                    return Ok(CursorResult::IO);
-                                }
+                                return_if_io!(self.process_overflow_read(
+                                    payload,
+                                    *next_page,
+                                    *payload_size
+                                ))
                             } else {
                                 crate::storage::sqlite3_ondisk::read_record(payload)?
                             };
@@ -697,13 +684,11 @@ impl BTreeCursor {
                             unreachable!("index seek key should be a record");
                         };
                         let record = if let Some(next_page) = first_overflow_page {
-                            if let Some(record) =
-                                self.process_overflow_read(payload, *next_page, *payload_size)?
-                            {
-                                record
-                            } else {
-                                return Ok(CursorResult::IO);
-                            }
+                            return_if_io!(self.process_overflow_read(
+                                payload,
+                                *next_page,
+                                *payload_size
+                            ))
                         } else {
                             crate::storage::sqlite3_ondisk::read_record(payload)?
                         };
@@ -889,13 +874,11 @@ impl BTreeCursor {
                             unreachable!("index seek key should be a record");
                         };
                         let record = if let Some(next_page) = first_overflow_page {
-                            if let Some(record) =
-                                self.process_overflow_read(payload, *next_page, *payload_size)?
-                            {
-                                record
-                            } else {
-                                return Ok(CursorResult::IO);
-                            }
+                            return_if_io!(self.process_overflow_read(
+                                payload,
+                                *next_page,
+                                *payload_size
+                            ))
                         } else {
                             crate::storage::sqlite3_ondisk::read_record(payload)?
                         };

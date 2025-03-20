@@ -578,6 +578,8 @@ impl PageContent {
         let cell_pointer = cell_pointer_array_start + (idx * 2);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 
+        // SAFETY: this buffer is valid as long as the page is alive. We could store the page in the cell and do some lifetime magic
+        // but that is extra memory for no reason at all. Just be careful like in the old times :).
         let static_buf: &'static [u8] = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(buf) };
         read_btree_cell(
             static_buf,
