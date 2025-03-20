@@ -91,7 +91,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | SELECT ... OUTER JOIN     | Partial | no RIGHT JOIN                                                                     |
 | SELECT ... JOIN USING     | Yes     |                                                                                   |
 | SELECT ... NATURAL JOIN   | Yes     |                                                                                   |
-| UPDATE                    | No      |                                                                                   |
+| UPDATE                    | Yes     |                                                                                   |
 | UPSERT                    | No      |                                                                                   |
 | VACUUM                    | No      |                                                                                   |
 | WITH clause               | Partial | No RECURSIVE, no MATERIALIZED, only SELECT supported in CTEs                      |
