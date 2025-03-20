@@ -820,8 +820,27 @@ impl BTreeCursor {
                         (self.find_cell(page, int_key), page.page_type())
                     };
 
-                    // TODO: if overwrite drop cell
-
+                    // if the cell index is less than the total cells, check: if its an existing
+                    // rowid, we are going to update / overwrite the cell
+                    if cell_idx < page.get_contents().cell_count() {
+                        if let BTreeCell::TableLeafCell(tbl_leaf) = page.get_contents().cell_get(
+                            cell_idx,
+                            self.pager.clone(),
+                            payload_overflow_threshold_max(page_type, self.usable_space() as u16),
+                            payload_overflow_threshold_min(page_type, self.usable_space() as u16),
+                            self.usable_space(),
+                        )? {
+                            if tbl_leaf._rowid == int_key {
+                                tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
+                                self.overwrite_cell(page.clone(), cell_idx, record)?;
+                                self.state
+                                    .mut_write_info()
+                                    .expect("expected write info")
+                                    .state = WriteState::Finish;
+                                continue;
+                            }
+                        }
+                    }
                     // insert cell
                     let mut cell_payload: Vec<u8> = Vec::new();
                     fill_cell_payload(
@@ -2199,6 +2218,108 @@ impl BTreeCursor {
 
     pub fn table_id(&self) -> usize {
         self.root_page
+    }
+
+    pub fn overwrite_cell(
+        &mut self,
+        page_ref: PageRef,
+        cell_idx: usize,
+        record: &Record,
+    ) -> Result<CursorResult<()>> {
+        // build the new payload
+        let page_type = page_ref.get().contents.as_ref().unwrap().page_type();
+        let mut new_payload = Vec::new();
+        fill_cell_payload(
+            page_type,
+            self.rowid.get(),
+            &mut new_payload,
+            record,
+            self.usable_space() as u16,
+            self.pager.clone(),
+        );
+
+        // figure out old cell offset & size
+        let (old_offset, old_local_size) = {
+            let page = page_ref.get().contents.as_ref().unwrap();
+            page.cell_get_raw_region(
+                cell_idx,
+                payload_overflow_threshold_max(page_type, self.usable_space() as u16),
+                payload_overflow_threshold_min(page_type, self.usable_space() as u16),
+                self.usable_space(),
+            )
+        };
+
+        // if it all fits in local space and old_local_size is enough, do an in-place overwrite
+        if new_payload.len() <= old_local_size {
+            self.overwrite_content(
+                page_ref.clone(),
+                old_offset,
+                &new_payload,
+                0,
+                new_payload.len(),
+            )?;
+            // if there's leftover local space (old_local_size > new_payload.len()), zero it or free it
+            let remaining = old_local_size - new_payload.len();
+            if remaining > 0 {
+                let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
+                for i in 0..remaining {
+                    buf[old_offset + new_payload.len() + i] = 0;
+                }
+            }
+            Ok(CursorResult::Ok(()))
+        } else {
+            // doesn't fit, drop it and insert a new one
+            drop_cell(
+                page_ref.get_contents(),
+                cell_idx,
+                self.usable_space() as u16,
+            )?;
+            insert_into_cell(
+                page_ref.get_contents(),
+                &new_payload,
+                cell_idx,
+                self.usable_space() as u16,
+            )?;
+            Ok(CursorResult::Ok(()))
+        }
+    }
+
+    pub fn overwrite_content(
+        &mut self,
+        page_ref: PageRef,
+        dest_offset: usize,
+        new_payload: &[u8],
+        src_offset: usize,
+        amount: usize,
+    ) -> Result<CursorResult<()>> {
+        return_if_locked!(page_ref);
+        page_ref.set_dirty();
+        self.pager.add_dirty(page_ref.get().id);
+        let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
+
+        // if new_payload doesn't have enough data, we fill with zeros
+        let n_data = new_payload.len().saturating_sub(src_offset);
+        if n_data == 0 {
+            // everything is zeros
+            for i in 0..amount {
+                if buf[dest_offset + i] != 0 {
+                    buf[dest_offset + i] = 0;
+                }
+            }
+        } else {
+            let copy_len = n_data.min(amount);
+            // copy the overlapping portion
+            buf[dest_offset..dest_offset + copy_len]
+                .copy_from_slice(&new_payload[src_offset..src_offset + copy_len]);
+
+            // if copy_len < amount => fill remainder with 0
+            if copy_len < amount {
+                for i in copy_len..amount {
+                    buf[dest_offset + i] = 0;
+                }
+            }
+        }
+        Ok(CursorResult::Ok(()))
     }
 }
 
