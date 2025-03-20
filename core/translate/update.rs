@@ -99,23 +99,37 @@ pub fn translate_update(
     if let Some(where_clause) = &body.where_clause {
         let expr = if let ast::Expr::Binary(lhs, op, rhs) = where_clause.as_ref() {
             // we don't support Expr::Id in translate_expr, so we rewrite to an Expr::Column
-            if let ast::Expr::Id(col_name) = lhs.as_ref() {
+            let lhs = if let ast::Expr::Id(col_name) = lhs.as_ref() {
                 let Some((col_idx, col)) = btree_table.get_column(&col_name.0) else {
                     bail_parse_error!("column {} not found", col_name.0);
                 };
-                &ast::Expr::Binary(
-                    Box::new(ast::Expr::Column {
-                        table: 0, // one table in our [referenced_tables]
-                        database: None,
-                        column: col_idx,
-                        is_rowid_alias: col.is_rowid_alias,
-                    }),
-                    *op,
-                    rhs.clone(),
-                )
+                &ast::Expr::Column {
+                    table: 0, // one table in our [referenced_tables]
+                    database: None,
+                    column: col_idx,
+                    is_rowid_alias: col.is_rowid_alias,
+                }
             } else {
-                where_clause
-            }
+                &lhs
+            };
+            let rhs = if let ast::Expr::Id(col_name) = rhs.as_ref() {
+                let Some((col_idx, col)) = btree_table.get_column(&col_name.0) else {
+                    bail_parse_error!("column {} not found", col_name.0);
+                };
+                &ast::Expr::Column {
+                    table: 0,
+                    database: None,
+                    column: col_idx,
+                    is_rowid_alias: col.is_rowid_alias,
+                }
+            } else {
+                &rhs
+            };
+            &Box::new(ast::Expr::Binary(
+                Box::new(lhs.clone()),
+                *op,
+                Box::new(rhs.clone()),
+            ))
         } else {
             where_clause
         };
