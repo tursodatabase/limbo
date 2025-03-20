@@ -27,11 +27,17 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use crate::{fast_lock::SpinLock, translate::optimizer::optimize_plan};
 pub use error::LimboError;
 use fallible_iterator::FallibleIterator;
+use translate::select::prepare_select_plan;
+pub type Result<T, E = LimboError> = std::result::Result<T, E>;
+use crate::storage::wal::CheckpointResult;
+
 #[cfg(all(feature = "fs", target_family = "unix"))]
 pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
-pub use io::{Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO};
+pub use io::{
+    Buffer, Completion, File, IOBuff, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO,
+};
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
@@ -53,19 +59,17 @@ pub use storage::{
     database::DatabaseStorage,
     pager::PageRef,
     pager::{Page, Pager},
-    wal::{CheckpointMode, CheckpointResult, CheckpointStatus, Wal, WalFile, WalFileShared},
+    wal::{CheckpointMode, CheckpointStatus, Wal, WalFile, WalFileShared},
 };
 use storage::{
     page_cache::DumbLruPageCache,
     pager::allocate_page,
     sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE},
 };
-use translate::select::prepare_select_plan;
 pub use types::OwnedValue;
 use util::{columns_from_create_table_body, parse_schema_rows};
 use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 
-pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
 
 #[derive(Clone, PartialEq, Eq)]
