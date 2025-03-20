@@ -52,17 +52,106 @@ do_execsql_test_on_specific_db {:memory:} update-all-many {
 	select COUNT(*) from temp where a = 1234234234234234;
 } {8}
 
-
-do_execsql_test_on_specific_db {:memory:} update-large {
-    create table temp (a text);
-    insert into temp values ('a smol string');
-	update temp set a = 'a very long string that is garaunteed to overflow the original btree cell that will be overwritten, causing the updated row to be stored on an overflow page';
-	select * from temp;
-} {{a very long string that is garaunteed to overflow the original btree cell that will be overwritten, causing the updated row to be stored on an overflow page}}
-
 do_execsql_test_on_specific_db {:memory:} update-large-small {
 	create table temp (a,b,c);
 	insert into temp values (randomblob(1024), 1, 2);
 	update temp set a = 'a';
 	select * from temp;
 } {a|1|2}
+
+
+do_execsql_test_on_specific_db {:memory:} update-null {
+    create table temp (a,b,c);
+    insert into temp values (NULL, 1, 2);
+    insert into temp values (3, 4, 5);
+    update temp set a = 10 where a IS NULL;
+    select * from temp;
+} {10|1|2
+3|4|5}
+
+do_execsql_test_on_specific_db {:memory:} update-mixed-types {
+    create table temp (a);
+    insert into temp values (1);
+    insert into temp values ('2');
+    insert into temp values (3.0);
+    insert into temp values (X'01');
+    update temp set a = 'updated';
+    select * from temp;
+} {updated
+updated
+updated
+updated}
+
+do_execsql_test_on_specific_db {:memory:} update-with-expression {
+    create table temp (a, b);
+    insert into temp values (1, 10);
+    insert into temp values (2, 20);
+    insert into temp values (3, 30);
+    update temp set a = 10 * 3 / 2;
+    select * from temp;
+} {15|10
+15|20
+15|30}
+
+do_execsql_test_on_specific_db {:memory:} update-self-reference {
+    create table temp (a, b);
+    insert into temp values (1, 10);
+    insert into temp values (2, 20);
+    update temp set a = b where a = 1;
+    select * from temp;
+} {10|10
+2|20}
+
+do_execsql_test_on_specific_db {:memory:} update-subquery {
+    create table temp1 (id, value);
+    create table temp2 (id, ref_value);
+    insert into temp1 values (1, 'a'), (2, 'b'), (3, 'c');
+    insert into temp2 values (2, 'updated');
+    update temp1 set value = (select ref_value from temp2 where temp2.id = temp1.id) where id IN (select id from temp2);
+    select * from temp1;
+} {1|a
+2|updated
+3|c}
+
+do_execsql_test_on_specific_db {:memory:} update-large-text {
+    create table temp (a);
+    insert into temp values ('short');
+    update temp set a = 'this is a very large text field that exceeds the default cell size and should trigger overflow handling in the btree implementation';
+    select * from temp;
+} {{this is a very large text field that exceeds the default cell size and should trigger overflow handling in the btree implementation}}
+
+do_execsql_test_on_specific_db {:memory:} update-with-null-condition {
+    create table temp (a, b);
+    insert into temp values (NULL, 1);
+    insert into temp values (2, NULL);
+    insert into temp values (3, 4);
+    update temp set a = 99 where b IS NULL;
+    select * from temp;
+} {|1
+99|
+3|4}
+
+do_execsql_test_on_specific_db {:memory:} update-to-null {
+    create table temp (a, b);
+    insert into temp values (1, 10);
+    insert into temp values (2, 20);
+    update temp set a = NULL where b = 10;
+    select * from temp;
+} {|10
+2|20}
+
+do_execsql_test_on_specific_db {:memory:} update-with-randomblob {
+    create table temp (a, b);
+    insert into temp values (randomblob(100), 1);
+    update temp set a = randomblob(200);
+    select length(a) from temp;
+} {200}
+
+do_execsql_test_on_specific_db {:memory:} update-multiple-columns {
+    create table temp (a, b, c);
+    insert into temp values (1, 2, 3);
+    insert into temp values (4, 5, 6);
+    update temp set a = 10, b = 20, c = 30;
+    select * from temp;
+} {10|20|30
+10|20|30}
