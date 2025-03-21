@@ -719,6 +719,11 @@ pub enum Insn {
         dest: usize,
         cookie: Cookie,
     },
+    /// Open a new cursor P1 to a transient table.
+    OpenEphemeral {
+        cursor_id: CursorID,
+        is_btree: bool,
+    },
 }
 
 // TODO: Add remaining cookies.
