@@ -1,3 +1,4 @@
+use io_uring::opcode::Write;
 use tracing::debug;
 
 use crate::storage::pager::Pager;
@@ -1885,8 +1886,48 @@ impl BTreeCursor {
             drop_cell(contents, cell_idx, self.usable_space() as u16)?;
         }
 
-        // TODO(Krishna): Implement balance after delete. I will implement after balance_nonroot is extended.
-        Ok(CursorResult::Ok(()))
+        let page = self.stack.top();
+        return_if_locked!(page);
+
+        if !page.is_loaded() {
+            self.pager.load_page(page.clone())?;
+            return Ok(CursorResult::IO);
+        }
+
+        let contents = page.get().contents.as_ref().unwrap();
+        let free_space = compute_free_space(contents, self.usable_space() as u16);
+        let usable_space = self.usable_space();
+        let needs_balancing = free_space as usize * 3 > usable_space * 2;
+
+        if needs_balancing {
+            if let CursorState::None = &self.state {
+                self.state = CursorState::Write(WriteInfo::new());
+            }
+
+            loop {
+                let write_state = self.state.write_info().unwrap().state;
+                match write_state {
+                    WriteState::Start => {
+                        let write_info = self.state.mut_write_info().unwrap();
+                        write_info.state = WriteState::BalanceStart;
+                    }
+                    WriteState::BalanceStart
+                    | WriteState::BalanceNonRoot
+                    | WriteState::BalanceNonRootWaitLoadPages => {
+                        return_if_io!(self.balance());
+                    }
+                    WriteState::Finish => {
+                        self.state = CursorState::None;
+                        return_if_io!(self.move_to(SeekKey::TableRowId(target_rowid), SeekOp::EQ));
+                        return Ok(CursorResult::Ok(()));
+                    }
+                }
+            }
+        } else {
+            // No balancing needed
+            self.stack.retreat();
+            Ok(CursorResult::Ok(()))
+        }
     }
 
     pub fn set_null_flag(&mut self, flag: bool) {
