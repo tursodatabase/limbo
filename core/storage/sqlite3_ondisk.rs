@@ -449,6 +449,11 @@ impl PageContent {
         u16::from_be_bytes([buf[pos], buf[pos + 1]])
     }
 
+    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
+        let buf = self.as_ptr();
+        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+    }
+
     pub fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
         read_u32(buf, self.offset + pos)
@@ -558,7 +563,6 @@ impl PageContent {
     pub fn cell_get(
         &self,
         idx: usize,
-        pager: Rc<Pager>,
         payload_overflow_threshold_max: usize,
         payload_overflow_threshold_min: usize,
         usable_size: usize,
@@ -574,11 +578,13 @@ impl PageContent {
         let cell_pointer = cell_pointer_array_start + (idx * 2);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 
+        // SAFETY: this buffer is valid as long as the page is alive. We could store the page in the cell and do some lifetime magic
+        // but that is extra memory for no reason at all. Just be careful like in the old times :).
+        let static_buf: &'static [u8] = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(buf) };
         read_btree_cell(
-            buf,
+            static_buf,
             &self.page_type(),
             cell_pointer,
-            pager,
             payload_overflow_threshold_max,
             payload_overflow_threshold_min,
             usable_size,
@@ -816,28 +822,36 @@ pub struct TableInteriorCell {
 #[derive(Debug, Clone)]
 pub struct TableLeafCell {
     pub _rowid: u64,
-    pub _payload: Vec<u8>,
+    /// Payload of cell, if it overflows it won't include overflowed payload.
+    pub _payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexInteriorCell {
     pub left_child_page: u32,
-    pub payload: Vec<u8>,
+    pub payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexLeafCell {
-    pub payload: Vec<u8>,
+    pub payload: &'static [u8],
     pub first_overflow_page: Option<u32>,
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
 }
 
+/// read_btree_cell contructs a BTreeCell which is basically a wrapper around pointer to the payload of a cell.
+/// buffer input "page" is static because we want the cell to point to the data in the page in case it has any payload.
 pub fn read_btree_cell(
-    page: &[u8],
+    page: &'static [u8],
     page_type: &PageType,
     pos: usize,
-    pager: Rc<Pager>,
     max_local: usize,
     min_local: usize,
     usable_size: usize,
@@ -856,11 +870,12 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::IndexInteriorCell(IndexInteriorCell {
                 left_child_page,
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableInterior => {
@@ -884,10 +899,11 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::IndexLeafCell(IndexLeafCell {
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableLeaf => {
@@ -902,11 +918,12 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::TableLeafCell(TableLeafCell {
                 _rowid: rowid,
                 _payload: payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
     }
@@ -915,11 +932,12 @@ pub fn read_btree_cell(
 /// read_payload takes in the unread bytearray with the payload size
 /// and returns the payload on the page, and optionally the first overflow page number.
 #[allow(clippy::readonly_write_lock)]
-fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8>, Option<u32>) {
+fn read_payload(unread: &'static [u8], payload_size: usize) -> (&'static [u8], Option<u32>) {
     let cell_len = unread.len();
+    // We will let overflow be constructed back if needed or requested.
     if payload_size <= cell_len {
         // fit within 1 page
-        (unread[..payload_size].to_vec(), None)
+        (&unread[..payload_size], None)
     } else {
         // overflow
         let first_overflow_page = u32::from_be_bytes([
@@ -928,34 +946,7 @@ fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8
             unread[cell_len - 2],
             unread[cell_len - 1],
         ]);
-        let usable_size = pager.usable_size();
-        let mut next_overflow = first_overflow_page;
-        let mut payload = unread[..cell_len - 4].to_vec();
-        let mut left_to_read = payload_size - (cell_len - 4); // minus four because last for bytes of a payload cell are the overflow pointer
-        while next_overflow != 0 {
-            assert!(left_to_read > 0);
-            let page;
-            loop {
-                // FIXME(pere): this looks terrible, what did i do lmao
-                let page_ref = pager.read_page(next_overflow as usize);
-                if let Ok(p) = page_ref {
-                    page = p;
-                    break;
-                }
-            }
-            let page = page.get();
-            let contents = page.contents.as_mut().unwrap();
-
-            let to_read = left_to_read.min(usable_size - 4);
-            let buf = contents.as_ptr();
-            payload.extend_from_slice(&buf[4..4 + to_read]);
-
-            next_overflow = contents.read_u32(0);
-            left_to_read -= to_read;
-        }
-        assert_eq!(left_to_read, 0);
-
-        (payload, Some(first_overflow_page))
+        (&unread[..cell_len - 4], Some(first_overflow_page))
     }
 }
 

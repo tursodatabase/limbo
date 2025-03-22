@@ -1,4 +1,4 @@
-use crate::common;
+use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
 use limbo_core::{Connection, StepResult};
 use log::debug;
@@ -76,9 +76,9 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn test_sequential_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
+    maybe_setup_tracing();
     let tmp_db =
         TempDatabase::new_with_rusqlite("CREATE TABLE test (x INTEGER PRIMARY KEY, t TEXT);");
     let conn = tmp_db.connect_limbo();
@@ -132,8 +132,8 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
                         _ => unreachable!(),
                     };
                     let huge_text = &huge_texts[current_index];
-                    assert_eq!(current_index, id as usize);
                     compare_string(huge_text, text);
+                    assert_eq!(current_index, id as usize);
                     current_index += 1;
                 }
                 StepResult::IO => {
@@ -153,10 +153,10 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[ignore]
 #[test_log::test]
 fn test_sequential_write() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
+    maybe_setup_tracing();
 
     let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x INTEGER PRIMARY KEY);");
     let conn = tmp_db.connect_limbo();
@@ -467,5 +467,17 @@ fn test_wal_restart() -> anyhow::Result<()> {
         );
         conn.close()?;
     }
+    Ok(())
+}
+
+#[test]
+fn test_insert_after_big_blob() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE temp (t1 BLOB, t2 INTEGER)");
+    let conn = tmp_db.connect_limbo();
+
+    conn.execute("insert into temp values (zeroblob (262144))")?;
+    conn.execute("insert into temp values (1)")?;
+
     Ok(())
 }

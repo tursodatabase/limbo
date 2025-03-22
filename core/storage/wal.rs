@@ -446,7 +446,7 @@ impl Wal for WalFile {
             shared.max_frame
         };
         let offset = self.frame_offset(frame_id);
-        trace!(
+        tracing::debug!(
             "append_frame(frame={}, offset={}, page_id={})",
             frame_id,
             offset,

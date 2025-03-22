@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 #[allow(dead_code)]
 pub struct TempDatabase {
@@ -90,6 +93,17 @@ pub(crate) fn compare_string(a: impl AsRef<str>, b: impl AsRef<str>) {
     }
 }
 
+pub fn maybe_setup_tracing() {
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
+        .with(EnvFilter::from_default_env())
+        .try_init();
+}
 #[cfg(test)]
 mod tests {
     use super::TempDatabase;
