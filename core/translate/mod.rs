@@ -23,6 +23,7 @@ pub(crate) mod result_row;
 pub(crate) mod select;
 pub(crate) mod subquery;
 pub(crate) mod transaction;
+pub(crate) mod update;
 
 use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
@@ -41,6 +42,7 @@ use std::fmt::Display;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use transaction::{translate_tx_begin, translate_tx_commit};
+use update::translate_update;
 
 /// Translate SQL statement into bytecode program.
 pub fn translate(
@@ -109,7 +111,7 @@ pub fn translate(
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => translate_select(query_mode, schema, *select, syms)?,
-        ast::Stmt::Update { .. } => bail_parse_error!("UPDATE not supported yet"),
+        ast::Stmt::Update(update) => translate_update(query_mode, schema, &update, syms)?,
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {
