@@ -469,3 +469,15 @@ fn test_wal_restart() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn test_insert_after_big_blob() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE temp (t1 BLOB, t2 INTEGER)");
+    let conn = tmp_db.connect_limbo();
+
+    conn.execute("insert into temp values (zeroblob (262144))")?;
+    conn.execute("insert into temp values (1)")?;
+
+    Ok(())
+}

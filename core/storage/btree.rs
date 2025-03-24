@@ -74,6 +74,19 @@ macro_rules! return_if_locked {
     }};
 }
 
+/// Check if the page is unlocked, if not return IO. If the page is not locked but not loaded, then try to load it.
+macro_rules! return_if_locked_maybe_load {
+    ($pager:expr, $expr:expr) => {{
+        if $expr.is_locked() {
+            return Ok(CursorResult::IO);
+        }
+        if !$expr.is_loaded() {
+            $pager.load_page($expr.clone())?;
+            return Ok(CursorResult::IO);
+        }
+    }};
+}
+
 /// State machine of destroy operations
 /// Keep track of traversal so that it can be resumed when IO is encountered
 #[derive(Debug, Clone)]
@@ -619,6 +632,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the root page of the btree.
     fn move_to_root(&mut self) {
+        tracing::trace!("move_to_root({})", self.root_page);
         let mem_page = self.pager.read_page(self.root_page).unwrap();
         self.stack.clear();
         self.stack.push(mem_page);
@@ -801,6 +815,7 @@ impl BTreeCursor {
             match write_state {
                 WriteState::Start => {
                     let page = self.stack.top();
+                    return_if_locked_maybe_load!(self.pager, page);
                     let int_key = match key {
                         OwnedValue::Integer(i) => *i as u64,
                         _ => unreachable!("btree tables are indexed by integers!"),
@@ -964,11 +979,7 @@ impl BTreeCursor {
                 if parent_page.is_locked() {
                     return Ok(CursorResult::IO);
                 }
-                return_if_locked!(parent_page);
-                if !parent_page.is_loaded() {
-                    self.pager.load_page(parent_page.clone())?;
-                    return Ok(CursorResult::IO);
-                }
+                return_if_locked_maybe_load!(self.pager, parent_page);
                 parent_page.set_dirty();
                 self.pager.add_dirty(parent_page.get().id);
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
@@ -1775,12 +1786,7 @@ impl BTreeCursor {
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
         let page = self.stack.top();
-        return_if_locked!(page);
-
-        if !page.is_loaded() {
-            self.pager.load_page(page.clone())?;
-            return Ok(CursorResult::IO);
-        }
+        return_if_locked_maybe_load!(self.pager, page);
 
         let target_rowid = match self.rowid.get() {
             Some(rowid) => rowid,
@@ -1840,11 +1846,7 @@ impl BTreeCursor {
         return_if_io!(self.clear_overflow_pages(&cell));
 
         let page = self.stack.top();
-        return_if_locked!(page);
-        if !page.is_loaded() {
-            self.pager.load_page(page.clone())?;
-            return Ok(CursorResult::IO);
-        }
+        return_if_locked_maybe_load!(self.pager, page);
 
         page.set_dirty();
         self.pager.add_dirty(page.get().id);
@@ -2048,12 +2050,7 @@ impl BTreeCursor {
                 }
                 DestroyState::LoadPage => {
                     let page = self.stack.top();
-                    return_if_locked!(page);
-
-                    if !page.is_loaded() {
-                        self.pager.load_page(Arc::clone(&page))?;
-                        return Ok(CursorResult::IO);
-                    }
+                    return_if_locked_maybe_load!(self.pager, page);
 
                     let destroy_info = self
                         .state
