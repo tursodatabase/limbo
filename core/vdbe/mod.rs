@@ -39,7 +39,8 @@ use crate::storage::wal::CheckpointResult;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
 use crate::translate::plan::{ResultSetColumn, TableReference};
 use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, Record, SeekKey, SeekOp,
+    AggContext, Cursor, CursorResult, ExternalAggState, LazyRecord, OwnedValue, Record, SeekKey,
+    SeekOp,
 };
 use crate::util::{
     cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
@@ -1095,7 +1096,7 @@ impl Program {
                                     if cursor.get_null_flag() {
                                         OwnedValue::Null
                                     } else {
-                                        record.get_value(*column).clone()
+                                        record.get_value(*column)?.clone()
                                     }
                                 } else {
                                     OwnedValue::Null
@@ -1120,7 +1121,7 @@ impl Program {
                                 let mut cursor = state.get_cursor(*cursor_id);
                                 let cursor = cursor.as_pseudo_mut();
                                 if let Some(record) = cursor.record() {
-                                    record.get_value(*column).clone()
+                                    record.get_value(*column)?.clone()
                                 } else {
                                     OwnedValue::Null
                                 }
@@ -1572,7 +1573,7 @@ impl Program {
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
-                            if idx_record.get_values()[..record_from_regs.len()]
+                            if idx_record.get_values()?[..record_from_regs.len()]
                                 >= record_from_regs.get_values()[..]
                             {
                                 target_pc.to_offset_int()
@@ -1600,7 +1601,7 @@ impl Program {
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
-                            if idx_record.get_values()[..record_from_regs.len()]
+                            if idx_record.get_values()?[..record_from_regs.len()]
                                 <= record_from_regs.get_values()[..]
                             {
                                 target_pc.to_offset_int()
@@ -1628,7 +1629,7 @@ impl Program {
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
-                            if idx_record.get_values()[..record_from_regs.len()]
+                            if idx_record.get_values()?[..record_from_regs.len()]
                                 > record_from_regs.get_values()[..]
                             {
                                 target_pc.to_offset_int()
@@ -1656,7 +1657,7 @@ impl Program {
                             make_owned_record(&state.registers, start_reg, num_regs);
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
-                            if idx_record.get_values()[..record_from_regs.len()]
+                            if idx_record.get_values()?[..record_from_regs.len()]
                                 < record_from_regs.get_values()[..]
                             {
                                 target_pc.to_offset_int()
@@ -2061,7 +2062,9 @@ impl Program {
                     state.registers[*dest_reg] = OwnedValue::Record(record.clone());
                     {
                         let mut pseudo_cursor = state.get_cursor(*pseudo_cursor);
-                        pseudo_cursor.as_pseudo_mut().insert(record);
+                        pseudo_cursor
+                            .as_pseudo_mut()
+                            .insert(LazyRecord::new(record));
                     }
                     state.pc += 1;
                 }
