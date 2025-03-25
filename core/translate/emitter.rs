@@ -4,6 +4,7 @@
 use limbo_sqlite3_parser::ast::{self};
 
 use crate::function::Func;
+use crate::schema::Table;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::ProgramBuilder;
@@ -560,20 +561,41 @@ fn emit_update_insns(
             if table_column.primary_key {
                 program.emit_null(dest, None);
             } else {
-                program.emit_insn(Insn::Column {
-                    cursor_id: *index
-                        .as_ref()
-                        .and_then(|(_, id)| {
-                            if column_idx_in_index.is_some() {
-                                Some(id)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(&cursor_id),
-                    column: column_idx_in_index.unwrap_or(idx),
-                    dest,
-                });
+                match &table_ref.table {
+                    Table::BTree(_) => {
+                        program.emit_insn(Insn::Column {
+                            cursor_id: *index
+                                .as_ref()
+                                .and_then(|(_, id)| {
+                                    if column_idx_in_index.is_some() {
+                                        Some(id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(&cursor_id),
+                            column: column_idx_in_index.unwrap_or(idx),
+                            dest,
+                        });
+                    }
+                    Table::Virtual(_) => {
+                        program.emit_insn(Insn::VColumn {
+                            cursor_id: *index
+                                .as_ref()
+                                .and_then(|(_, id)| {
+                                    if column_idx_in_index.is_some() {
+                                        Some(id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(&cursor_id),
+                            column: column_idx_in_index.unwrap_or(idx),
+                            dest,
+                        });
+                    }
+                    typ => unreachable!("query plan generated on unexpected table type {:?}", typ),
+                }
             }
         }
     }
@@ -583,13 +605,34 @@ fn emit_update_insns(
         count: table_ref.columns().len(),
         dest_reg: record_reg,
     });
-    program.emit_insn(Insn::InsertAsync {
-        cursor: cursor_id,
-        key_reg: rowid_reg,
-        record_reg,
-        flag: 0,
-    });
-    program.emit_insn(Insn::InsertAwait { cursor_id });
+    match &table_ref.table {
+        Table::BTree(_) => {
+            program.emit_insn(Insn::InsertAsync {
+                cursor: cursor_id,
+                key_reg: rowid_reg,
+                record_reg,
+                flag: 0,
+            });
+            program.emit_insn(Insn::InsertAwait { cursor_id });
+        }
+        Table::Virtual(vtab) => {
+            let new_rowid = program.alloc_register();
+            program.emit_insn(Insn::Copy {
+                src_reg: rowid_reg,
+                dst_reg: new_rowid,
+                amount: 0,
+            });
+            let arg_count = table_ref.columns().len() + 2;
+            program.emit_insn(Insn::VUpdate {
+                cursor_id,
+                arg_count,
+                start_reg: record_reg,
+                vtab_ptr: vtab.implementation.as_ref().ctx as usize,
+                conflict_action: 0u16,
+            });
+        }
+        _ => unreachable!("unexpected table type"),
+    }
 
     if let Some(limit_reg) = t_ctx.reg_limit {
         program.emit_insn(Insn::DecrJumpZero {

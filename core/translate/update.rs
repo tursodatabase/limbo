@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::translate::plan::Operation;
+use crate::vdbe::BranchOffset;
 use crate::{
     bail_parse_error,
     schema::{Schema, Table},
@@ -8,7 +11,7 @@ use crate::{
 };
 use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 
-use super::emitter::emit_program;
+use super::emitter::{emit_program, Resolver};
 use super::optimizer::optimize_plan;
 use super::plan::{
     Direction, IterationDirection, Plan, ResultSetColumn, TableReference, UpdatePlan,
@@ -52,6 +55,7 @@ pub fn translate_update(
 ) -> crate::Result<ProgramBuilder> {
     let mut plan = prepare_update_plan(schema, body)?;
     optimize_plan(&mut plan, schema)?;
+    let resolver = Resolver::new(syms);
     // TODO: freestyling these numbers
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
@@ -64,13 +68,16 @@ pub fn translate_update(
 }
 
 pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<Plan> {
+    if body.with.is_some() {
+        bail_parse_error!("WITH clause is not supported");
+    }
+    if body.or_conflict.is_some() {
+        bail_parse_error!("ON CONFLICT clause is not supported");
+    }
     let table_name = &body.tbl_name.name;
     let table = match schema.get_table(table_name.0.as_str()) {
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
-    };
-    let Some(btree_table) = table.btree() else {
-        bail_parse_error!("Error: {} is not a btree table", table_name);
     };
     let iter_dir: Option<IterationDirection> = body.order_by.as_ref().and_then(|order_by| {
         order_by.first().and_then(|ob| {
@@ -81,7 +88,11 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         })
     });
     let table_references = vec![TableReference {
-        table: Table::BTree(btree_table.clone()),
+        table: match table.as_ref() {
+            Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
+            Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
+            _ => unreachable!(),
+        },
         identifier: table_name.0.clone(),
         op: Operation::Scan { iter_dir },
         join_info: None,
@@ -91,8 +102,8 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .iter_mut()
         .map(|set| {
             let ident = normalize_ident(set.col_names[0].0.as_str());
-            let col_index = btree_table
-                .columns
+            let col_index = table
+                .columns()
                 .iter()
                 .enumerate()
                 .find_map(|(i, col)| {
@@ -172,3 +183,126 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         contains_constant_false_condition: false,
     }))
 }
+
+// fn translate_vtab_update(
+//     mut program: ProgramBuilder,
+//     body: &mut Update,
+//     table: Arc<Table>,
+//     resolver: &Resolver,
+// ) -> crate::Result<ProgramBuilder> {
+//     let start_label = program.allocate_label();
+//     program.emit_insn(Insn::Init {
+//         target_pc: start_label,
+//     });
+//     let start_offset = program.offset();
+//     let vtab = table.virtual_table().unwrap();
+//     let cursor_id = program.alloc_cursor_id(
+//         Some(table.get_name().to_string()),
+//         CursorType::VirtualTable(vtab.clone()),
+//     );
+//     let referenced_tables = vec![TableReference {
+//         table: Table::Virtual(table.virtual_table().unwrap().clone()),
+//         identifier: table.get_name().to_string(),
+//         op: Operation::Scan { iter_dir: None },
+//         join_info: None,
+//     }];
+//     program.emit_insn(Insn::VOpenAsync { cursor_id });
+//     program.emit_insn(Insn::VOpenAwait {});
+//
+//     let argv_start = program.alloc_registers(0);
+//     let end_label = program.allocate_label();
+//     let skip_label = program.allocate_label();
+//     program.emit_insn(Insn::VFilter {
+//         cursor_id,
+//         pc_if_empty: end_label,
+//         args_reg: argv_start,
+//         arg_count: 0,
+//     });
+//
+//     let loop_start = program.offset();
+//     let start_reg = program.alloc_registers(2 + table.columns().len());
+//     let old_rowid = start_reg;
+//     let new_rowid = start_reg + 1;
+//     let column_regs = start_reg + 2;
+//
+//     program.emit_insn(Insn::RowId {
+//         cursor_id,
+//         dest: old_rowid,
+//     });
+//     program.emit_insn(Insn::RowId {
+//         cursor_id,
+//         dest: new_rowid,
+//     });
+//
+//     for (i, _) in table.columns().iter().enumerate() {
+//         let dest = column_regs + i;
+//         program.emit_insn(Insn::VColumn {
+//             cursor_id,
+//             column: i,
+//             dest,
+//         });
+//     }
+//
+//     if let Some(ref mut where_clause) = body.where_clause {
+//         bind_column_references(where_clause, &referenced_tables, None)?;
+//         translate_condition_expr(
+//             &mut program,
+//             &referenced_tables,
+//             where_clause,
+//             ConditionMetadata {
+//                 jump_if_condition_is_true: false,
+//                 jump_target_when_true: BranchOffset::Placeholder,
+//                 jump_target_when_false: skip_label,
+//             },
+//             resolver,
+//         )?;
+//     }
+//     // prepare updated columns in place
+//     for expr in body.sets.iter() {
+//         let Some(col_index) = table.columns().iter().position(|t| {
+//             t.name
+//                 .as_ref()
+//                 .unwrap()
+//                 .eq_ignore_ascii_case(&expr.col_names[0].0)
+//         }) else {
+//             bail_parse_error!("column {} not found", expr.col_names[0].0);
+//         };
+//         translate_expr(
+//             &mut program,
+//             Some(&referenced_tables),
+//             &expr.expr,
+//             column_regs + col_index,
+//             resolver,
+//         )?;
+//     }
+//
+//     let arg_count = 2 + table.columns().len();
+//     program.emit_insn(Insn::VUpdate {
+//         cursor_id,
+//         arg_count,
+//         start_reg: old_rowid,
+//         vtab_ptr: vtab.implementation.ctx as usize,
+//         conflict_action: 0,
+//     });
+//
+//     program.resolve_label(skip_label, program.offset());
+//     program.emit_insn(Insn::VNext {
+//         cursor_id,
+//         pc_if_next: loop_start,
+//     });
+//
+//     program.resolve_label(end_label, program.offset());
+//     program.emit_insn(Insn::Halt {
+//         err_code: 0,
+//         description: String::new(),
+//     });
+//     program.resolve_label(start_label, program.offset());
+//     program.emit_insn(Insn::Transaction { write: true });
+//
+//     program.emit_constant_insns();
+//     program.emit_insn(Insn::Goto {
+//         target_pc: start_offset,
+//     });
+//     program.table_references = referenced_tables.clone();
+//     Ok(program)
+// }
