@@ -229,31 +229,38 @@ fn translate_vtab_update(
     });
     let start_offset = program.offset();
     let vtab = table.virtual_table().unwrap();
-    let cursor_id = program.alloc_cursor_id(
-        Some(table.get_name().to_string()),
-        CursorType::VirtualTable(vtab.clone()),
-    );
+    let name = table.get_name().to_string();
+    let cursor_id =
+        program.alloc_cursor_id(Some(name.clone()), CursorType::VirtualTable(vtab.clone()));
     let referenced_tables = vec![TableReference {
-        table: Table::Virtual(table.virtual_table().unwrap().clone()),
-        identifier: table.get_name().to_string(),
+        table: Table::Virtual(vtab.clone()),
+        identifier: name,
         op: Operation::Scan { iter_dir: None },
         join_info: None,
     }];
     program.emit_insn(Insn::VOpenAsync { cursor_id });
     program.emit_insn(Insn::VOpenAwait {});
 
-    let argv_start = program.alloc_registers(0);
     let end_label = program.allocate_label();
     let skip_label = program.allocate_label();
+
+    // Update for virtual tables uses the same VUpdate op as Insert/Delete,
+    // there needs to be an integer value in the first two args in order to trigger an update
+    // argc: 2 + num_columns to update
+    // argv[0]: old rowid
+    // argv[1]: new rowid (copied from/same as old rowid if not explicitly updated)
+    // argv[2..]: updated column values for the row
+    //
+    // for now VFilter just starts the scan
     program.emit_insn(Insn::VFilter {
         cursor_id,
         pc_if_empty: end_label,
-        args_reg: argv_start,
+        args_reg: 0,
         arg_count: 0,
     });
-
+    let arg_count = 2 + table.columns().len();
     let loop_start = program.offset();
-    let start_reg = program.alloc_registers(2 + table.columns().len());
+    let start_reg = program.alloc_registers(arg_count);
     let old_rowid = start_reg;
     let new_rowid = start_reg + 1;
     let column_regs = start_reg + 2;
@@ -262,11 +269,12 @@ fn translate_vtab_update(
         cursor_id,
         dest: old_rowid,
     });
-    program.emit_insn(Insn::RowId {
-        cursor_id,
-        dest: new_rowid,
+    // TODO: handle user updating rowid explicitly
+    program.emit_insn(Insn::Copy {
+        src_reg: old_rowid,
+        dst_reg: new_rowid,
+        amount: 1,
     });
-
     for (i, _) in table.columns().iter().enumerate() {
         let dest = column_regs + i;
         program.emit_insn(Insn::VColumn {
@@ -276,6 +284,8 @@ fn translate_vtab_update(
         });
     }
 
+    // translate where clause if present
+    // TODO: impl xBestIndex + use VFilter for where clause
     if let Some(ref mut where_clause) = body.where_clause {
         bind_column_references(where_clause, &referenced_tables, None)?;
         translate_condition_expr(
@@ -290,7 +300,6 @@ fn translate_vtab_update(
             resolver,
         )?;
     }
-    // prepare updated columns in place
     for expr in body.sets.iter() {
         let Some(col_index) = table.columns().iter().position(|t| {
             t.name
@@ -309,13 +318,12 @@ fn translate_vtab_update(
         )?;
     }
 
-    let arg_count = 2 + table.columns().len();
     program.emit_insn(Insn::VUpdate {
         cursor_id,
         arg_count,
         start_reg: old_rowid,
         vtab_ptr: vtab.implementation.ctx as usize,
-        conflict_action: 0,
+        conflict_action: 0, // TODO: handling conflict actions
     });
 
     program.resolve_label(skip_label, program.offset());
