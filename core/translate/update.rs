@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use crate::translate::plan::Operation;
-use crate::vdbe::BranchOffset;
 use crate::{
     bail_parse_error,
     schema::{Schema, Table},
@@ -11,7 +8,7 @@ use crate::{
 };
 use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 
-use super::emitter::{emit_program, Resolver};
+use super::emitter::emit_program;
 use super::optimizer::optimize_plan;
 use super::plan::{
     Direction, IterationDirection, Plan, ResultSetColumn, TableReference, UpdatePlan,
@@ -55,7 +52,6 @@ pub fn translate_update(
 ) -> crate::Result<ProgramBuilder> {
     let mut plan = prepare_update_plan(schema, body)?;
     optimize_plan(&mut plan, schema)?;
-    let resolver = Resolver::new(syms);
     // TODO: freestyling these numbers
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
