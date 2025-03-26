@@ -11,12 +11,11 @@ use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
 use super::aggregation::emit_ungrouped_aggregation;
-use super::expr::{translate_condition_expr, ConditionMetadata};
+use super::expr::{translate_condition_expr, translate_expr, ConditionMetadata};
 use super::group_by::{emit_group_by, init_group_by, GroupByMetadata};
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
-use super::plan::Operation;
-use super::plan::{SelectPlan, TableReference};
+use super::plan::{Operation, SelectPlan, TableReference, UpdatePlan};
 use super::subquery::emit_subqueries;
 
 #[derive(Debug)]
@@ -89,7 +88,7 @@ pub struct TranslateCtx<'a> {
 
 /// Used to distinguish database operations
 #[allow(clippy::upper_case_acronyms, dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum OperationMode {
     SELECT,
     INSERT,
@@ -138,6 +137,7 @@ fn epilogue(
     program: &mut ProgramBuilder,
     init_label: BranchOffset,
     start_offset: BranchOffset,
+    write: bool,
 ) -> Result<()> {
     program.emit_insn(Insn::Halt {
         err_code: 0,
@@ -145,7 +145,7 @@ fn epilogue(
     });
 
     program.resolve_label(init_label, program.offset());
-    program.emit_insn(Insn::Transaction { write: false });
+    program.emit_insn(Insn::Transaction { write });
 
     program.emit_constant_insns();
     program.emit_insn(Insn::Goto {
@@ -161,6 +161,7 @@ pub fn emit_program(program: &mut ProgramBuilder, plan: Plan, syms: &SymbolTable
     match plan {
         Plan::Select(plan) => emit_program_for_select(program, plan, syms),
         Plan::Delete(plan) => emit_program_for_delete(program, plan, syms),
+        Plan::Update(plan) => emit_program_for_update(program, plan, syms),
     }
 }
 
@@ -179,7 +180,7 @@ fn emit_program_for_select(
     // Trivial exit on LIMIT 0
     if let Some(limit) = plan.limit {
         if limit == 0 {
-            epilogue(program, init_label, start_offset)?;
+            epilogue(program, init_label, start_offset, false)?;
             program.result_columns = plan.result_columns;
             program.table_references = plan.table_references;
             return Ok(());
@@ -188,7 +189,7 @@ fn emit_program_for_select(
     // Emit main parts of query
     emit_query(program, &mut plan, &mut t_ctx)?;
     // Finalize program
-    epilogue(program, init_label, start_offset)?;
+    epilogue(program, init_label, start_offset, false)?;
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
     Ok(())
@@ -240,7 +241,7 @@ pub fn emit_query<'a>(
         program,
         t_ctx,
         &plan.table_references,
-        &OperationMode::SELECT,
+        OperationMode::SELECT,
     )?;
 
     for where_term in plan.where_clause.iter().filter(|wt| wt.is_constant()) {
@@ -255,7 +256,7 @@ pub fn emit_query<'a>(
             &plan.table_references,
             &where_term.expr,
             condition_metadata,
-            &mut t_ctx.resolver,
+            &t_ctx.resolver,
         )?;
         program.resolve_label(jump_target_when_true, program.offset());
     }
@@ -305,7 +306,7 @@ fn emit_program_for_delete(
 
     // exit early if LIMIT 0
     if let Some(0) = plan.limit {
-        epilogue(program, init_label, start_offset)?;
+        epilogue(program, init_label, start_offset, true)?;
         program.result_columns = plan.result_columns;
         program.table_references = plan.table_references;
         return Ok(());
@@ -325,7 +326,7 @@ fn emit_program_for_delete(
         program,
         &mut t_ctx,
         &plan.table_references,
-        &OperationMode::DELETE,
+        OperationMode::DELETE,
     )?;
 
     // Set up main query execution loop
@@ -343,7 +344,7 @@ fn emit_program_for_delete(
     program.resolve_label(after_main_loop_label, program.offset());
 
     // Finalize program
-    epilogue(program, init_label, start_offset)?;
+    epilogue(program, init_label, start_offset, true)?;
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
     Ok(())
@@ -407,5 +408,163 @@ fn emit_delete_insns(
         })
     }
 
+    Ok(())
+}
+
+fn emit_program_for_update(
+    program: &mut ProgramBuilder,
+    plan: UpdatePlan,
+    syms: &SymbolTable,
+) -> Result<()> {
+    let (mut t_ctx, init_label, start_offset) = prologue(
+        program,
+        syms,
+        plan.table_references.len(),
+        plan.returning.as_ref().map_or(0, |r| r.len()),
+    )?;
+
+    let after_main_loop_label = program.allocate_label();
+    t_ctx.label_main_loop_end = Some(after_main_loop_label);
+    if plan.contains_constant_false_condition {
+        program.emit_insn(Insn::Goto {
+            target_pc: after_main_loop_label,
+        });
+    }
+    let skip_label = program.allocate_label();
+    init_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        OperationMode::UPDATE,
+    )?;
+    open_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &plan.where_clause,
+    )?;
+    emit_update_insns(&plan, &t_ctx, program)?;
+    program.resolve_label(skip_label, program.offset());
+    close_loop(program, &mut t_ctx, &plan.table_references)?;
+
+    program.resolve_label(after_main_loop_label, program.offset());
+
+    // Finalize program
+    epilogue(program, init_label, start_offset, true)?;
+    program.result_columns = plan.returning.unwrap_or_default();
+    program.table_references = plan.table_references;
+    Ok(())
+}
+
+fn emit_update_insns(
+    plan: &UpdatePlan,
+    t_ctx: &TranslateCtx,
+    program: &mut ProgramBuilder,
+) -> crate::Result<()> {
+    let table_ref = &plan.table_references.first().unwrap();
+    let (cursor_id, index) = match &table_ref.op {
+        Operation::Scan { .. } => (program.resolve_cursor_id(&table_ref.identifier), None),
+        Operation::Search(search) => match search {
+            &Search::RowidEq { .. } | Search::RowidSearch { .. } => {
+                (program.resolve_cursor_id(&table_ref.identifier), None)
+            }
+            Search::IndexSearch { index, .. } => (
+                program.resolve_cursor_id(&table_ref.identifier),
+                Some((index.clone(), program.resolve_cursor_id(&index.name))),
+            ),
+        },
+        _ => return Ok(()),
+    };
+
+    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+        let jump_target = program.allocate_label();
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: jump_target,
+            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+        program.resolve_label(jump_target, program.offset());
+    }
+    let first_col_reg = program.alloc_registers(table_ref.table.columns().len());
+    let rowid_reg = program.alloc_register();
+    program.emit_insn(Insn::RowId {
+        cursor_id,
+        dest: rowid_reg,
+    });
+    // if no rowid, we're done
+    program.emit_insn(Insn::IsNull {
+        reg: rowid_reg,
+        target_pc: t_ctx.label_main_loop_end.unwrap(),
+    });
+
+    // we scan a column at a time, loading either the column's values, or the new value
+    // from the Set expression, into registers so we can emit a MakeRecord and update the row.
+    for idx in 0..table_ref.columns().len() {
+        if let Some((idx, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
+            let target_reg = first_col_reg + idx;
+            translate_expr(
+                program,
+                Some(&plan.table_references),
+                expr,
+                target_reg,
+                &t_ctx.resolver,
+            )?;
+        } else {
+            let table_column = table_ref.table.columns().get(idx).unwrap();
+            let column_idx_in_index = index.as_ref().and_then(|(idx, _)| {
+                idx.columns
+                    .iter()
+                    .position(|c| Some(&c.name) == table_column.name.as_ref())
+            });
+            program.emit_insn(Insn::Column {
+                cursor_id: *index
+                    .as_ref()
+                    .and_then(|(_, id)| {
+                        if column_idx_in_index.is_some() {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(&cursor_id),
+                column: column_idx_in_index.unwrap_or(idx),
+                dest: first_col_reg + idx,
+            });
+        }
+    }
+    let record_reg = program.alloc_register();
+    program.emit_insn(Insn::MakeRecord {
+        start_reg: first_col_reg,
+        count: table_ref.columns().len(),
+        dest_reg: record_reg,
+    });
+    program.emit_insn(Insn::InsertAsync {
+        cursor: cursor_id,
+        key_reg: rowid_reg,
+        record_reg,
+        flag: 0,
+    });
+    program.emit_insn(Insn::InsertAwait { cursor_id });
+
+    if let Some(limit) = plan.limit {
+        let limit_reg = program.alloc_register();
+        program.emit_insn(Insn::Integer {
+            value: limit as i64,
+            dest: limit_reg,
+        });
+        program.mark_last_insn_constant();
+        program.emit_insn(Insn::DecrJumpZero {
+            reg: limit_reg,
+            target_pc: t_ctx.label_main_loop_end.unwrap(),
+        })
+    }
+    // TODO(pthorpe): handle RETURNING clause
     Ok(())
 }

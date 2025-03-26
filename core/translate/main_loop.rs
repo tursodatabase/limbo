@@ -59,7 +59,7 @@ pub fn init_loop(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
-    mode: &OperationMode,
+    mode: OperationMode,
 ) -> Result<()> {
     assert!(
         t_ctx.meta_left_joins.len() == tables.len(),
@@ -90,16 +90,24 @@ pub fn init_loop(
                     },
                 );
                 match (mode, &table.table) {
-                    (OperationMode::SELECT, Table::BTree(_)) => {
-                        let root_page = table.btree().unwrap().root_page;
+                    (OperationMode::SELECT, Table::BTree(btree)) => {
+                        let root_page = btree.root_page;
                         program.emit_insn(Insn::OpenReadAsync {
                             cursor_id,
                             root_page,
                         });
                         program.emit_insn(Insn::OpenReadAwait {});
                     }
-                    (OperationMode::DELETE, Table::BTree(_)) => {
-                        let root_page = table.btree().unwrap().root_page;
+                    (OperationMode::DELETE, Table::BTree(btree)) => {
+                        let root_page = btree.root_page;
+                        program.emit_insn(Insn::OpenWriteAsync {
+                            cursor_id,
+                            root_page,
+                        });
+                        program.emit_insn(Insn::OpenWriteAwait {});
+                    }
+                    (OperationMode::UPDATE, Table::BTree(btree)) => {
+                        let root_page = btree.root_page;
                         program.emit_insn(Insn::OpenWriteAsync {
                             cursor_id,
                             root_page,
@@ -140,6 +148,13 @@ pub fn init_loop(
                         });
                         program.emit_insn(Insn::OpenWriteAwait {});
                     }
+                    OperationMode::UPDATE => {
+                        program.emit_insn(Insn::OpenWriteAsync {
+                            cursor_id: table_cursor_id,
+                            root_page: table.table.get_root_page(),
+                        });
+                        program.emit_insn(Insn::OpenWriteAwait {});
+                    }
                     _ => {
                         unimplemented!()
                     }
@@ -160,6 +175,13 @@ pub fn init_loop(
                             program.emit_insn(Insn::OpenReadAwait);
                         }
                         OperationMode::DELETE => {
+                            program.emit_insn(Insn::OpenWriteAsync {
+                                cursor_id: index_cursor_id,
+                                root_page: index.root_page,
+                            });
+                            program.emit_insn(Insn::OpenWriteAwait {});
+                        }
+                        OperationMode::UPDATE => {
                             program.emit_insn(Insn::OpenWriteAsync {
                                 cursor_id: index_cursor_id,
                                 root_page: index.root_page,

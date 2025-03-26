@@ -9,13 +9,14 @@ use crate::{
 
 use super::plan::{
     DeletePlan, Direction, IterationDirection, Operation, Plan, Search, SelectPlan, TableReference,
-    WhereTerm,
+    UpdatePlan, WhereTerm,
 };
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
         Plan::Select(plan) => optimize_select_plan(plan, schema),
         Plan::Delete(plan) => optimize_delete_plan(plan, schema),
+        Plan::Update(plan) => optimize_update_plan(plan, schema),
     }
 }
 
@@ -63,6 +64,22 @@ fn optimize_delete_plan(plan: &mut DeletePlan, schema: &Schema) -> Result<()> {
     Ok(())
 }
 
+fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
+    rewrite_exprs_update(plan)?;
+    if let ConstantConditionEliminationResult::ImpossibleCondition =
+        eliminate_constant_conditions(&mut plan.where_clause)?
+    {
+        plan.contains_constant_false_condition = true;
+        return Ok(());
+    }
+    use_indexes(
+        &mut plan.table_references,
+        &schema.indexes,
+        &mut plan.where_clause,
+    )?;
+    Ok(())
+}
+
 fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     for table in plan.table_references.iter_mut() {
         if let Operation::Subquery { plan, .. } = &mut table.op {
@@ -89,7 +106,7 @@ fn query_is_already_ordered_by(
             Search::RowidEq { .. } => Ok(key.is_rowid_alias_of(0)),
             Search::RowidSearch { .. } => Ok(key.is_rowid_alias_of(0)),
             Search::IndexSearch { index, .. } => {
-                let index_rc = key.check_index_scan(0, &table_reference, available_indexes)?;
+                let index_rc = key.check_index_scan(0, table_reference, available_indexes)?;
                 let index_is_the_same = index_rc
                     .map(|irc| Arc::ptr_eq(index, &irc))
                     .unwrap_or(false);
@@ -104,7 +121,7 @@ fn eliminate_unnecessary_orderby(plan: &mut SelectPlan, schema: &Schema) -> Resu
     if plan.order_by.is_none() {
         return Ok(());
     }
-    if plan.table_references.len() == 0 {
+    if plan.table_references.is_empty() {
         return Ok(());
     }
 
@@ -154,7 +171,7 @@ fn use_indexes(
                 if let Some(index_search) = try_extract_index_search_expression(
                     cond,
                     table_index,
-                    &table_reference,
+                    table_reference,
                     available_indexes,
                 )? {
                     where_clause.remove(i);
@@ -245,6 +262,26 @@ fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {
 fn rewrite_exprs_delete(plan: &mut DeletePlan) -> Result<()> {
     for cond in plan.where_clause.iter_mut() {
         rewrite_expr(&mut cond.expr)?;
+    }
+    Ok(())
+}
+
+fn rewrite_exprs_update(plan: &mut UpdatePlan) -> Result<()> {
+    if let Some(rc) = plan.returning.as_mut() {
+        for rc in rc.iter_mut() {
+            rewrite_expr(&mut rc.expr)?;
+        }
+    }
+    for (_, expr) in plan.set_clauses.iter_mut() {
+        rewrite_expr(expr)?;
+    }
+    for cond in plan.where_clause.iter_mut() {
+        rewrite_expr(&mut cond.expr)?;
+    }
+    if let Some(order_by) = &mut plan.order_by {
+        for (expr, _) in order_by.iter_mut() {
+            rewrite_expr(expr)?;
+        }
     }
     Ok(())
 }
