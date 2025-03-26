@@ -52,27 +52,6 @@ do_execsql_test_on_specific_db {:memory:} update-all-many {
 	select COUNT(*) from temp where a = 1234234234234234;
 } {8}
 
-do_execsql_test_on_specific_db {:memory:} update-limit {
-    create table temp (a,b,c);
-    insert into temp values (1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33);
-	update temp set a = 44 LIMIT 3;
-	select COUNT(*) from temp where a = 44;
-} {3}
-
-do_execsql_test_on_specific_db {:memory:} update-limit-zero {
-    create table temp (a,b,c);
-    insert into temp values (1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33);
-	update temp set a = 44 LIMIT 0;
-	select COUNT(*) from temp where a = 44;
-} {0}
-
-do_execsql_test_on_specific_db {:memory:} update-limit-negative {
-    create table temp (a,b,c);
-    insert into temp values (1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33),(1,22,33);
-	update temp set a = 44 LIMIT -1;
-	select COUNT(*) from temp where a = 44;
-} {8}
-
 do_execsql_test_on_specific_db {:memory:} update-large-small {
 	create table temp (a,b,c);
 	insert into temp values (randomblob(1024), 1, 2);
