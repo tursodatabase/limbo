@@ -170,22 +170,21 @@ pub struct DeletePlan {
 
 #[derive(Debug, Clone)]
 pub struct UpdatePlan {
-    // list of table references, table being updated is always first
+    // table being updated is always first
     pub table_references: Vec<TableReference>,
-    // which columns are being updated and what they are being set to
-    pub set_clauses: Vec<(usize, ast::Expr)>, // (column_index, expression)
-    // where clause split into a vec at 'AND' boundaries.
+    // (colum index, new value) pairs
+    pub set_clauses: Vec<(usize, ast::Expr)>,
     pub where_clause: Vec<WhereTerm>,
     pub order_by: Option<Vec<(ast::Expr, Direction)>>,
-    // TODO: support optional LIMIT
+    // TODO: full support of optional LIMIT
     pub limit: Option<isize>,
-    // optional RETURNING clause
+    // TODO: optional RETURNING clause
     pub returning: Option<Vec<ResultSetColumn>>,
     // whether the WHERE clause is always false
     pub contains_constant_false_condition: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IterationDirection {
     Forwards,
     Backwards,
