@@ -70,7 +70,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
     let Some(btree_table) = table.btree() else {
-        bail_parse_error!("Parse error: no such table: {}", table_name);
+        bail_parse_error!("Error: {} is not a btree table", table_name);
     };
     let mut iter_dir = None;
     if let Some(order_by) = body.order_by.as_ref() {
@@ -113,7 +113,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
                 })?;
 
             let _ = bind_column_references(&mut set.expr, &table_references, None);
-
             Ok((col_index, set.expr.clone()))
         })
         .collect::<Result<Vec<(usize, Expr)>, crate::LimboError>>()?;
