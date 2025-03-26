@@ -10,7 +10,8 @@ use crate::bail_constraint_error;
 pub use crate::json::de::from_str;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{
-    json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_remove, jsonb_replace,
+    json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_patch, jsonb_remove,
+    jsonb_replace,
 };
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
@@ -100,6 +101,19 @@ pub fn jsonb(json_value: &OwnedValue, cache: &JsonCacheCell) -> crate::Result<Ow
             bail_parse_error!("malformed JSON")
         }
     }
+}
+
+pub fn convert_dbtype_to_raw_jsonb(data: &OwnedValue) -> crate::Result<Vec<u8>> {
+    let json = convert_dbtype_to_jsonb(data, Conv::ToString)?;
+    Ok(json.data())
+}
+
+pub fn json_from_raw_bytes_agg(data: &[u8]) -> crate::Result<OwnedValue> {
+    let mut json = Jsonb::from_raw_data(data);
+    let el_type = json.is_valid()?;
+    json.finalize_unsafe(el_type)?;
+
+    json_string_to_db_type(json, el_type, OutputVariant::ElementType)
 }
 
 fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Jsonb> {
@@ -443,42 +457,6 @@ fn json_string_to_db_type(
         ElementType::FALSE => Ok(OwnedValue::Integer(0)),
         ElementType::NULL => Ok(OwnedValue::Null),
         _ => unreachable!(),
-    }
-}
-
-/// Returns a value with type defined by SQLite documentation:
-///   > the SQL datatype of the result is NULL for a JSON null,
-///   > INTEGER or REAL for a JSON numeric value,
-///   > an INTEGER zero for a JSON false value,
-///   > an INTEGER one for a JSON true value,
-///   > the dequoted text for a JSON string value,
-///   > and a text representation for JSON object and array values.
-///
-/// https://sqlite.org/json1.html#the_json_extract_function
-///
-/// *all_as_db* - if true, objects and arrays will be returned as pure TEXT without the JSON subtype
-fn convert_json_to_db_type(extracted: &Val, all_as_db: bool) -> crate::Result<OwnedValue> {
-    match extracted {
-        Val::Removed => Ok(OwnedValue::Null),
-        Val::Null => Ok(OwnedValue::Null),
-        Val::Float(f) => Ok(OwnedValue::Float(*f)),
-        Val::Integer(i) => Ok(OwnedValue::Integer(*i)),
-        Val::Bool(b) => {
-            if *b {
-                Ok(OwnedValue::Integer(1))
-            } else {
-                Ok(OwnedValue::Integer(0))
-            }
-        }
-        Val::String(s) => Ok(OwnedValue::Text(Text::from_str(s))),
-        _ => {
-            let json = to_string(&extracted)?;
-            if all_as_db {
-                Ok(OwnedValue::build_text(&json))
-            } else {
-                Ok(OwnedValue::Text(Text::json(json)))
-            }
-        }
     }
 }
 

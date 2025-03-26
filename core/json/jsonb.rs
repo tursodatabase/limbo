@@ -1,6 +1,7 @@
 use crate::{bail_parse_error, LimboError, Result};
 use std::{
-    collections::HashMap,
+    borrow::Cow,
+    collections::{HashMap, VecDeque},
     fmt::Write,
     str::{from_utf8, from_utf8_unchecked},
 };
@@ -719,6 +720,10 @@ impl JsonbHeader {
 
     pub fn make_null() -> Self {
         Self(ElementType::NULL, 0)
+    }
+
+    pub fn make_obj() -> Self {
+        Self(ElementType::OBJECT, 0)
     }
 
     fn from_slice(cursor: usize, slice: &[u8]) -> Result<(Self, usize)> {
@@ -2504,6 +2509,133 @@ impl Jsonb {
         let (header, skip_header) = self.read_header(pos)?;
         pos += skip_header + header.1;
         Ok(pos)
+    }
+
+    // Primitive implementation could be optimized.
+    pub fn patch(&mut self, patch: &Jsonb) -> Result<()> {
+        let (patch_header, _) = patch.read_header(0)?;
+
+        if patch_header.0 != ElementType::OBJECT {
+            self.data.clear();
+            self.data.extend_from_slice(&patch.data);
+            return Ok(());
+        }
+
+        let result = self;
+
+        let mut work_stack = VecDeque::with_capacity(10);
+        work_stack.push_back((
+            JsonPath {
+                elements: vec![PathElement::Root()],
+            },
+            0,
+        ));
+
+        while let Some((path, patch_cursor)) = work_stack.pop_front() {
+            let (patch_obj_header, patch_obj_header_size) = patch.read_header(patch_cursor)?;
+
+            if patch_obj_header.0 != ElementType::OBJECT {
+                continue;
+            }
+
+            let patch_end = patch_cursor + patch_obj_header_size + patch_obj_header.1;
+            let mut patch_key_cursor = patch_cursor + patch_obj_header_size;
+
+            let mut key_values = Vec::new();
+
+            while patch_key_cursor < patch_end {
+                let (key_header, key_header_size) = patch.read_header(patch_key_cursor)?;
+                if !key_header.0.is_valid_key() {
+                    return Err(LimboError::ParseError("Invalid key type".to_string()));
+                }
+
+                let key_start = patch_key_cursor + key_header_size;
+                let key_text = unsafe {
+                    from_utf8_unchecked(&patch.data[key_start..key_start + key_header.1])
+                };
+
+                // Read the value
+                let value_cursor = key_start + key_header.1;
+                let (value_header, value_header_size) = patch.read_header(value_cursor)?;
+                let key_text = if matches!(
+                    key_header.0,
+                    ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW
+                ) {
+                    Cow::Owned(unescape_string(key_text))
+                } else {
+                    Cow::Borrowed(key_text)
+                };
+
+                key_values.push((
+                    key_text,
+                    value_header.0,
+                    value_cursor,
+                    value_header_size,
+                    value_header.1,
+                ));
+
+                patch_key_cursor = value_cursor + value_header_size + value_header.1;
+            }
+
+            for (key_text, value_type, value_cursor, value_header_size, value_size) in key_values {
+                // Create a path to this key
+                let mut key_path = path.clone();
+
+                key_path.elements.push(PathElement::Key(key_text, false));
+
+                match value_type {
+                    ElementType::NULL => {
+                        let mut op = DeleteOperation::new();
+
+                        let _ = result.operate_on_path(&key_path, &mut op);
+                    }
+                    ElementType::OBJECT => {
+                        let value_data = &patch.data
+                            [value_cursor..value_cursor + value_header_size + value_size];
+
+                        let target_path_result =
+                            result.navigate_path(&key_path, PathOperationMode::ReplaceExisting);
+
+                        if target_path_result.is_ok() {
+                            let target_stack = target_path_result.unwrap();
+                            let target_value_idx = target_stack.last().unwrap().field_value_index;
+                            let (target_header, _) = result.read_header(target_value_idx)?;
+
+                            if target_header.0 == ElementType::OBJECT {
+                                work_stack.push_back((key_path, value_cursor));
+                            } else {
+                                let patch_obj = Jsonb::new(value_data.len(), Some(value_data));
+                                let mut op = ReplaceOperation::new(patch_obj);
+                                result.operate_on_path(&key_path, &mut op)?;
+                                let _ = result.operate_on_path(&key_path, &mut op);
+
+                                work_stack.push_back((key_path, value_cursor));
+                            }
+                        } else {
+                            let empty_obj = Jsonb::new(
+                                1,
+                                Some(JsonbHeader::make_obj().into_bytes().as_bytes()),
+                            );
+                            let mut op = SetOperation::new(empty_obj);
+                            let _ = result.operate_on_path(&key_path, &mut op);
+
+                            work_stack.push_back((key_path, value_cursor));
+                        }
+                    }
+                    _ => {
+                        let value_data = &patch.data
+                            [value_cursor..value_cursor + value_header_size + value_size];
+                        let patch_value = Jsonb::new(value_data.len(), Some(value_data));
+
+                        let mut op = SetOperation::new(patch_value);
+
+                        let _ = result.operate_on_path(&key_path, &mut op);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

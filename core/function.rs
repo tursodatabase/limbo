@@ -85,6 +85,7 @@ pub enum JsonFunc {
     JsonErrorPosition,
     JsonValid,
     JsonPatch,
+    JsonbPatch,
     JsonRemove,
     JsonbRemove,
     JsonReplace,
@@ -118,6 +119,7 @@ impl Display for JsonFunc {
                 Self::JsonErrorPosition => "json_error_position".to_string(),
                 Self::JsonValid => "json_valid".to_string(),
                 Self::JsonPatch => "json_patch".to_string(),
+                Self::JsonbPatch => "jsonb_patch".to_string(),
                 Self::JsonRemove => "json_remove".to_string(),
                 Self::JsonbRemove => "jsonb_remove".to_string(),
                 Self::JsonReplace => "json_replace".to_string(),
@@ -165,6 +167,10 @@ pub enum AggFunc {
     StringAgg,
     Sum,
     Total,
+    #[cfg(feature = "json")]
+    JsonGroupArray,
+    #[cfg(feature = "json")]
+    JsonGroupObject,
     External(Rc<ExtFunc>),
 }
 
@@ -197,6 +203,10 @@ impl AggFunc {
             Self::StringAgg => 2,
             Self::Sum => 1,
             Self::Total => 1,
+            #[cfg(feature = "json")]
+            Self::JsonGroupArray => 1,
+            #[cfg(feature = "json")]
+            Self::JsonGroupObject => 2,
             Self::External(func) => func.agg_args().unwrap_or(0),
         }
     }
@@ -212,6 +222,10 @@ impl AggFunc {
             Self::StringAgg => "string_agg",
             Self::Sum => "sum",
             Self::Total => "total",
+            #[cfg(feature = "json")]
+            Self::JsonGroupArray => "json_group_array",
+            #[cfg(feature = "json")]
+            Self::JsonGroupObject => "json_group_object",
             Self::External(_) => "extension function",
         }
     }
@@ -529,6 +543,10 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
+            #[cfg(feature = "json")]
+            "json_group_array" => Ok(Self::Agg(AggFunc::JsonGroupArray)),
+            #[cfg(feature = "json")]
+            "json_group_object" => Ok(Self::Agg(AggFunc::JsonGroupObject)),
             "char" => Ok(Self::Scalar(ScalarFunc::Char)),
             "coalesce" => Ok(Self::Scalar(ScalarFunc::Coalesce)),
             "concat" => Ok(Self::Scalar(ScalarFunc::Concat)),
