@@ -287,6 +287,8 @@ pub enum Insn {
         pc_if_empty: BranchOffset,
         arg_count: usize,
         args_reg: usize,
+        idx_str: Option<usize>,
+        idx_num: usize,
     },
 
     /// Read a column from the current row of the virtual table cursor.

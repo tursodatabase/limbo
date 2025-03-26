@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
-    VTabModuleDerive, Value,
+    register_extension, scalar, ConstraintInfo, ConstraintOp, ExtResult, IndexInfo, OrderByInfo,
+    ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
@@ -46,7 +46,40 @@ impl VTabModule for KVStoreVTab {
         })
     }
 
-    fn filter(cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
+    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+        // not exactly the ideal kind of table to demonstrate this on...
+        for constraint in constraints {
+            println!("constraint: {:?}", constraint);
+            if constraint.usable
+                && constraint.op == ConstraintOp::Eq
+                && constraint.column_index == 0
+            {
+                // key = ? is supported
+                return IndexInfo {
+                    idx_num: 1, // arbitrary non-zero code to signify optimization
+                    idx_str: Some("key_eq".to_string()),
+                    order_by_consumed: false,
+                    estimated_cost: 10.0,
+                    ..Default::default()
+                };
+            }
+        }
+
+        // fallback: full scan
+        IndexInfo {
+            idx_num: -1,
+            idx_str: None,
+            order_by_consumed: false,
+            estimated_cost: 1000.0,
+            ..Default::default()
+        }
+    }
+
+    fn filter(
+        cursor: &mut Self::VCursor,
+        _args: &[Value],
+        _idx_str: Option<(&str, i32)>,
+    ) -> ResultCode {
         let store = GLOBAL_STORE.lock().unwrap();
         cursor.rows = store
             .iter()

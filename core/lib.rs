@@ -33,7 +33,7 @@ pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
 pub use io::{Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO};
-use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
+use limbo_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
@@ -638,6 +638,21 @@ impl VirtualTable {
     pub(crate) fn rowid(&self, cursor: &VTabOpaqueCursor) -> i64 {
         unsafe { (self.implementation.rowid)(cursor.as_ptr()) }
     }
+
+    pub(crate) fn best_index(
+        &self,
+        constraints: &[ConstraintInfo],
+        order_by: &[OrderByInfo],
+    ) -> IndexInfo {
+        unsafe {
+            IndexInfo::from_ffi((self.implementation.best_idx)(
+                constraints.as_ptr(),
+                constraints.len() as i32,
+                order_by.as_ptr(),
+                order_by.len() as i32,
+            ))
+        }
+    }
     /// takes ownership of the provided Args
     pub(crate) fn from_args(
         tbl_name: Option<&str>,
@@ -689,6 +704,8 @@ impl VirtualTable {
     pub fn filter(
         &self,
         cursor: &VTabOpaqueCursor,
+        idx_num: i32,
+        idx_str: Option<String>,
         arg_count: usize,
         args: Vec<OwnedValue>,
     ) -> Result<bool> {
@@ -697,8 +714,18 @@ impl VirtualTable {
             let ownedvalue_arg = args.get(i).unwrap();
             filter_args.push(ownedvalue_arg.to_ffi());
         }
+        let c_idx_str = idx_str
+            .map(|s| std::ffi::CString::new(s).unwrap())
+            .map(|cstr| cstr.into_raw())
+            .unwrap_or(std::ptr::null_mut());
         let rc = unsafe {
-            (self.implementation.filter)(cursor.as_ptr(), arg_count as i32, filter_args.as_ptr())
+            (self.implementation.filter)(
+                cursor.as_ptr(),
+                arg_count as i32,
+                filter_args.as_ptr(),
+                c_idx_str,
+                idx_num,
+            )
         };
         for arg in filter_args {
             unsafe {

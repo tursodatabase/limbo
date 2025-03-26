@@ -1,4 +1,5 @@
 use core::fmt;
+use limbo_ext::{ConstraintInfo, ConstraintOp, IndexInfo};
 use limbo_sqlite3_parser::ast;
 use std::{
     cmp::Ordering,
@@ -70,8 +71,96 @@ impl WhereTerm {
     pub fn should_eval_at_loop(&self, loop_idx: usize) -> bool {
         self.eval_at == EvalAt::Loop(loop_idx)
     }
+
+    pub fn applies_to_table(&self, table: &Table, tables: &[TableReference]) -> bool {
+        match &self.expr {
+            ast::Expr::Column {
+                table: table_idx, ..
+            } => {
+                let table_ref = &tables[*table_idx];
+                table_ref.table == *table
+            }
+            _ => false,
+        }
+    }
 }
 
+use crate::ast::{Expr, Operator};
+
+use super::optimizer::{ConstantPredicate, Optimizable};
+
+fn reverse_operator(op: &Operator) -> Option<Operator> {
+    match op {
+        Operator::Equals => Some(Operator::Equals),
+        Operator::Less => Some(Operator::Greater),
+        Operator::LessEquals => Some(Operator::GreaterEquals),
+        Operator::Greater => Some(Operator::Less),
+        Operator::GreaterEquals => Some(Operator::LessEquals),
+        Operator::NotEquals => Some(Operator::NotEquals),
+        Operator::Is => Some(Operator::Is),
+        Operator::IsNot => Some(Operator::IsNot),
+        _ => None,
+    }
+}
+
+pub fn try_convert_to_constraint_info(
+    term: &WhereTerm,
+    table_index: usize,
+) -> Option<ConstraintInfo> {
+    if term.from_outer_join {
+        return None;
+    }
+
+    let Expr::Binary(lhs, op, rhs) = &term.expr else {
+        return None;
+    };
+
+    let (col_expr, _, op) = match (&**lhs, &**rhs) {
+        (Expr::Column { .. }, rhs)
+            if rhs.check_constant().ok()? == Some(ConstantPredicate::AlwaysTrue) =>
+        {
+            (lhs, rhs, op)
+        }
+        (lhs, Expr::Column { .. })
+            if lhs.check_constant().ok()? == Some(ConstantPredicate::AlwaysTrue) =>
+        {
+            (rhs, lhs, &reverse_operator(op).unwrap_or(*op))
+        }
+        _ => return None,
+    };
+
+    let Expr::Column {
+        table: tbl_idx,
+        column,
+        ..
+    } = **col_expr
+    else {
+        return None;
+    };
+
+    if tbl_idx != table_index {
+        return None;
+    }
+
+    let column_index = column as u32;
+    let constraint_op = match op {
+        Operator::Equals => ConstraintOp::Eq,
+        Operator::Less => ConstraintOp::Lt,
+        Operator::LessEquals => ConstraintOp::Le,
+        Operator::Greater => ConstraintOp::Gt,
+        Operator::GreaterEquals => ConstraintOp::Ge,
+        Operator::NotEquals => ConstraintOp::Ne,
+        Operator::Is => ConstraintOp::Is,
+        Operator::IsNot => ConstraintOp::IsNot,
+        _ => return None,
+    };
+
+    Some(ConstraintInfo {
+        column_index,
+        op: constraint_op,
+        usable: true,
+    })
+}
 /// The loop index where to evaluate the condition.
 /// For example, in `SELECT * FROM u JOIN p WHERE u.id = 5`, the condition can already be evaluated at the first loop (idx 0),
 /// because that is the rightmost table that it references.

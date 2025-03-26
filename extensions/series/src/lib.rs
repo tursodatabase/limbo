@@ -45,7 +45,7 @@ impl VTabModule for GenerateSeriesVTab {
         })
     }
 
-    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode {
+    fn filter(cursor: &mut Self::VCursor, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
         // args are the start, stop, and step
         if args.is_empty() || args.len() > 3 {
             return ResultCode::InvalidArgs;

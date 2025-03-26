@@ -15,7 +15,10 @@ pub use types::{ResultCode, Value, ValueType};
 #[cfg(feature = "vfs")]
 pub use vfs_modules::{RegisterVfsFn, VfsExtension, VfsFile, VfsFileImpl, VfsImpl, VfsInterface};
 use vtabs::RegisterModuleFn;
-pub use vtabs::{VTabCursor, VTabKind, VTabModule, VTabModuleImpl};
+pub use vtabs::{
+    ConstraintInfo, ConstraintOp, ConstraintUsage, ExtIndexInfo, IndexInfo, OrderByInfo,
+    VTabCursor, VTabKind, VTabModule, VTabModuleImpl,
+};
 
 pub type ExtResult<T> = std::result::Result<T, ResultCode>;
 
