@@ -437,6 +437,15 @@ fn emit_program_for_update(
         &plan.table_references,
         OperationMode::UPDATE,
     )?;
+    if t_ctx.reg_limit.is_none() && plan.limit.is_some() {
+        let reg = program.alloc_register();
+        t_ctx.reg_limit = Some(reg);
+        program.emit_insn(Insn::Integer {
+            value: plan.limit.unwrap() as i64,
+            dest: reg,
+        });
+        program.mark_last_insn_constant();
+    }
     open_loop(
         program,
         &mut t_ctx,
@@ -553,13 +562,7 @@ fn emit_update_insns(
     });
     program.emit_insn(Insn::InsertAwait { cursor_id });
 
-    if let Some(limit) = plan.limit {
-        let limit_reg = program.alloc_register();
-        program.emit_insn(Insn::Integer {
-            value: limit as i64,
-            dest: limit_reg,
-        });
-        program.mark_last_insn_constant();
+    if let Some(limit_reg) = t_ctx.reg_limit {
         program.emit_insn(Insn::DecrJumpZero {
             reg: limit_reg,
             target_pc: t_ctx.label_main_loop_end.unwrap(),

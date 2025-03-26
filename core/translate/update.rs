@@ -155,7 +155,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         Some(&result_columns),
         &mut where_clause,
     )?;
-    let limit = if let Some(Ok((_, limit))) = body.limit.as_ref().map(|l| parse_limit(*l.clone())) {
+    let limit = if let Some(Ok((limit, _))) = body.limit.as_ref().map(|l| parse_limit(*l.clone())) {
         limit
     } else {
         None
