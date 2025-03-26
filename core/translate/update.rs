@@ -94,22 +94,29 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .iter_mut()
         .map(|set| {
             let ident = normalize_ident(set.col_names[0].0.as_str());
+
             let col_index = btree_table
                 .columns
                 .iter()
                 .enumerate()
-                .find(|(_, col)| {
+                .find_map(|(i, col)| {
                     col.name
                         .as_ref()
-                        .unwrap_or(&String::new())
-                        .eq_ignore_ascii_case(&ident)
+                        .filter(|name| name.eq_ignore_ascii_case(&ident))
+                        .map(|_| i)
                 })
-                .map(|(i, _)| i)
-                .unwrap();
+                .ok_or_else(|| {
+                    crate::LimboError::ParseError(format!(
+                        "column '{}' not found in table '{}'",
+                        ident, table_name.0
+                    ))
+                })?;
+
             let _ = bind_column_references(&mut set.expr, &table_references, None);
-            (col_index, set.expr.clone())
+
+            Ok((col_index, set.expr.clone()))
         })
-        .collect::<Vec<(usize, Expr)>>();
+        .collect::<Result<Vec<(usize, Expr)>, crate::LimboError>>()?;
 
     let mut where_clause = vec![];
     let mut result_columns = vec![];
