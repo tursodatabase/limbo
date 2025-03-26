@@ -423,6 +423,13 @@ fn emit_program_for_update(
         plan.returning.as_ref().map_or(0, |r| r.len()),
     )?;
 
+    // Exit on LIMIT 0
+    if let Some(0) = plan.limit {
+        epilogue(program, init_label, start_offset, false)?;
+        program.result_columns = plan.returning.unwrap_or_default();
+        program.table_references = plan.table_references;
+        return Ok(());
+    }
     let after_main_loop_label = program.allocate_label();
     t_ctx.label_main_loop_end = Some(after_main_loop_label);
     if plan.contains_constant_false_condition {
