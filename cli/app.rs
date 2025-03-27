@@ -319,7 +319,6 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let values = row
                     .get_values()
-                    .iter()
                     .zip(value_types.iter())
                     .map(|(value, value_type)| {
                         // If the type affinity is TEXT, replace each single

@@ -1079,7 +1079,7 @@ pub fn read_record(payload: &[u8]) -> Result<ImmutableRecord> {
     }
 
     Ok(ImmutableRecord {
-        payload: std::pin::Pin::new(payload),
+        payload: payload,
         values,
     })
 }
