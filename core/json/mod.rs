@@ -83,12 +83,15 @@ pub fn convert_dbtype_to_raw_jsonb(data: &OwnedValue) -> crate::Result<Vec<u8>> 
     Ok(json.data())
 }
 
-pub fn json_from_raw_bytes_agg(data: &[u8]) -> crate::Result<OwnedValue> {
+pub fn json_from_raw_bytes_agg(data: &[u8], raw: bool) -> crate::Result<OwnedValue> {
     let mut json = Jsonb::from_raw_data(data);
     let el_type = json.is_valid()?;
     json.finalize_unsafe(el_type)?;
-
-    json_string_to_db_type(json, el_type, OutputVariant::ElementType)
+    if raw {
+        json_string_to_db_type(json, el_type, OutputVariant::Binary)
+    } else {
+        json_string_to_db_type(json, el_type, OutputVariant::ElementType)
+    }
 }
 
 fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Jsonb> {

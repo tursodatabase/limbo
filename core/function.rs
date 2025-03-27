@@ -165,8 +165,9 @@ pub enum AggFunc {
     StringAgg,
     Sum,
     Total,
-
+    JsonbGroupArray,
     JsonGroupArray,
+    JsonbGroupObject,
     JsonGroupObject,
     External(Rc<ExtFunc>),
 }
@@ -200,10 +201,8 @@ impl AggFunc {
             Self::StringAgg => 2,
             Self::Sum => 1,
             Self::Total => 1,
-
-            Self::JsonGroupArray => 1,
-
-            Self::JsonGroupObject => 2,
+            Self::JsonGroupArray | Self::JsonbGroupArray => 1,
+            Self::JsonGroupObject | Self::JsonbGroupObject => 2,
             Self::External(func) => func.agg_args().unwrap_or(0),
         }
     }
@@ -219,9 +218,9 @@ impl AggFunc {
             Self::StringAgg => "string_agg",
             Self::Sum => "sum",
             Self::Total => "total",
-
+            Self::JsonbGroupArray => "jsonb_group_array",
             Self::JsonGroupArray => "json_group_array",
-
+            Self::JsonbGroupObject => "jsonb_group_object",
             Self::JsonGroupObject => "json_group_object",
             Self::External(_) => "extension function",
         }
@@ -540,9 +539,9 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
-
+            "jsonb_group_array" => Ok(Self::Agg(AggFunc::JsonbGroupArray)),
             "json_group_array" => Ok(Self::Agg(AggFunc::JsonGroupArray)),
-
+            "jsonb_group_object" => Ok(Self::Agg(AggFunc::JsonbGroupObject)),
             "json_group_object" => Ok(Self::Agg(AggFunc::JsonGroupObject)),
             "char" => Ok(Self::Scalar(ScalarFunc::Char)),
             "coalesce" => Ok(Self::Scalar(ScalarFunc::Coalesce)),
@@ -579,49 +578,27 @@ impl Func {
             "sqlite_version" => Ok(Self::Scalar(ScalarFunc::SqliteVersion)),
             "sqlite_source_id" => Ok(Self::Scalar(ScalarFunc::SqliteSourceId)),
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
-
             "json" => Ok(Self::Json(JsonFunc::Json)),
-
             "jsonb" => Ok(Self::Json(JsonFunc::Jsonb)),
-
             "json_array_length" => Ok(Self::Json(JsonFunc::JsonArrayLength)),
-
             "json_array" => Ok(Self::Json(JsonFunc::JsonArray)),
-
             "jsonb_array" => Ok(Self::Json(JsonFunc::JsonbArray)),
-
             "json_extract" => Ok(Func::Json(JsonFunc::JsonExtract)),
-
             "jsonb_extract" => Ok(Func::Json(JsonFunc::JsonbExtract)),
-
             "json_object" => Ok(Func::Json(JsonFunc::JsonObject)),
-
             "jsonb_object" => Ok(Func::Json(JsonFunc::JsonbObject)),
-
             "json_type" => Ok(Func::Json(JsonFunc::JsonType)),
-
             "json_error_position" => Ok(Self::Json(JsonFunc::JsonErrorPosition)),
-
             "json_valid" => Ok(Self::Json(JsonFunc::JsonValid)),
-
             "json_patch" => Ok(Self::Json(JsonFunc::JsonPatch)),
-
             "json_remove" => Ok(Self::Json(JsonFunc::JsonRemove)),
-
             "jsonb_remove" => Ok(Self::Json(JsonFunc::JsonbRemove)),
-
             "json_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
-
             "json_insert" => Ok(Self::Json(JsonFunc::JsonInsert)),
-
             "jsonb_insert" => Ok(Self::Json(JsonFunc::JsonbInsert)),
-
             "jsonb_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
-
             "json_pretty" => Ok(Self::Json(JsonFunc::JsonPretty)),
-
             "json_set" => Ok(Self::Json(JsonFunc::JsonSet)),
-
             "json_quote" => Ok(Self::Json(JsonFunc::JsonQuote)),
             "unixepoch" => Ok(Self::Scalar(ScalarFunc::UnixEpoch)),
             "julianday" => Ok(Self::Scalar(ScalarFunc::JulianDay)),

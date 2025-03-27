@@ -558,7 +558,7 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
-        AggFunc::JsonGroupArray => {
+        AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
             if agg.args.len() != 1 {
                 crate::bail_parse_error!("min bad number of arguments");
             }
@@ -572,7 +572,7 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
-        AggFunc::JsonGroupObject => {
+        AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
             if agg.args.len() != 2 {
                 crate::bail_parse_error!("max bad number of arguments");
             }
