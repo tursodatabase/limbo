@@ -227,7 +227,10 @@ pub fn emit_query<'a>(
             target_pc: after_main_loop_label,
         });
     }
-    if !plan.aggregates.is_empty() && plan.group_by.is_none() {
+    if !plan.aggregates.is_empty()
+        && plan.group_by.is_none()
+        && plan.result_columns.iter().any(|c| !c.contains_aggregates)
+    {
         let flag = program.alloc_register();
         program.emit_int(0, flag);
         t_ctx.reg_agg_flag = Some(flag);

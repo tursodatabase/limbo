@@ -656,12 +656,11 @@ fn emit_loop_source(
                 )?;
             }
 
+            let if_label = program.allocate_label();
             if let Some(flag) = t_ctx.reg_agg_flag {
-                let offset = program.offset().add(plan.result_columns.len() as u32);
-
                 program.emit_insn(Insn::If {
                     reg: flag,
-                    target_pc: offset,
+                    target_pc: if_label,
                     jump_if_null: false,
                 });
             }
@@ -685,6 +684,7 @@ fn emit_loop_source(
                     &t_ctx.resolver,
                 )?;
             }
+            program.resolve_label(if_label, program.offset());
             if let Some(flag) = t_ctx.reg_agg_flag {
                 program.emit_int(1, flag);
             }
