@@ -79,7 +79,7 @@ pub fn jsonb(json_value: &OwnedValue, cache: &JsonCacheCell) -> crate::Result<Ow
 }
 
 pub fn convert_dbtype_to_raw_jsonb(data: &OwnedValue) -> crate::Result<Vec<u8>> {
-    let json = convert_dbtype_to_jsonb(data, Conv::ToString)?;
+    let json = convert_dbtype_to_jsonb(data, Conv::NotStrict)?;
     Ok(json.data())
 }
 
@@ -97,7 +97,6 @@ pub fn json_from_raw_bytes_agg(data: &[u8], raw: bool) -> crate::Result<OwnedVal
 fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Jsonb> {
     match val {
         OwnedValue::Text(text) => {
-            println!("{:?}", text.as_str());
             let res = if text.subtype == TextSubtype::Json || matches!(strict, Conv::Strict) {
                 // Parse directly as JSON if it's already JSON subtype or strict mode is on
                 let json = if matches!(strict, Conv::ToString) {
