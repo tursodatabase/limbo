@@ -3894,7 +3894,7 @@ mod tests {
                 .unwrap();
                 let key = OwnedValue::Integer(*key);
                 let value = ImmutableRecord::from_registers(&[Register::OwnedValue(
-                    OwnedValue::Blob(Rc::new(vec![0; *size])),
+                    OwnedValue::Blob(vec![0; *size]),
                 )]);
                 tracing::info!("insert key:{}", key);
                 run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
@@ -3961,7 +3961,7 @@ mod tests {
 
                 let key = OwnedValue::Integer(key);
                 let value = ImmutableRecord::from_registers(&[Register::OwnedValue(
-                    OwnedValue::Blob(Rc::new(vec![0; size])),
+                    OwnedValue::Blob(vec![0; size]),
                 )]);
                 run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
             }
@@ -4874,9 +4874,11 @@ mod tests {
 
         let page = get_page(2);
         let usable_space = 4096;
-        let record = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
-            Rc::new(vec![0; 3600]),
-        ))]);
+        let record =
+            ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(vec![
+                0;
+                3600
+            ]))]);
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
             page.get_contents().page_type(),
