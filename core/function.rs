@@ -67,7 +67,6 @@ impl Display for ExternalFunc {
     }
 }
 
-#[cfg(feature = "json")]
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonFunc {
     Json,
@@ -97,7 +96,6 @@ pub enum JsonFunc {
     JsonQuote,
 }
 
-#[cfg(feature = "json")]
 impl Display for JsonFunc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -167,9 +165,8 @@ pub enum AggFunc {
     StringAgg,
     Sum,
     Total,
-    #[cfg(feature = "json")]
+
     JsonGroupArray,
-    #[cfg(feature = "json")]
     JsonGroupObject,
     External(Rc<ExtFunc>),
 }
@@ -203,9 +200,9 @@ impl AggFunc {
             Self::StringAgg => 2,
             Self::Sum => 1,
             Self::Total => 1,
-            #[cfg(feature = "json")]
+
             Self::JsonGroupArray => 1,
-            #[cfg(feature = "json")]
+
             Self::JsonGroupObject => 2,
             Self::External(func) => func.agg_args().unwrap_or(0),
         }
@@ -222,9 +219,9 @@ impl AggFunc {
             Self::StringAgg => "string_agg",
             Self::Sum => "sum",
             Self::Total => "total",
-            #[cfg(feature = "json")]
+
             Self::JsonGroupArray => "json_group_array",
-            #[cfg(feature = "json")]
+
             Self::JsonGroupObject => "json_group_object",
             Self::External(_) => "extension function",
         }
@@ -459,7 +456,7 @@ pub enum Func {
     Scalar(ScalarFunc),
     Math(MathFunc),
     Vector(VectorFunc),
-    #[cfg(feature = "json")]
+
     Json(JsonFunc),
     External(Rc<ExternalFunc>),
 }
@@ -471,7 +468,7 @@ impl Display for Func {
             Self::Scalar(scalar_func) => write!(f, "{}", scalar_func),
             Self::Math(math_func) => write!(f, "{}", math_func),
             Self::Vector(vector_func) => write!(f, "{}", vector_func),
-            #[cfg(feature = "json")]
+
             Self::Json(json_func) => write!(f, "{}", json_func),
             Self::External(generic_func) => write!(f, "{}", generic_func),
         }
@@ -543,9 +540,9 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
-            #[cfg(feature = "json")]
+
             "json_group_array" => Ok(Self::Agg(AggFunc::JsonGroupArray)),
-            #[cfg(feature = "json")]
+
             "json_group_object" => Ok(Self::Agg(AggFunc::JsonGroupObject)),
             "char" => Ok(Self::Scalar(ScalarFunc::Char)),
             "coalesce" => Ok(Self::Scalar(ScalarFunc::Coalesce)),
@@ -582,49 +579,49 @@ impl Func {
             "sqlite_version" => Ok(Self::Scalar(ScalarFunc::SqliteVersion)),
             "sqlite_source_id" => Ok(Self::Scalar(ScalarFunc::SqliteSourceId)),
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
-            #[cfg(feature = "json")]
+
             "json" => Ok(Self::Json(JsonFunc::Json)),
-            #[cfg(feature = "json")]
+
             "jsonb" => Ok(Self::Json(JsonFunc::Jsonb)),
-            #[cfg(feature = "json")]
+
             "json_array_length" => Ok(Self::Json(JsonFunc::JsonArrayLength)),
-            #[cfg(feature = "json")]
+
             "json_array" => Ok(Self::Json(JsonFunc::JsonArray)),
-            #[cfg(feature = "json")]
+
             "jsonb_array" => Ok(Self::Json(JsonFunc::JsonbArray)),
-            #[cfg(feature = "json")]
+
             "json_extract" => Ok(Func::Json(JsonFunc::JsonExtract)),
-            #[cfg(feature = "json")]
+
             "jsonb_extract" => Ok(Func::Json(JsonFunc::JsonbExtract)),
-            #[cfg(feature = "json")]
+
             "json_object" => Ok(Func::Json(JsonFunc::JsonObject)),
-            #[cfg(feature = "json")]
+
             "jsonb_object" => Ok(Func::Json(JsonFunc::JsonbObject)),
-            #[cfg(feature = "json")]
+
             "json_type" => Ok(Func::Json(JsonFunc::JsonType)),
-            #[cfg(feature = "json")]
+
             "json_error_position" => Ok(Self::Json(JsonFunc::JsonErrorPosition)),
-            #[cfg(feature = "json")]
+
             "json_valid" => Ok(Self::Json(JsonFunc::JsonValid)),
-            #[cfg(feature = "json")]
+
             "json_patch" => Ok(Self::Json(JsonFunc::JsonPatch)),
-            #[cfg(feature = "json")]
+
             "json_remove" => Ok(Self::Json(JsonFunc::JsonRemove)),
-            #[cfg(feature = "json")]
+
             "jsonb_remove" => Ok(Self::Json(JsonFunc::JsonbRemove)),
-            #[cfg(feature = "json")]
+
             "json_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
-            #[cfg(feature = "json")]
+
             "json_insert" => Ok(Self::Json(JsonFunc::JsonInsert)),
-            #[cfg(feature = "json")]
+
             "jsonb_insert" => Ok(Self::Json(JsonFunc::JsonbInsert)),
-            #[cfg(feature = "json")]
+
             "jsonb_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
-            #[cfg(feature = "json")]
+
             "json_pretty" => Ok(Self::Json(JsonFunc::JsonPretty)),
-            #[cfg(feature = "json")]
+
             "json_set" => Ok(Self::Json(JsonFunc::JsonSet)),
-            #[cfg(feature = "json")]
+
             "json_quote" => Ok(Self::Json(JsonFunc::JsonQuote)),
             "unixepoch" => Ok(Self::Scalar(ScalarFunc::UnixEpoch)),
             "julianday" => Ok(Self::Scalar(ScalarFunc::JulianDay)),

@@ -1,44 +1,23 @@
-mod de;
 mod error;
 mod json_cache;
 mod json_operations;
 mod json_path;
 mod jsonb;
-mod ser;
 
-use crate::bail_constraint_error;
-pub use crate::json::de::from_str;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{
     json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_patch, jsonb_remove,
     jsonb_replace,
 };
 use crate::json::json_path::{json_path, JsonPath, PathElement};
-pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::vdbe::Register;
-use crate::{bail_parse_error, json::de::ordered_object};
+use crate::{bail_constraint_error, bail_parse_error, LimboError};
 pub use json_cache::JsonCacheCell;
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
-use ser::to_string_pretty;
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::rc::Rc;
 use std::str::FromStr;
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(untagged)]
-pub enum Val {
-    Null,
-    Bool(bool),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    Array(Vec<Val>),
-    Removed,
-    #[serde(with = "ordered_object")]
-    Object(Vec<(String, Val)>),
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Conv {
@@ -62,31 +41,27 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
                 return Ok(json_value.to_owned());
             }
 
-            let json_val = get_json_value(json_value)?;
+            let json_val = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
             let json = match indent {
-                Some(indent) => to_string_pretty(&json_val, indent)?,
-                None => to_string(&json_val)?,
+                Some(indent) => json_val.to_string_pretty(Some(indent))?,
+                None => json_val.to_string()?,
             };
 
             Ok(OwnedValue::Text(Text::json(json)))
         }
-        OwnedValue::Blob(b) => {
-            let jsonbin = Jsonb::new(b.len(), Some(b));
-            jsonbin.is_valid()?;
-            Ok(OwnedValue::Text(Text {
-                value: Rc::new(jsonbin.to_string()?.into_bytes()),
-                subtype: TextSubtype::Json,
-            }))
-        }
-        OwnedValue::Null => Ok(OwnedValue::Null),
+
         _ => {
-            let json_val = get_json_value(json_value)?;
+            let json_val = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
             let json = match indent {
-                Some(indent) => to_string_pretty(&json_val, indent)?,
-                None => to_string(&json_val)?,
+                Some(indent) => {
+                    OwnedValue::Text(Text::json(json_val.to_string_pretty(Some(indent))?))
+                }
+                None => {
+                    let element_type = json_val.is_valid()?;
+                    json_string_to_db_type(json_val, element_type, OutputVariant::ElementType)?
+                }
             };
-
-            Ok(OwnedValue::Text(Text::json(json)))
+            Ok(json)
         }
     }
 }
@@ -139,7 +114,7 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
                 str.push('"');
                 Jsonb::from_str(&str)
             };
-            res
+            res.map_err(|_| LimboError::ParseError("malformed JSON".to_string()))
         }
         OwnedValue::Blob(blob) => {
             let json = Jsonb::from_raw_data(blob);
@@ -152,30 +127,15 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
         OwnedValue::Float(float) => {
             let mut buff = ryu::Buffer::new();
             Jsonb::from_str(buff.format(*float))
+                .map_err(|_| LimboError::ParseError("malformed JSON".to_string()))
         }
-        OwnedValue::Integer(int) => Jsonb::from_str(&int.to_string()),
+        OwnedValue::Integer(int) => Jsonb::from_str(&int.to_string())
+            .map_err(|_| LimboError::ParseError("malformed JSON".to_string())),
     }
 }
 
 pub fn curry_convert_dbtype_to_jsonb(strict: Conv) -> impl Fn(&OwnedValue) -> crate::Result<Jsonb> {
     move |val| convert_dbtype_to_jsonb(val, strict)
-}
-
-fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
-    match json_value {
-        OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
-            Ok(json) => Ok(json),
-            Err(_) => {
-                crate::bail_parse_error!("malformed JSON")
-            }
-        },
-        OwnedValue::Blob(_) => {
-            crate::bail_parse_error!("malformed JSON");
-        }
-        OwnedValue::Null => Ok(Val::Null),
-        OwnedValue::Float(f) => Ok(Val::Float(*f)),
-        OwnedValue::Integer(i) => Ok(Val::Integer(*i)),
-    }
 }
 
 pub fn json_array(values: &[Register]) -> crate::Result<OwnedValue> {
@@ -532,11 +492,12 @@ fn json_path_from_owned_value(path: &OwnedValue, strict: bool) -> crate::Result<
 
 pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
     match json {
-        OwnedValue::Text(t) => match from_str::<Val>(t.as_str()) {
+        OwnedValue::Text(t) => match Jsonb::from_str(t.as_str()) {
             Ok(_) => Ok(OwnedValue::Integer(0)),
             Err(JsonError::Message { location, .. }) => {
                 if let Some(loc) = location {
-                    Ok(OwnedValue::Integer(loc.column as i64))
+                    let one_indexed = loc + 1;
+                    Ok(OwnedValue::Integer(one_indexed as i64))
                 } else {
                     Err(crate::error::LimboError::InternalError(
                         "failed to determine json error position".into(),
