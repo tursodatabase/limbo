@@ -655,7 +655,7 @@ fn emit_loop_source(
                     &t_ctx.resolver,
                 )?;
             }
-            
+
             if let Some(flag) = t_ctx.reg_agg_flag {
                 let offset = program.offset().add(plan.result_columns.len() as u32);
 
