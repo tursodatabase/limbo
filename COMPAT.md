@@ -376,8 +376,8 @@ Modifiers:
 | json_object(label1,value1,...)     | Yes     |                                                              |
 | jsonb_object(label1,value1,...)    | Yes     |                                                                                                                                              |
 | json_patch(json1,json2)            | Yes     |                                                                                                                                              |
-| jsonb_patch(json1,json2)           |         |                                                                                                                                              |
-| json_pretty(json)                  | Partial | Shares same json(val) limitations. Also, when passing blobs for indentation, conversion is not exactly the same as in SQLite                 |
+| jsonb_patch(json1,json2)           | Yes     |                                                                                                                                              |
+| json_pretty(json)                  | Yes |                                                              |
 | json_remove(json,path,...)         | Yes     |                                                                                                                                              |
 | jsonb_remove(json,path,...)        | Yes     |                                                                                                                                              |
 | json_replace(json,path,value,...)  | Yes     |                                                                                                                                              |
@@ -389,10 +389,10 @@ Modifiers:
 | json_valid(json)                   | Yes     |                                                                                                                                              |
 | json_valid(json,flags)             |         |                                                                                                                                              |
 | json_quote(value)                  | Yes     |                                                                                                                                              |
-| json_group_array(value)            |         |                                                                                                                                              |
-| jsonb_group_array(value)           |         |                                                                                                                                              |
-| json_group_object(label,value)     |         |                                                                                                                                              |
-| jsonb_group_object(name,value)     |         |                                                                                                                                              |
+| json_group_array(value)            | Yes     |                                                                                                                                              |
+| jsonb_group_array(value)           | Yes     |                                                                                                                                              |
+| json_group_object(label,value)     | Yes     |                                                                                                                                              |
+| jsonb_group_object(name,value)     | Yes     |                                                                                                                                              |
 | json_each(json)                    |         |                                                                                                                                              |
 | json_each(json,path)               |         |                                                                                                                                              |
 | json_tree(json)                    |         |                                                                                                                                              |
