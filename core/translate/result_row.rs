@@ -25,7 +25,9 @@ pub fn emit_select_result(
     }
 
     let start_reg = t_ctx.reg_result_cols_start.unwrap();
-    for (i, rc) in plan.result_columns.iter().enumerate() {
+    for (i, rc) in plan.result_columns.iter().enumerate().filter(|(_, rc)| {
+        t_ctx.reg_agg_flag.is_some() && rc.contains_aggregates || t_ctx.reg_agg_flag.is_none()
+    }) {
         let reg = start_reg + i;
         translate_expr(
             program,
