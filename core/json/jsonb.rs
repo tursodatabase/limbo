@@ -1023,6 +1023,11 @@ impl Jsonb {
                 string.push('\n');
             };
         }
+        if let JsonIndentation::Indentation(value) = indent {
+            for _ in 0..depth - 1 {
+                string.push_str(value);
+            }
+        };
         string.push('}');
 
         Ok(current_cursor)
@@ -1034,34 +1039,36 @@ impl Jsonb {
         cursor: usize,
         len: usize,
         mut depth: usize,
-        delimiter: &JsonIndentation,
+        indent: &JsonIndentation,
     ) -> Result<usize> {
         let end_cursor = cursor + len;
         let mut current_cursor = cursor;
         depth += 1;
         string.push('[');
-        if delimiter.is_pretty() {
+        if indent.is_pretty() {
             string.push('\n');
         };
         while current_cursor < end_cursor {
-            if let JsonIndentation::Indentation(value) = delimiter {
+            if let JsonIndentation::Indentation(value) = indent {
                 for _ in 0..depth {
                     string.push_str(value);
                 }
             };
-            current_cursor = self.serialize_value(string, current_cursor, depth, delimiter)?;
+            current_cursor = self.serialize_value(string, current_cursor, depth, indent)?;
             if current_cursor < end_cursor {
                 string.push(',');
             }
-            if delimiter.is_pretty() {
+            if indent.is_pretty() {
                 string.push('\n');
             };
         }
-
-        string.push(']');
-        if delimiter.is_pretty() {
-            string.push('\n');
+        if let JsonIndentation::Indentation(value) = indent {
+            for _ in 0..depth - 1 {
+                string.push_str(value);
+            }
         };
+        string.push(']');
+
         Ok(current_cursor)
     }
 
