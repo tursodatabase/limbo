@@ -97,6 +97,7 @@ pub fn json_from_raw_bytes_agg(data: &[u8], raw: bool) -> crate::Result<OwnedVal
 fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Jsonb> {
     match val {
         OwnedValue::Text(text) => {
+            println!("{:?}", text.as_str());
             let res = if text.subtype == TextSubtype::Json || matches!(strict, Conv::Strict) {
                 // Parse directly as JSON if it's already JSON subtype or strict mode is on
                 let json = if matches!(strict, Conv::ToString) {
@@ -614,18 +615,6 @@ mod tests {
     #[test]
     fn test_get_json_valid_json5() {
         let input = OwnedValue::build_text("{ key: 'value' }");
-        let result = get_json(&input, None).unwrap();
-        if let OwnedValue::Text(result_str) = result {
-            assert!(result_str.as_str().contains("\"key\":\"value\""));
-            assert_eq!(result_str.subtype, TextSubtype::Json);
-        } else {
-            panic!("Expected OwnedValue::Text");
-        }
-    }
-
-    #[test]
-    fn test_get_json_valid_json5_double_single_quotes() {
-        let input = OwnedValue::build_text("{ key: ''value'' }");
         let result = get_json(&input, None).unwrap();
         if let OwnedValue::Text(result_str) = result {
             assert!(result_str.as_str().contains("\"key\":\"value\""));

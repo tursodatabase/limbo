@@ -1392,7 +1392,7 @@ impl Jsonb {
             b'f' => {
                 pos = self.deserialize_false(input, pos)?;
             }
-            b'n' => {
+            b'n' | b'N' => {
                 pos = self.deserialize_null_or_nan(input, pos)?;
             }
             b'"' | b'\'' => {
