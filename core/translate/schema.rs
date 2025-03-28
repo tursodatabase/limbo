@@ -1,6 +1,8 @@
 use std::fmt::Display;
+use std::rc::Rc;
 
 use crate::ast;
+use crate::ext::VTabImpl;
 use crate::schema::Schema;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
@@ -9,8 +11,10 @@ use crate::util::PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX;
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::{CmpInsFlags, Insn};
 use crate::LimboError;
+use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
+use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
 pub fn translate_create_table(
@@ -398,7 +402,7 @@ fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTab
     sql
 }
 
-fn create_vtable_body_to_str(vtab: &CreateVirtualTable) -> String {
+fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) -> String {
     let args = if let Some(args) = &vtab.args {
         args.iter()
             .map(|arg| arg.to_string())
@@ -412,8 +416,25 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable) -> String {
     } else {
         ""
     };
+    let ext_args = vtab
+        .args
+        .as_ref()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|a| limbo_ext::Value::from_text(a.to_string()))
+        .collect::<Vec<_>>();
+    let schema = module
+        .implementation
+        .init_schema(ext_args)
+        .unwrap_or_default();
+    let vtab_args = if let Some(first_paren) = schema.find('(') {
+        let closing_paren = schema.rfind(')').unwrap_or_default();
+        &schema[first_paren..=closing_paren]
+    } else {
+        "()"
+    };
     format!(
-        "CREATE VIRTUAL TABLE {} {} USING {}{}",
+        "CREATE VIRTUAL TABLE {} {} USING {}{}\n /*{}{}*/",
         vtab.tbl_name.name.0,
         if_not_exists,
         vtab.module_name.0,
@@ -421,7 +442,9 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable) -> String {
             String::new()
         } else {
             format!("({})", args)
-        }
+        },
+        vtab.tbl_name.name.0,
+        vtab_args
     )
 }
 
@@ -429,6 +452,7 @@ pub fn translate_create_virtual_table(
     vtab: CreateVirtualTable,
     schema: &Schema,
     query_mode: QueryMode,
+    syms: &SymbolTable,
 ) -> Result<ProgramBuilder> {
     let ast::CreateVirtualTable {
         if_not_exists,
@@ -440,7 +464,12 @@ pub fn translate_create_virtual_table(
     let table_name = tbl_name.name.0.clone();
     let module_name_str = module_name.0.clone();
     let args_vec = args.clone().unwrap_or_default();
-
+    let Some(vtab_module) = syms.vtab_modules.get(&module_name_str) else {
+        bail_parse_error!("no such module: {}", module_name_str);
+    };
+    if !vtab_module.module_kind.eq(&VTabKind::VirtualTable) {
+        bail_parse_error!("module {} is not a virtual table", module_name_str);
+    };
     if schema.get_table(&table_name).is_some() && *if_not_exists {
         let mut program = ProgramBuilder::new(ProgramBuilderOpts {
             query_mode,
@@ -465,7 +494,6 @@ pub fn translate_create_virtual_table(
 
     let module_name_reg = program.emit_string8_new_reg(module_name_str.clone());
     let table_name_reg = program.emit_string8_new_reg(table_name.clone());
-
     let args_reg = if !args_vec.is_empty() {
         let args_start = program.alloc_register();
 
@@ -491,7 +519,6 @@ pub fn translate_create_virtual_table(
         table_name: table_name_reg,
         args_reg,
     });
-
     let table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
     let sqlite_schema_cursor_id = program.alloc_cursor_id(
         Some(SQLITE_TABLEID.to_owned()),
@@ -503,7 +530,7 @@ pub fn translate_create_virtual_table(
     });
     program.emit_insn(Insn::OpenWriteAwait {});
 
-    let sql = create_vtable_body_to_str(&vtab);
+    let sql = create_vtable_body_to_str(&vtab, vtab_module.clone());
     emit_schema_entry(
         &mut program,
         sqlite_schema_cursor_id,
