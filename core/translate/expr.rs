@@ -898,6 +898,7 @@ pub fn translate_expr(
                     | JsonFunc::JsonbArray
                     | JsonFunc::JsonExtract
                     | JsonFunc::JsonSet
+                    | JsonFunc::JsonbSet
                     | JsonFunc::JsonbExtract
                     | JsonFunc::JsonReplace
                     | JsonFunc::JsonbReplace
@@ -973,7 +974,7 @@ pub fn translate_expr(
                         target_register,
                         func_ctx,
                     ),
-                    JsonFunc::JsonPatch => {
+                    JsonFunc::JsonPatch | JsonFunc::JsonbPatch => {
                         let args = expect_arguments_exact!(args, 2, j);
                         translate_function(
                             program,

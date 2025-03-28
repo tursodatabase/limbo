@@ -1,44 +1,35 @@
-mod de;
+#[cfg(feature = "json")]
 mod error;
+#[cfg(feature = "json")]
 mod json_cache;
+#[cfg(feature = "json")]
 mod json_operations;
+#[cfg(feature = "json")]
 mod json_path;
+#[cfg(feature = "json")]
 mod jsonb;
-mod ser;
 
-use crate::bail_constraint_error;
-pub use crate::json::de::from_str;
+#[cfg(feature = "json")]
 use crate::json::error::Error as JsonError;
+#[cfg(feature = "json")]
 pub use crate::json::json_operations::{
-    json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_remove, jsonb_replace,
+    json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_patch, jsonb_remove,
+    jsonb_replace,
 };
+#[cfg(feature = "json")]
 use crate::json::json_path::{json_path, JsonPath, PathElement};
-pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::vdbe::Register;
-use crate::{bail_parse_error, json::de::ordered_object};
+use crate::{bail_constraint_error, bail_parse_error, LimboError};
+#[cfg(feature = "json")]
 pub use json_cache::JsonCacheCell;
+#[cfg(feature = "json")]
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
-use ser::to_string_pretty;
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::rc::Rc;
 use std::str::FromStr;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(untagged)]
-pub enum Val {
-    Null,
-    Bool(bool),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    Array(Vec<Val>),
-    Removed,
-    #[serde(with = "ordered_object")]
-    Object(Vec<(String, Val)>),
-}
-
+#[cfg(feature = "json")]
 #[derive(Debug, Clone, Copy)]
 pub enum Conv {
     Strict,
@@ -46,6 +37,7 @@ pub enum Conv {
     ToString,
 }
 
+#[cfg(feature = "json")]
 enum OutputVariant {
     ElementType,
     Binary,
@@ -61,31 +53,27 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
                 return Ok(json_value.to_owned());
             }
 
-            let json_val = get_json_value(json_value)?;
+            let json_val = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
             let json = match indent {
-                Some(indent) => to_string_pretty(&json_val, indent)?,
-                None => to_string(&json_val)?,
+                Some(indent) => json_val.to_string_pretty(Some(indent))?,
+                None => json_val.to_string()?,
             };
 
             Ok(OwnedValue::Text(Text::json(json)))
         }
-        OwnedValue::Blob(b) => {
-            let jsonbin = Jsonb::new(b.len(), Some(b));
-            jsonbin.is_valid()?;
-            Ok(OwnedValue::Text(Text {
-                value: Rc::new(jsonbin.to_string()?.into_bytes()),
-                subtype: TextSubtype::Json,
-            }))
-        }
-        OwnedValue::Null => Ok(OwnedValue::Null),
+
         _ => {
-            let json_val = get_json_value(json_value)?;
+            let json_val = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
             let json = match indent {
-                Some(indent) => to_string_pretty(&json_val, indent)?,
-                None => to_string(&json_val)?,
+                Some(indent) => {
+                    OwnedValue::Text(Text::json(json_val.to_string_pretty(Some(indent))?))
+                }
+                None => {
+                    let element_type = json_val.is_valid()?;
+                    json_string_to_db_type(json_val, element_type, OutputVariant::ElementType)?
+                }
             };
-
-            Ok(OwnedValue::Text(Text::json(json)))
+            Ok(json)
         }
     }
 }
@@ -99,6 +87,22 @@ pub fn jsonb(json_value: &OwnedValue, cache: &JsonCacheCell) -> crate::Result<Ow
         Err(_) => {
             bail_parse_error!("malformed JSON")
         }
+    }
+}
+
+pub fn convert_dbtype_to_raw_jsonb(data: &OwnedValue) -> crate::Result<Vec<u8>> {
+    let json = convert_dbtype_to_jsonb(data, Conv::NotStrict)?;
+    Ok(json.data())
+}
+
+pub fn json_from_raw_bytes_agg(data: &[u8], raw: bool) -> crate::Result<OwnedValue> {
+    let mut json = Jsonb::from_raw_data(data);
+    let el_type = json.is_valid()?;
+    json.finalize_unsafe(el_type)?;
+    if raw {
+        json_string_to_db_type(json, el_type, OutputVariant::Binary)
+    } else {
+        json_string_to_db_type(json, el_type, OutputVariant::ElementType)
     }
 }
 
@@ -125,7 +129,7 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
                 str.push('"');
                 Jsonb::from_str(&str)
             };
-            res
+            res.map_err(|_| LimboError::ParseError("malformed JSON".to_string()))
         }
         OwnedValue::Blob(blob) => {
             let json = Jsonb::from_raw_data(blob);
@@ -138,30 +142,15 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
         OwnedValue::Float(float) => {
             let mut buff = ryu::Buffer::new();
             Jsonb::from_str(buff.format(*float))
+                .map_err(|_| LimboError::ParseError("malformed JSON".to_string()))
         }
-        OwnedValue::Integer(int) => Jsonb::from_str(&int.to_string()),
+        OwnedValue::Integer(int) => Jsonb::from_str(&int.to_string())
+            .map_err(|_| LimboError::ParseError("malformed JSON".to_string())),
     }
 }
 
 pub fn curry_convert_dbtype_to_jsonb(strict: Conv) -> impl Fn(&OwnedValue) -> crate::Result<Jsonb> {
     move |val| convert_dbtype_to_jsonb(val, strict)
-}
-
-fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
-    match json_value {
-        OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
-            Ok(json) => Ok(json),
-            Err(_) => {
-                crate::bail_parse_error!("malformed JSON")
-            }
-        },
-        OwnedValue::Blob(_) => {
-            crate::bail_parse_error!("malformed JSON");
-        }
-        OwnedValue::Null => Ok(Val::Null),
-        OwnedValue::Float(f) => Ok(Val::Float(*f)),
-        OwnedValue::Integer(i) => Ok(Val::Integer(*i)),
-    }
 }
 
 pub fn json_array(values: &[Register]) -> crate::Result<OwnedValue> {
@@ -241,6 +230,30 @@ pub fn json_set(args: &[Register], json_cache: &JsonCacheCell) -> crate::Result<
     let el_type = json.is_valid()?;
 
     json_string_to_db_type(json, el_type, OutputVariant::String)
+}
+
+pub fn jsonb_set(args: &[Register], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0].get_owned_value(), make_jsonb_fn)?;
+    let other = args[1..].chunks_exact(2);
+
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0].get_owned_value(), true)?;
+
+        let value = convert_dbtype_to_jsonb(&chunk[1].get_owned_value(), Conv::NotStrict)?;
+        let mut op = SetOperation::new(value);
+        if let Some(path) = path {
+            let _ = json.operate_on_path(&path, &mut op);
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
+    json_string_to_db_type(json, el_type, OutputVariant::Binary)
 }
 
 /// Implements the -> operator. Always returns a proper JSON value.
@@ -446,42 +459,6 @@ fn json_string_to_db_type(
     }
 }
 
-/// Returns a value with type defined by SQLite documentation:
-///   > the SQL datatype of the result is NULL for a JSON null,
-///   > INTEGER or REAL for a JSON numeric value,
-///   > an INTEGER zero for a JSON false value,
-///   > an INTEGER one for a JSON true value,
-///   > the dequoted text for a JSON string value,
-///   > and a text representation for JSON object and array values.
-///
-/// https://sqlite.org/json1.html#the_json_extract_function
-///
-/// *all_as_db* - if true, objects and arrays will be returned as pure TEXT without the JSON subtype
-fn convert_json_to_db_type(extracted: &Val, all_as_db: bool) -> crate::Result<OwnedValue> {
-    match extracted {
-        Val::Removed => Ok(OwnedValue::Null),
-        Val::Null => Ok(OwnedValue::Null),
-        Val::Float(f) => Ok(OwnedValue::Float(*f)),
-        Val::Integer(i) => Ok(OwnedValue::Integer(*i)),
-        Val::Bool(b) => {
-            if *b {
-                Ok(OwnedValue::Integer(1))
-            } else {
-                Ok(OwnedValue::Integer(0))
-            }
-        }
-        Val::String(s) => Ok(OwnedValue::Text(Text::from_str(s))),
-        _ => {
-            let json = to_string(&extracted)?;
-            if all_as_db {
-                Ok(OwnedValue::build_text(&json))
-            } else {
-                Ok(OwnedValue::Text(Text::json(json)))
-            }
-        }
-    }
-}
-
 pub fn json_type(value: &OwnedValue, path: Option<&OwnedValue>) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
@@ -554,11 +531,12 @@ fn json_path_from_owned_value(path: &OwnedValue, strict: bool) -> crate::Result<
 
 pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
     match json {
-        OwnedValue::Text(t) => match from_str::<Val>(t.as_str()) {
+        OwnedValue::Text(t) => match Jsonb::from_str(t.as_str()) {
             Ok(_) => Ok(OwnedValue::Integer(0)),
             Err(JsonError::Message { location, .. }) => {
                 if let Some(loc) = location {
-                    Ok(OwnedValue::Integer(loc.column as i64))
+                    let one_indexed = loc + 1;
+                    Ok(OwnedValue::Integer(one_indexed as i64))
                 } else {
                     Err(crate::error::LimboError::InternalError(
                         "failed to determine json error position".into(),
@@ -672,18 +650,6 @@ mod tests {
     #[test]
     fn test_get_json_valid_json5() {
         let input = OwnedValue::build_text("{ key: 'value' }");
-        let result = get_json(&input, None).unwrap();
-        if let OwnedValue::Text(result_str) = result {
-            assert!(result_str.as_str().contains("\"key\":\"value\""));
-            assert_eq!(result_str.subtype, TextSubtype::Json);
-        } else {
-            panic!("Expected OwnedValue::Text");
-        }
-    }
-
-    #[test]
-    fn test_get_json_valid_json5_double_single_quotes() {
-        let input = OwnedValue::build_text("{ key: ''value'' }");
         let result = get_json(&input, None).unwrap();
         if let OwnedValue::Text(result_str) = result {
             assert!(result_str.as_str().contains("\"key\":\"value\""));

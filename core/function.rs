@@ -85,6 +85,7 @@ pub enum JsonFunc {
     JsonErrorPosition,
     JsonValid,
     JsonPatch,
+    JsonbPatch,
     JsonRemove,
     JsonbRemove,
     JsonReplace,
@@ -93,6 +94,7 @@ pub enum JsonFunc {
     JsonbInsert,
     JsonPretty,
     JsonSet,
+    JsonbSet,
     JsonQuote,
 }
 
@@ -118,6 +120,7 @@ impl Display for JsonFunc {
                 Self::JsonErrorPosition => "json_error_position".to_string(),
                 Self::JsonValid => "json_valid".to_string(),
                 Self::JsonPatch => "json_patch".to_string(),
+                Self::JsonbPatch => "jsonb_patch".to_string(),
                 Self::JsonRemove => "json_remove".to_string(),
                 Self::JsonbRemove => "jsonb_remove".to_string(),
                 Self::JsonReplace => "json_replace".to_string(),
@@ -126,6 +129,7 @@ impl Display for JsonFunc {
                 Self::JsonbInsert => "jsonb_insert".to_string(),
                 Self::JsonPretty => "json_pretty".to_string(),
                 Self::JsonSet => "json_set".to_string(),
+                Self::JsonbSet => "jsonb_set".to_string(),
                 Self::JsonQuote => "json_quote".to_string(),
             }
         )
@@ -165,6 +169,14 @@ pub enum AggFunc {
     StringAgg,
     Sum,
     Total,
+    #[cfg(feature = "json")]
+    JsonbGroupArray,
+    #[cfg(feature = "json")]
+    JsonGroupArray,
+    #[cfg(feature = "json")]
+    JsonbGroupObject,
+    #[cfg(feature = "json")]
+    JsonGroupObject,
     External(Rc<ExtFunc>),
 }
 
@@ -197,6 +209,10 @@ impl AggFunc {
             Self::StringAgg => 2,
             Self::Sum => 1,
             Self::Total => 1,
+            #[cfg(feature = "json")]
+            Self::JsonGroupArray | Self::JsonbGroupArray => 1,
+            #[cfg(feature = "json")]
+            Self::JsonGroupObject | Self::JsonbGroupObject => 2,
             Self::External(func) => func.agg_args().unwrap_or(0),
         }
     }
@@ -212,6 +228,14 @@ impl AggFunc {
             Self::StringAgg => "string_agg",
             Self::Sum => "sum",
             Self::Total => "total",
+            #[cfg(feature = "json")]
+            Self::JsonbGroupArray => "jsonb_group_array",
+            #[cfg(feature = "json")]
+            Self::JsonGroupArray => "json_group_array",
+            #[cfg(feature = "json")]
+            Self::JsonbGroupObject => "jsonb_group_object",
+            #[cfg(feature = "json")]
+            Self::JsonGroupObject => "json_group_object",
             Self::External(_) => "extension function",
         }
     }
@@ -529,6 +553,14 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
+            #[cfg(feature = "json")]
+            "jsonb_group_array" => Ok(Self::Agg(AggFunc::JsonbGroupArray)),
+            #[cfg(feature = "json")]
+            "json_group_array" => Ok(Self::Agg(AggFunc::JsonGroupArray)),
+            #[cfg(feature = "json")]
+            "jsonb_group_object" => Ok(Self::Agg(AggFunc::JsonbGroupObject)),
+            #[cfg(feature = "json")]
+            "json_group_object" => Ok(Self::Agg(AggFunc::JsonGroupObject)),
             "char" => Ok(Self::Scalar(ScalarFunc::Char)),
             "coalesce" => Ok(Self::Scalar(ScalarFunc::Coalesce)),
             "concat" => Ok(Self::Scalar(ScalarFunc::Concat)),
@@ -606,6 +638,8 @@ impl Func {
             "json_pretty" => Ok(Self::Json(JsonFunc::JsonPretty)),
             #[cfg(feature = "json")]
             "json_set" => Ok(Self::Json(JsonFunc::JsonSet)),
+            #[cfg(feature = "json")]
+            "jsonb_set" => Ok(Self::Json(JsonFunc::JsonbSet)),
             #[cfg(feature = "json")]
             "json_quote" => Ok(Self::Json(JsonFunc::JsonQuote)),
             "unixepoch" => Ok(Self::Scalar(ScalarFunc::UnixEpoch)),

@@ -32,6 +32,8 @@ use crate::functions::datetime::{
 };
 use crate::functions::printf::exec_printf;
 
+#[cfg(feature = "json")]
+use crate::bail_constraint_error;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
@@ -49,16 +51,18 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
-use crate::{bail_constraint_error, info, CheckpointStatus};
 #[cfg(feature = "json")]
 use crate::{
-    function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
-    json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
-    json::json_error_position, json::json_extract, json::json_insert, json::json_object,
-    json::json_patch, json::json_quote, json::json_remove, json::json_replace, json::json_set,
-    json::json_type, json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert,
-    json::jsonb_object, json::jsonb_remove, json::jsonb_replace, json::JsonCacheCell,
+    function::JsonFunc, json::convert_dbtype_to_raw_jsonb, json::get_json, json::is_json_valid,
+    json::json_array, json::json_array_length, json::json_arrow_extract,
+    json::json_arrow_shift_extract, json::json_error_position, json::json_extract,
+    json::json_from_raw_bytes_agg, json::json_insert, json::json_object, json::json_patch,
+    json::json_quote, json::json_remove, json::json_replace, json::json_set, json::json_type,
+    json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert, json::jsonb_object,
+    json::jsonb_patch, json::jsonb_remove, json::jsonb_replace, json::jsonb_set,
+    json::JsonCacheCell,
 };
+use crate::{info, CheckpointStatus};
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
 };
@@ -1847,6 +1851,18 @@ impl Program {
                             AggFunc::GroupConcat | AggFunc::StringAgg => Register::Aggregate(
                                 AggContext::GroupConcat(OwnedValue::build_text("")),
                             ),
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
+                                Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
+                                    Rc::new(vec![]),
+                                )))
+                            }
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
+                                Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
+                                    Rc::new(vec![]),
+                                )))
+                            }
                             AggFunc::External(func) => match func.as_ref() {
                                 ExtFunc::Aggregate {
                                     init,
@@ -2023,6 +2039,71 @@ impl Program {
                                 *acc += col;
                             }
                         }
+                        #[cfg(feature = "json")]
+                        AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
+                            let key = state.registers[*col].clone();
+                            let value = state.registers[*delimiter].clone();
+                            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
+                            else {
+                                unreachable!();
+                            };
+                            let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                unreachable!();
+                            };
+
+                            let mut key_vec = convert_dbtype_to_raw_jsonb(&key.get_owned_value())?;
+                            let mut val_vec =
+                                convert_dbtype_to_raw_jsonb(&value.get_owned_value())?;
+                            let mut buff = Vec::with_capacity(
+                                key_vec.len()
+                                    + val_vec.len()
+                                    + acc.to_blob().expect("Should be blob").len(),
+                            );
+
+                            match acc {
+                                OwnedValue::Blob(vec) => {
+                                    if vec.is_empty() {
+                                        // bits for obj header
+                                        buff.push(12);
+                                        buff.append(&mut key_vec);
+                                        buff.append(&mut val_vec);
+                                    } else {
+                                        buff.extend_from_slice(&vec);
+                                        buff.append(&mut key_vec);
+                                        buff.append(&mut val_vec);
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
+                            *acc = OwnedValue::from_blob(buff);
+                        }
+                        #[cfg(feature = "json")]
+                        AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
+                            let col = state.registers[*col].clone();
+                            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
+                            else {
+                                unreachable!();
+                            };
+                            let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                unreachable!();
+                            };
+
+                            let mut buff = vec![];
+                            let mut data = convert_dbtype_to_raw_jsonb(&col.get_owned_value())?;
+                            match acc {
+                                OwnedValue::Blob(vec) => {
+                                    if vec.is_empty() {
+                                        buff.push(11);
+                                        buff.append(&mut data)
+                                    } else {
+                                        buff.extend_from_slice(&vec);
+                                        buff.append(&mut data);
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
+                            *acc = OwnedValue::from_blob(buff);
+                        }
                         AggFunc::External(_) => {
                             let (step_fn, state_ptr, argc) = {
                                 let Register::Aggregate(agg) = &state.registers[*acc_reg] else {
@@ -2113,6 +2194,42 @@ impl Program {
                                     unreachable!();
                                 };
                                 state.registers[*register] = Register::OwnedValue(acc.clone());
+                            }
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonGroupObject => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
+                            }
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonbGroupObject => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, true)?);
+                            }
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonGroupArray => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
+                            }
+                            #[cfg(feature = "json")]
+                            AggFunc::JsonbGroupArray => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, true)?);
                             }
                             AggFunc::External(_) => {
                                 agg.compute_external()?;
@@ -2266,6 +2383,7 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+
                             JsonFunc::Jsonb => {
                                 let json_value = &state.registers[*start_reg];
                                 let json_blob =
@@ -2275,6 +2393,7 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+
                             JsonFunc::JsonArray
                             | JsonFunc::JsonObject
                             | JsonFunc::JsonbArray
@@ -2406,6 +2525,18 @@ impl Program {
                                 state.registers[*dest] = Register::OwnedValue(json_patch(
                                     target.get_owned_value(),
                                     patch.get_owned_value(),
+                                    &state.json_cache,
+                                )?);
+                            }
+                            JsonFunc::JsonbPatch => {
+                                assert_eq!(arg_count, 2);
+                                assert!(*start_reg + 1 < state.registers.len());
+                                let target = &state.registers[*start_reg];
+                                let patch = &state.registers[*start_reg + 1];
+                                state.registers[*dest] = Register::OwnedValue(jsonb_patch(
+                                    target.get_owned_value(),
+                                    patch.get_owned_value(),
+                                    &state.json_cache,
                                 )?);
                             }
                             JsonFunc::JsonRemove => {
@@ -2506,6 +2637,22 @@ impl Program {
                                     &state.registers[*start_reg..*start_reg + arg_count];
 
                                 let json_result = json_set(reg_values, &state.json_cache);
+
+                                match json_result {
+                                    Ok(json) => state.registers[*dest] = Register::OwnedValue(json),
+                                    Err(e) => return Err(e),
+                                }
+                            }
+                            JsonFunc::JsonbSet => {
+                                if arg_count % 2 == 0 {
+                                    bail_constraint_error!(
+                                        "json_set() needs an odd number of arguments"
+                                    )
+                                }
+                                let reg_values =
+                                    &state.registers[*start_reg..*start_reg + arg_count];
+
+                                let json_result = jsonb_set(reg_values, &state.json_cache);
 
                                 match json_result {
                                     Ok(json) => state.registers[*dest] = Register::OwnedValue(json),

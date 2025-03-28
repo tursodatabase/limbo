@@ -558,6 +558,48 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
+        #[cfg(feature = "json")]
+        AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
+            if agg.args.len() != 1 {
+                crate::bail_parse_error!("min bad number of arguments");
+            }
+            let expr_reg = program.alloc_register();
+            emit_column(program, expr_reg);
+            program.emit_insn(Insn::AggStep {
+                acc_reg: target_register,
+                col: expr_reg,
+                delimiter: 0,
+                func: AggFunc::JsonGroupArray,
+            });
+            target_register
+        }
+        #[cfg(feature = "json")]
+        AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
+            if agg.args.len() != 2 {
+                crate::bail_parse_error!("max bad number of arguments");
+            }
+            let expr = &agg.args[0];
+            let expr_reg = program.alloc_register();
+            let value_expr = &agg.args[1];
+            let value_reg = program.alloc_register();
+
+            let _ = translate_expr(program, Some(referenced_tables), expr, expr_reg, resolver)?;
+            let _ = translate_expr(
+                program,
+                Some(referenced_tables),
+                value_expr,
+                value_reg,
+                resolver,
+            )?;
+
+            program.emit_insn(Insn::AggStep {
+                acc_reg: target_register,
+                col: expr_reg,
+                delimiter: value_reg,
+                func: AggFunc::JsonGroupObject,
+            });
+            target_register
+        }
         AggFunc::StringAgg => {
             if agg.args.len() != 2 {
                 crate::bail_parse_error!("string_agg bad number of arguments");

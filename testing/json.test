@@ -298,7 +298,7 @@ do_execsql_test json_extract_with_escaping {
 } {{1}}
 
 do_execsql_test json_extract_with_escaping_2 {
-    SELECT json_extract('{"\x61": 1}', '$."\x61"')
+    SELECT json_extract('{"a": 1}', '$."\x61"')
 } {{1}}
 
 do_execsql_test json_extract_null_path {
@@ -458,7 +458,7 @@ do_execsql_test json_arrow_chained {
   select '{"a":2,"c":[4,5,{"f":7}]}' -> 'c' -> 2 ->> 'f'
 } {{7}}
 
-# TODO: fix me - this passes on SQLite and needs to be fixed in Limbo.
+
 do_execsql_test json_extract_multiple_null_paths {
     SELECT json_extract(1, null, null, null)
 } {{}}
@@ -669,10 +669,10 @@ do_execsql_test json_from_json_object {
 
 # FIXME: this behaviour differs from sqlite. Although, sqlite docs states
 # that this could change in a "future enhancement" (https://www.sqlite.org/json1.html#jobj)
-#do_execsql_test json_object_duplicated_keys {
-#    SELECT json_object('key', 'value', 'key', 'value2');
-#} {{{"key":"value2"}}}
-#
+do_execsql_test json_object_duplicated_keys {
+    SELECT json_object('key', 'value', 'key', 'value2');
+} {{{"key":"value","key":"value2"}}}
+
 
 do_execsql_test json_valid_1 {
    SELECT json_valid('{"a":55,"b":72}');

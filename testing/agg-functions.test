@@ -98,3 +98,11 @@ do_execsql_test select-agg-binary-unary-negative {
 do_execsql_test select-agg-binary-unary-positive {
   SELECT min(age) + +max(age) FROM users;
 } {101}
+
+do_execsql_test select-agg-json-array {
+  SELECT json_group_array(name) FROM products;
+} {["hat","cap","shirt","sweater","sweatshirt","shorts","jeans","sneakers","boots","coat","accessories"]}
+
+do_execsql_test select-agg-json-array-object {
+  SELECT json_group_array(json_object('name', name)) FROM products;
+} {[{"name":"hat"},{"name":"cap"},{"name":"shirt"},{"name":"sweater"},{"name":"sweatshirt"},{"name":"shorts"},{"name":"jeans"},{"name":"sneakers"},{"name":"boots"},{"name":"coat"},{"name":"accessories"}]}
