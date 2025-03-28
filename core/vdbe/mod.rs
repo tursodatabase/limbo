@@ -4547,7 +4547,6 @@ impl Row {
 
     pub fn get_values(&self) -> impl Iterator<Item = &OwnedValue> {
         let values = unsafe { std::slice::from_raw_parts(self.values, self.count) };
-        dbg!(&values);
         // This should be ownedvalues
         // TODO: add check for this
         values.iter().map(|v| v.get_owned_value())
