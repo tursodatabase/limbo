@@ -1083,7 +1083,7 @@ impl<T: Default + Copy> SmallVec<T> {
     }
 
     pub fn has_extra_data(&self) -> bool {
-        self.len >= self.len
+        self.len >= self.data.len()
     }
 }
 

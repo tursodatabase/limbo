@@ -401,7 +401,10 @@ impl BTreeCursor {
                     let record = if let Some(next_page) = first_overflow_page {
                         return_if_io!(self.process_overflow_read(_payload, next_page, payload_size))
                     } else {
-                        crate::storage::sqlite3_ondisk::read_record(_payload)?
+                        crate::storage::sqlite3_ondisk::read_record(
+                            _payload,
+                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                        )?
                     };
                     self.stack.retreat();
                     return Ok(CursorResult::Ok(Some(_rowid)));
@@ -419,7 +422,7 @@ impl BTreeCursor {
         payload: &'static [u8],
         start_next_page: u32,
         payload_size: u64,
-    ) -> Result<CursorResult<ImmutableRecord>> {
+    ) -> Result<CursorResult<()>> {
         let res = match &mut self.state {
             CursorState::None => {
                 tracing::debug!("start reading overflow page payload_size={}", payload_size);
@@ -455,8 +458,9 @@ impl BTreeCursor {
                         *remaining_to_read == 0 && next == 0,
                         "we can't have more pages to read while also have read everything"
                     );
-                    let record = crate::storage::sqlite3_ondisk::read_record(&payload)?;
-                    CursorResult::Ok(record)
+                    let mut payload_swap = Vec::new();
+                    std::mem::swap(payload, &mut payload_swap);
+                    CursorResult::Ok(payload_swap)
                 } else {
                     let new_page = self.pager.read_page(next as usize)?;
                     *page = new_page;
@@ -466,10 +470,20 @@ impl BTreeCursor {
             }
             _ => unreachable!(),
         };
-        if matches!(res, CursorResult::Ok(..)) {
-            self.state = CursorState::None;
+        match res {
+            CursorResult::Ok(payload) => {
+                {
+                    let mut reuse_immutable = self.get_lazy_immutable_record();
+                    crate::storage::sqlite3_ondisk::read_record(
+                        &payload,
+                        reuse_immutable.as_mut().unwrap(),
+                    )?;
+                }
+                self.state = CursorState::None;
+                Ok(CursorResult::Ok(()))
+            }
+            CursorResult::IO => Ok(CursorResult::IO),
         }
-        Ok(res)
     }
 
     /// Move the cursor to the next record and return it.
@@ -484,7 +498,10 @@ impl BTreeCursor {
             match rowid {
                 Some(rowid) => {
                     let record = mv_cursor.current_row().unwrap().unwrap();
-                    crate::storage::sqlite3_ondisk::read_record(&record.data)?;
+                    crate::storage::sqlite3_ondisk::read_record(
+                        &record.data,
+                        self.get_lazy_immutable_record().as_mut().unwrap(),
+                    )?;
                     mv_cursor.forward();
                     return Ok(CursorResult::Ok(Some(rowid.row_id)));
                 }
@@ -573,7 +590,10 @@ impl BTreeCursor {
                             *payload_size
                         ))
                     } else {
-                        crate::storage::sqlite3_ondisk::read_record(_payload)?
+                        crate::storage::sqlite3_ondisk::read_record(
+                            _payload,
+                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                        )?
                     };
                     self.stack.advance();
                     return Ok(CursorResult::Ok(Some(*_rowid)));
@@ -596,7 +616,10 @@ impl BTreeCursor {
                             *payload_size
                         ))
                     } else {
-                        crate::storage::sqlite3_ondisk::read_record(payload)?
+                        crate::storage::sqlite3_ondisk::read_record(
+                            payload,
+                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                        )?
                     };
 
                     self.going_upwards = false;
@@ -646,7 +669,10 @@ impl BTreeCursor {
                             *payload_size
                         ))
                     } else {
-                        crate::storage::sqlite3_ondisk::read_record(payload)?
+                        crate::storage::sqlite3_ondisk::read_record(
+                            payload,
+                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                        )?
                     };
 
                     self.stack.advance();
@@ -735,7 +761,10 @@ impl BTreeCursor {
                                     *payload_size
                                 ))
                             } else {
-                                crate::storage::sqlite3_ondisk::read_record(payload)?
+                                crate::storage::sqlite3_ondisk::read_record(
+                                    payload,
+                                    self.get_lazy_immutable_record().as_mut().unwrap(),
+                                )?
                             };
                             self.stack.advance();
                             return Ok(CursorResult::Ok(Some(*cell_rowid)));
@@ -751,14 +780,17 @@ impl BTreeCursor {
                         let SeekKey::IndexKey(index_key) = key else {
                             unreachable!("index seek key should be a record");
                         };
-                        let record = if let Some(next_page) = first_overflow_page {
+                        if let Some(next_page) = first_overflow_page {
                             return_if_io!(self.process_overflow_read(
                                 payload,
                                 *next_page,
                                 *payload_size
                             ))
                         } else {
-                            crate::storage::sqlite3_ondisk::read_record(payload)?
+                            crate::storage::sqlite3_ondisk::read_record(
+                                payload,
+                                self.get_lazy_immutable_record().as_mut().unwrap(),
+                            )?
                         };
                         let record = self.get_immutable_record();
                         let record = record.as_ref().unwrap();
@@ -946,7 +978,10 @@ impl BTreeCursor {
                                 *payload_size
                             ))
                         } else {
-                            crate::storage::sqlite3_ondisk::read_record(payload)?
+                            crate::storage::sqlite3_ondisk::read_record(
+                                payload,
+                                self.get_lazy_immutable_record().as_mut().unwrap(),
+                            )?
                         };
                         let order = compare_immutable(
                             index_key.get_values(),
