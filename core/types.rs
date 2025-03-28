@@ -617,7 +617,7 @@ impl ImmutableRecord {
             let value = value.get_owned_value();
             let serial_type = SerialType::from(value);
             let n = write_varint(&mut serial_type_buf[0..], serial_type.into());
-            serials.push(serial_type_buf.clone());
+            serials.push((serial_type_buf.clone(), n));
 
             let value_size = match serial_type {
                 SerialType::Null => 0,
@@ -657,8 +657,8 @@ impl ImmutableRecord {
         let mut writer = AppendWriter::new(&mut buf, start_pos);
 
         // 2. Write serial
-        for value in serials {
-            writer.extend_from_slice(&value);
+        for (value, n) in serials {
+            writer.extend_from_slice(&value[..n]);
         }
 
         // write content
