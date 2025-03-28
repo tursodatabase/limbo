@@ -13,13 +13,15 @@ use crate::types::{
 use crate::{return_corrupt, LimboError, Result};
 
 use std::cell::{Cell, Ref, RefCell};
+use std::cmp::Ordering;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
-    write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
+    read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
+    DATABASE_HEADER_SIZE,
 };
 
 /*
@@ -2286,6 +2288,25 @@ impl BTreeCursor {
 
     pub fn get_null_flag(&self) -> bool {
         self.null_flag
+    }
+
+    // looking up indexes that need to be unique, we cannot compare the rowid
+    pub fn index_exists(&mut self, key: &Record) -> Result<CursorResult<bool>> {
+        assert!(self.mv_cursor.is_none());
+        let (_, record) = return_if_io!(self.do_seek(SeekKey::IndexKey(key), SeekOp::GE));
+        if let Some(record) = record {
+            // get existing record, excluding the rowid
+            assert!(record.count() > 0);
+            let existing_key = &record.get_values()[..record.count() - 1];
+            let inserted_key_vals = &key.get_values();
+
+            if existing_key == *inserted_key_vals {
+                return Ok(CursorResult::Ok(true)); // duplicate
+            }
+        } else {
+            return Err(LimboError::InvalidArgument("Expected Record key".into()));
+        }
+        Ok(CursorResult::Ok(false)) // no matching key found
     }
 
     pub fn exists(&mut self, key: &OwnedValue) -> Result<CursorResult<bool>> {

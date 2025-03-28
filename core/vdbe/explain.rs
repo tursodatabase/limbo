@@ -760,6 +760,30 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::IdxInsertAsync {
+                cursor_id,
+                record_reg,
+                unpacked_start,
+                flags,
+                ..
+            } => (
+                "IdxInsertAsync",
+                *cursor_id as i32,
+                *record_reg as i32,
+                unpacked_start.unwrap_or(0) as i32,
+                OwnedValue::build_text(""),
+                flags.0 as u16,
+                format!("key=r[{}]", record_reg),
+            ),
+            Insn::IdxInsertAwait { cursor_id } => (
+                "IdxInsertAwait",
+                *cursor_id as i32,
+                0,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                "".to_string(),
+            ),
             Insn::IdxGT {
                 cursor_id,
                 start_reg,

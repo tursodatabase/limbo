@@ -56,7 +56,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | ATTACH DATABASE           | No      |                                                                                   |
 | BEGIN TRANSACTION         | Partial | Transaction names are not supported.                                              |
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
-| CREATE INDEX              | No      |                                                                                   |
+| CREATE INDEX              | Yes     |                                                                                   |
 | CREATE TABLE              | Partial |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
 | CREATE VIEW               | No      |                                                                                   |
@@ -461,6 +461,8 @@ Modifiers:
 | IdxDelete      | No     |         |
 | IdxGE          | Yes    |         |
 | IdxInsert      | No     |         |
+| IdxInsertAsync | Yes    |         |
+| IdxInsertAwait | Yes    |         |
 | IdxLE          | Yes    |         |
 | IdxLT          | Yes    |         |
 | IdxRowid       | No     |         |

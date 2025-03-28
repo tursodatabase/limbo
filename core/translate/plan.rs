@@ -286,7 +286,7 @@ impl TableReference {
             plan.result_columns
                 .iter()
                 .map(|rc| Column {
-                    name: rc.name(&plan.table_references).map(String::clone),
+                    name: rc.name(&plan.table_references).cloned(),
                     ty: Type::Text, // FIXME: infer proper type
                     ty_str: "TEXT".to_string(),
                     is_rowid_alias: false,
