@@ -93,6 +93,7 @@ pub enum JsonFunc {
     JsonbInsert,
     JsonPretty,
     JsonSet,
+    JsonbSet,
     JsonQuote,
 }
 
@@ -126,6 +127,7 @@ impl Display for JsonFunc {
                 Self::JsonbInsert => "jsonb_insert".to_string(),
                 Self::JsonPretty => "json_pretty".to_string(),
                 Self::JsonSet => "json_set".to_string(),
+                Self::JsonbSet => "jsonb_set".to_string(),
                 Self::JsonQuote => "json_quote".to_string(),
             }
         )
@@ -599,6 +601,7 @@ impl Func {
             "jsonb_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
             "json_pretty" => Ok(Self::Json(JsonFunc::JsonPretty)),
             "json_set" => Ok(Self::Json(JsonFunc::JsonSet)),
+            "jsonb_set" => Ok(Self::Json(JsonFunc::JsonbSet)),
             "json_quote" => Ok(Self::Json(JsonFunc::JsonQuote)),
             "unixepoch" => Ok(Self::Scalar(ScalarFunc::UnixEpoch)),
             "julianday" => Ok(Self::Scalar(ScalarFunc::JulianDay)),

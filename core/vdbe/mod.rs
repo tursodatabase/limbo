@@ -57,7 +57,8 @@ use crate::{
     json::json_from_raw_bytes_agg, json::json_insert, json::json_object, json::json_patch,
     json::json_quote, json::json_remove, json::json_replace, json::json_set, json::json_type,
     json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert, json::jsonb_object,
-    json::jsonb_patch, json::jsonb_remove, json::jsonb_replace, json::JsonCacheCell,
+    json::jsonb_patch, json::jsonb_remove, json::jsonb_replace, json::jsonb_set,
+    json::JsonCacheCell,
 };
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
@@ -2617,6 +2618,22 @@ impl Program {
                                     &state.registers[*start_reg..*start_reg + arg_count];
 
                                 let json_result = json_set(reg_values, &state.json_cache);
+
+                                match json_result {
+                                    Ok(json) => state.registers[*dest] = Register::OwnedValue(json),
+                                    Err(e) => return Err(e),
+                                }
+                            }
+                            JsonFunc::JsonbSet => {
+                                if arg_count % 2 == 0 {
+                                    bail_constraint_error!(
+                                        "json_set() needs an odd number of arguments"
+                                    )
+                                }
+                                let reg_values =
+                                    &state.registers[*start_reg..*start_reg + arg_count];
+
+                                let json_result = jsonb_set(reg_values, &state.json_cache);
 
                                 match json_result {
                                     Ok(json) => state.registers[*dest] = Register::OwnedValue(json),

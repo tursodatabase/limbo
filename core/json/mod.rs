@@ -220,6 +220,30 @@ pub fn json_set(args: &[Register], json_cache: &JsonCacheCell) -> crate::Result<
     json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
+pub fn jsonb_set(args: &[Register], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0].get_owned_value(), make_jsonb_fn)?;
+    let other = args[1..].chunks_exact(2);
+
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0].get_owned_value(), true)?;
+
+        let value = convert_dbtype_to_jsonb(&chunk[1].get_owned_value(), Conv::NotStrict)?;
+        let mut op = SetOperation::new(value);
+        if let Some(path) = path {
+            let _ = json.operate_on_path(&path, &mut op);
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
+    json_string_to_db_type(json, el_type, OutputVariant::Binary)
+}
+
 /// Implements the -> operator. Always returns a proper JSON value.
 /// https://sqlite.org/json1.html#the_and_operators
 pub fn json_arrow_extract(

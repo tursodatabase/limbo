@@ -897,6 +897,7 @@ pub fn translate_expr(
                     | JsonFunc::JsonbArray
                     | JsonFunc::JsonExtract
                     | JsonFunc::JsonSet
+                    | JsonFunc::JsonbSet
                     | JsonFunc::JsonbExtract
                     | JsonFunc::JsonReplace
                     | JsonFunc::JsonbReplace
