@@ -1,5 +1,4 @@
 use std::ffi::{c_char, c_void};
-use std::rc::Rc;
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -143,7 +142,7 @@ impl LimboValue {
         Box::into_raw(Box::new(self)) as *const c_void
     }
 
-    pub fn from_value(value: &limbo_core::OwnedValue) -> Self {
+    pub fn from_owned_value(value: &limbo_core::OwnedValue) -> Self {
         match value {
             limbo_core::OwnedValue::Integer(i) => {
                 LimboValue::new(ValueType::Integer, ValueUnion::from_int(*i))
@@ -155,11 +154,28 @@ impl LimboValue {
                 LimboValue::new(ValueType::Text, ValueUnion::from_str(s.as_str()))
             }
             limbo_core::OwnedValue::Blob(b) => {
-                LimboValue::new(ValueType::Blob, ValueUnion::from_bytes(b))
+                LimboValue::new(ValueType::Blob, ValueUnion::from_bytes(b.as_slice()))
             }
             limbo_core::OwnedValue::Null => {
                 LimboValue::new(ValueType::Null, ValueUnion::from_null())
             }
+        }
+    }
+    pub fn from_value(value: &limbo_core::RefValue) -> Self {
+        match value {
+            limbo_core::RefValue::Integer(i) => {
+                LimboValue::new(ValueType::Integer, ValueUnion::from_int(*i))
+            }
+            limbo_core::RefValue::Float(r) => {
+                LimboValue::new(ValueType::Real, ValueUnion::from_real(*r))
+            }
+            limbo_core::RefValue::Text(s) => {
+                LimboValue::new(ValueType::Text, ValueUnion::from_str(s.as_str()))
+            }
+            limbo_core::RefValue::Blob(b) => {
+                LimboValue::new(ValueType::Blob, ValueUnion::from_bytes(b.to_slice()))
+            }
+            limbo_core::RefValue::Null => LimboValue::new(ValueType::Null, ValueUnion::from_null()),
         }
     }
 
@@ -198,7 +214,7 @@ impl LimboValue {
                     return limbo_core::OwnedValue::Null;
                 }
                 let bytes = self.value.to_bytes();
-                limbo_core::OwnedValue::Blob(Rc::new(bytes.to_vec()))
+                limbo_core::OwnedValue::Blob(bytes.to_vec())
             }
             ValueType::Null => limbo_core::OwnedValue::Null,
         }

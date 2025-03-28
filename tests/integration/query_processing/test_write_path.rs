@@ -1,6 +1,6 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
-use limbo_core::{Connection, StepResult};
+use limbo_core::{Connection, OwnedValue, RefValue, StepResult};
 use log::debug;
 use std::rc::Rc;
 
@@ -47,12 +47,12 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
                     let first_value = row.get_value(0);
                     let text = row.get_value(1);
                     let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
+                        limbo_core::RefValue::Integer(i) => *i as i32,
+                        limbo_core::RefValue::Float(f) => *f as i32,
                         _ => unreachable!(),
                     };
                     let text = match text {
-                        limbo_core::OwnedValue::Text(t) => t.as_str(),
+                        limbo_core::RefValue::Text(t) => t.as_str(),
                         _ => unreachable!(),
                     };
                     assert_eq!(1, id);
@@ -123,12 +123,12 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
                     let first_value = row.get_value(0);
                     let text = row.get_value(1);
                     let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
+                        limbo_core::RefValue::Integer(i) => *i as i32,
+                        limbo_core::RefValue::Float(f) => *f as i32,
                         _ => unreachable!(),
                     };
                     let text = match text {
-                        limbo_core::OwnedValue::Text(t) => t.as_str(),
+                        limbo_core::RefValue::Text(t) => t.as_str(),
                         _ => unreachable!(),
                     };
                     let huge_text = &huge_texts[current_index];
@@ -192,7 +192,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
                 match rows.step()? {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
-                        let first_value = row.get_values().first().expect("missing id");
+                        let first_value = row.get::<&OwnedValue>(0).expect("missing id");
                         let id = match first_value {
                             limbo_core::OwnedValue::Integer(i) => *i as i32,
                             limbo_core::OwnedValue::Float(f) => *f as i32,
@@ -258,9 +258,9 @@ fn test_regression_multi_row_insert() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    let first_value = row.get_values().first().expect("missing id");
+                    let first_value = row.get::<&OwnedValue>(0).expect("missing id");
                     let id = match first_value {
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
+                        OwnedValue::Float(f) => *f as i32,
                         _ => panic!("expected float"),
                     };
                     actual_ids.push(id);
@@ -304,7 +304,10 @@ fn test_statement_reset() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0),
+                    limbo_core::OwnedValue::Integer(1)
+                );
                 break;
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -318,7 +321,10 @@ fn test_statement_reset() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0),
+                    limbo_core::OwnedValue::Integer(1)
+                );
                 break;
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -370,8 +376,8 @@ fn test_wal_checkpoint() -> anyhow::Result<()> {
                     let row = rows.row().unwrap();
                     let first_value = row.get_value(0);
                     let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
+                        RefValue::Integer(i) => *i as i32,
+                        RefValue::Float(f) => *f as i32,
                         _ => unreachable!(),
                     };
                     assert_eq!(current_index, id as usize);
@@ -434,7 +440,7 @@ fn test_wal_restart() -> anyhow::Result<()> {
                             let row = rows.row().unwrap();
                             let first_value = row.get_value(0);
                             let count = match first_value {
-                                limbo_core::OwnedValue::Integer(i) => i,
+                                RefValue::Integer(i) => i,
                                 _ => unreachable!(),
                             };
                             debug!("counted {}", count);

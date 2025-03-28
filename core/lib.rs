@@ -63,6 +63,7 @@ use storage::{
 };
 use translate::select::prepare_select_plan;
 pub use types::OwnedValue;
+pub use types::RefValue;
 use util::{columns_from_create_table_body, parse_schema_rows};
 use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 
@@ -596,7 +597,7 @@ impl Statement {
     }
 }
 
-pub type Row = types::Record;
+pub type Row = vdbe::Row;
 
 pub type StepResult = vdbe::StepResult;
 

@@ -5,7 +5,7 @@ use crate::{
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
-use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
+use limbo_core::{Database, LimboError, OwnedValue, RefValue, Statement, StepResult};
 
 use clap::{Parser, ValueEnum};
 use rustyline::{history::DefaultHistory, Editor};
@@ -319,7 +319,6 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let values = row
                     .get_values()
-                    .iter()
                     .zip(value_types.iter())
                     .map(|(value, value_type)| {
                         // If the type affinity is TEXT, replace each single
@@ -711,7 +710,7 @@ impl<'a> Limbo<'a> {
                     match rows.step() {
                         Ok(StepResult::Row) => {
                             let row = rows.row().unwrap();
-                            for (i, value) in row.get_values().iter().enumerate() {
+                            for (i, value) in row.get_values().enumerate() {
                                 if i > 0 {
                                     let _ = self.writer.write(b"|");
                                 }
@@ -722,7 +721,7 @@ impl<'a> Limbo<'a> {
                                         OwnedValue::Float(f) => format!("{:?}", f),
                                         OwnedValue::Text(s) => s.to_string(),
                                         OwnedValue::Blob(b) => {
-                                            format!("{}", String::from_utf8_lossy(b))
+                                            format!("{}", String::from_utf8_lossy(b.as_slice()))
                                         }
                                     }
                                     .as_bytes(),
@@ -774,7 +773,7 @@ impl<'a> Limbo<'a> {
                                 let record = rows.row().unwrap();
                                 let mut row = Row::new();
                                 row.max_height(1);
-                                for (idx, value) in record.get_values().iter().enumerate() {
+                                for (idx, value) in record.get_values().enumerate() {
                                     let (content, alignment) = match value {
                                         OwnedValue::Null => {
                                             (self.opts.null_value.clone(), CellAlignment::Left)
@@ -787,7 +786,7 @@ impl<'a> Limbo<'a> {
                                         }
                                         OwnedValue::Text(s) => (s.to_string(), CellAlignment::Left),
                                         OwnedValue::Blob(b) => (
-                                            String::from_utf8_lossy(b).to_string(),
+                                            String::from_utf8_lossy(b.as_slice()).to_string(),
                                             CellAlignment::Left,
                                         ),
                                     };
@@ -855,7 +854,7 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(OwnedValue::Text(schema)) = row.get_values().first() {
+                            if let Ok(OwnedValue::Text(schema)) = row.get::<&OwnedValue>(0) {
                                 let _ = self.write_fmt(format_args!("{};", schema.as_str()));
                                 found = true;
                             }
@@ -913,7 +912,7 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(OwnedValue::Text(table)) = row.get_values().first() {
+                            if let Ok(OwnedValue::Text(table)) = row.get::<&OwnedValue>(0) {
                                 tables.push_str(table.as_str());
                                 tables.push(' ');
                             }

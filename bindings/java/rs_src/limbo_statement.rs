@@ -7,7 +7,6 @@ use jni::sys::{jdouble, jint, jlong};
 use jni::JNIEnv;
 use limbo_core::{OwnedValue, Statement, StepResult};
 use std::num::NonZero;
-use std::rc::Rc;
 
 pub const STEP_RESULT_ID_ROW: i32 = 10;
 #[allow(dead_code)]
@@ -105,7 +104,7 @@ fn row_to_obj_array<'local>(
 ) -> Result<JObject<'local>> {
     let obj_array = env.new_object_array(row.len() as i32, "java/lang/Object", JObject::null())?;
 
-    for (i, value) in row.get_values().iter().enumerate() {
+    for (i, value) in row.get_values().enumerate() {
         let obj = match value {
             limbo_core::OwnedValue::Null => JObject::null(),
             limbo_core::OwnedValue::Integer(i) => {
@@ -115,7 +114,7 @@ fn row_to_obj_array<'local>(
                 env.new_object("java/lang/Double", "(D)V", &[JValue::Double(*f)])?
             }
             limbo_core::OwnedValue::Text(s) => env.new_string(s.as_str())?.into(),
-            limbo_core::OwnedValue::Blob(b) => env.byte_array_from_slice(&b)?.into(),
+            limbo_core::OwnedValue::Blob(b) => env.byte_array_from_slice(&b.as_slice())?.into(),
         };
         if let Err(e) = env.set_object_array_element(&obj_array, i as i32, obj) {
             eprintln!("Error on parsing row: {:?}", e);
@@ -264,7 +263,7 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindBlob<'local>(
 
     stmt.stmt.bind_at(
         NonZero::new(position as usize).unwrap(),
-        OwnedValue::Blob(Rc::new(blob)),
+        OwnedValue::Blob(blob),
     );
     SQLITE_OK
 }

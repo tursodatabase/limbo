@@ -72,12 +72,13 @@ mod tests {
             };
             let row = row
                 .get_values()
-                .iter()
                 .map(|x| match x {
                     limbo_core::OwnedValue::Null => rusqlite::types::Value::Null,
                     limbo_core::OwnedValue::Integer(x) => rusqlite::types::Value::Integer(*x),
                     limbo_core::OwnedValue::Float(x) => rusqlite::types::Value::Real(*x),
-                    limbo_core::OwnedValue::Text(x) => rusqlite::types::Value::Text(x.to_string()),
+                    limbo_core::OwnedValue::Text(x) => {
+                        rusqlite::types::Value::Text(x.as_str().to_string())
+                    }
                     limbo_core::OwnedValue::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
                 })
                 .collect();

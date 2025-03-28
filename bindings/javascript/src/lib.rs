@@ -76,7 +76,7 @@ impl Statement {
             Ok(limbo_core::StepResult::Row) => {
                 let row = stmt.row().unwrap();
                 let mut obj = env.create_object()?;
-                for (idx, value) in row.get_values().iter().enumerate() {
+                for (idx, value) in row.get_values().enumerate() {
                     let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&env, value);
                     obj.set_named_property(&key, js_value)?;
@@ -99,7 +99,7 @@ fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> JsUnknown {
         limbo_core::OwnedValue::Float(f) => env.create_double(*f).unwrap().into_unknown(),
         limbo_core::OwnedValue::Text(s) => env.create_string(s.as_str()).unwrap().into_unknown(),
         limbo_core::OwnedValue::Blob(b) => {
-            env.create_buffer_copy(b.as_ref()).unwrap().into_unknown()
+            env.create_buffer_copy(b.as_slice()).unwrap().into_unknown()
         }
     }
 }
