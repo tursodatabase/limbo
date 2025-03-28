@@ -308,7 +308,6 @@ pub fn translate_aggregation_step(
             });
             target_register
         }
-        _ => unreachable!(),
     };
     Ok(dest)
 }

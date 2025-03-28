@@ -665,7 +665,6 @@ pub fn translate_aggregation_step_groupby(
         AggFunc::External(_) => {
             todo!("External aggregate functions are not yet supported in GROUP BY");
         }
-        _ => unreachable!(),
     };
     Ok(dest)
 }
