@@ -5,7 +5,7 @@ mod function;
 mod functions;
 mod info;
 mod io;
-
+#[cfg(feature = "json")]
 mod json;
 pub mod mvcc;
 mod parameters;

@@ -558,6 +558,7 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
+        #[cfg(feature = "json")]
         AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
             if agg.args.len() != 1 {
                 crate::bail_parse_error!("min bad number of arguments");
@@ -572,6 +573,7 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
+        #[cfg(feature = "json")]
         AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
             if agg.args.len() != 2 {
                 crate::bail_parse_error!("max bad number of arguments");
@@ -663,6 +665,7 @@ pub fn translate_aggregation_step_groupby(
         AggFunc::External(_) => {
             todo!("External aggregate functions are not yet supported in GROUP BY");
         }
+        _ => unreachable!(),
     };
     Ok(dest)
 }

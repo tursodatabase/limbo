@@ -14,8 +14,9 @@ name = "limbo_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "uuid", "time"]
+default = ["fs", "uuid", "time", "json"]
 fs = ["limbo_ext/vfs"]
+json = []
 uuid = ["limbo_uuid/static"]
 io_uring = ["dep:io-uring", "rustix/io_uring", "dep:libc"]
 percentile = ["limbo_percentile/static"]

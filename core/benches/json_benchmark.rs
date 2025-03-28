@@ -942,4 +942,5 @@ criterion_group! {
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(Some(Options::default()))));
     targets = bench, bench_sequential_jsonb, bench_json_patch
 }
+
 criterion_main!(benches);

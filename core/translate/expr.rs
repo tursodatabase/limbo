@@ -1,5 +1,6 @@
 use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 
+#[cfg(feature = "json")]
 use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::schema::{Table, Type};
@@ -701,7 +702,7 @@ pub fn translate_expr(
                         if_true_label,
                     );
                 }
-
+                #[cfg(feature = "json")]
                 op @ (ast::Operator::ArrowRight | ast::Operator::ArrowRightShift) => {
                     let json_func = match op {
                         ast::Operator::ArrowRight => JsonFunc::JsonArrowExtract,
@@ -879,7 +880,7 @@ pub fn translate_expr(
 
                     Ok(target_register)
                 }
-
+                #[cfg(feature = "json")]
                 Func::Json(j) => match j {
                     JsonFunc::Json | JsonFunc::Jsonb => {
                         let args = expect_arguments_exact!(args, 1, j);
