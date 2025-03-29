@@ -89,10 +89,9 @@ pub fn init_loop(
                         other => panic!("Invalid table reference type in Scan: {:?}", other),
                     },
                 );
-                let index_cursor_id = index.as_ref().map(|i| program.alloc_cursor_id(
-                    Some(i.name.clone()),
-                    CursorType::BTreeIndex(i.clone()),
-                ));
+                let index_cursor_id = index.as_ref().map(|i| {
+                    program.alloc_cursor_id(Some(i.name.clone()), CursorType::BTreeIndex(i.clone()))
+                });
                 match (mode, &table.table) {
                     (OperationMode::SELECT, Table::BTree(_)) => {
                         let root_page = table.btree().unwrap().root_page;
@@ -285,9 +284,13 @@ pub fn open_loop(
                         .as_ref()
                         .is_some_and(|dir| *dir == IterationDirection::Backwards)
                     {
-                        program.emit_insn(Insn::LastAsync { cursor_id: iteration_cursor_id });
+                        program.emit_insn(Insn::LastAsync {
+                            cursor_id: iteration_cursor_id,
+                        });
                     } else {
-                        program.emit_insn(Insn::RewindAsync { cursor_id: iteration_cursor_id });
+                        program.emit_insn(Insn::RewindAsync {
+                            cursor_id: iteration_cursor_id,
+                        });
                     }
                 }
                 match &table.table {
@@ -754,7 +757,9 @@ pub fn close_loop(
                     target_pc: loop_labels.loop_start,
                 });
             }
-            Operation::Scan { index, iter_dir, .. } => {
+            Operation::Scan {
+                index, iter_dir, ..
+            } => {
                 program.resolve_label(loop_labels.next, program.offset());
 
                 let cursor_id = program.resolve_cursor_id(&table.identifier);
@@ -766,9 +771,13 @@ pub fn close_loop(
                             .as_ref()
                             .is_some_and(|dir| *dir == IterationDirection::Backwards)
                         {
-                            program.emit_insn(Insn::PrevAsync { cursor_id: iteration_cursor_id });
+                            program.emit_insn(Insn::PrevAsync {
+                                cursor_id: iteration_cursor_id,
+                            });
                         } else {
-                            program.emit_insn(Insn::NextAsync { cursor_id: iteration_cursor_id });
+                            program.emit_insn(Insn::NextAsync {
+                                cursor_id: iteration_cursor_id,
+                            });
                         }
                         if iter_dir
                             .as_ref()

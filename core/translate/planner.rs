@@ -320,7 +320,10 @@ fn parse_from_clause_table<'a>(
                     ));
                 };
                 scope.tables.push(TableReference {
-                    op: Operation::Scan { iter_dir: None, index: None },
+                    op: Operation::Scan {
+                        iter_dir: None,
+                        index: None,
+                    },
                     table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
                     join_info: None,
@@ -399,7 +402,10 @@ fn parse_from_clause_table<'a>(
                 .unwrap_or(normalized_name.to_string());
 
             scope.tables.push(TableReference {
-                op: Operation::Scan { iter_dir: None, index: None },
+                op: Operation::Scan {
+                    iter_dir: None,
+                    index: None,
+                },
                 join_info: None,
                 table: Table::Virtual(vtab),
                 identifier: alias,

@@ -111,8 +111,14 @@ fn use_indexes(
 
     // Second pass: handle ORDER BY optimization if present
     if let Some(first_table_reference) = table_references.first_mut() {
-        if let Operation::Scan { index, iter_dir, .. } = &mut first_table_reference.op {
-            assert!(index.is_none(), "Nothing shouldve transformed the scan to use an index yet");
+        if let Operation::Scan {
+            index, iter_dir, ..
+        } = &mut first_table_reference.op
+        {
+            assert!(
+                index.is_none(),
+                "Nothing shouldve transformed the scan to use an index yet"
+            );
             if let Some(order) = order_by {
                 // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
                 if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
@@ -156,8 +162,14 @@ fn use_indexes(
                     // If they don't, we must iterate the index in backwards order.
                     let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
                     *iter_dir = Some(match (index_direction, order[0].1) {
-                        (Order::Ascending, Direction::Ascending) | (Order::Descending, Direction::Descending) => IterationDirection::Forwards,
-                        (Order::Ascending, Direction::Descending) | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
+                        (Order::Ascending, Direction::Ascending)
+                        | (Order::Descending, Direction::Descending) => {
+                            IterationDirection::Forwards
+                        }
+                        (Order::Ascending, Direction::Descending)
+                        | (Order::Descending, Direction::Ascending) => {
+                            IterationDirection::Backwards
+                        }
                     });
 
                     // If the index covers all ORDER BY columns, and the ORDER BY directions are
@@ -167,7 +179,8 @@ fn use_indexes(
                             let mut full_match = false;
                             for (i, (_, direction)) in order.iter().enumerate() {
                                 match (&matching_index.columns[i].order, direction) {
-                                    (Order::Ascending, Direction::Ascending) | (Order::Descending, Direction::Descending) => {
+                                    (Order::Ascending, Direction::Ascending)
+                                    | (Order::Descending, Direction::Descending) => {
                                         full_match = true;
                                     }
                                     _ => {

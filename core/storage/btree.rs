@@ -419,11 +419,7 @@ impl BTreeCursor {
                         continue;
                     }
                     let record = if let Some(next_page) = first_overflow_page {
-                        return_if_io!(self.process_overflow_read(
-                            payload,
-                            next_page,
-                            payload_size
-                        ))
+                        return_if_io!(self.process_overflow_read(payload, next_page, payload_size))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
@@ -465,11 +461,7 @@ impl BTreeCursor {
                     payload_size,
                 }) => {
                     let record = if let Some(next_page) = first_overflow_page {
-                        return_if_io!(self.process_overflow_read(
-                            payload,
-                            next_page,
-                            payload_size
-                        ))
+                        return_if_io!(self.process_overflow_read(payload, next_page, payload_size))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
