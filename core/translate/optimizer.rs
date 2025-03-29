@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use limbo_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
-    schema::{Index, Order, Schema},
+    schema::{BTreeTable, Index, Order, Schema},
     Result,
 };
 
@@ -110,37 +110,47 @@ fn use_indexes(
     }
 
     // Second pass: handle ORDER BY optimization if present
-    if let Some(first_table_reference) = table_references.first_mut() {
-        if let Operation::Scan {
-            index, iter_dir, ..
-        } = &mut first_table_reference.op
-        {
-            assert!(
-                index.is_none(),
-                "Nothing shouldve transformed the scan to use an index yet"
-            );
-            if let Some(order) = order_by {
-                // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
-                if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
-                    *iter_dir = Some(match order[0].1 {
-                        Direction::Ascending => IterationDirection::Forwards,
-                        Direction::Descending => IterationDirection::Backwards,
-                    });
-                    *order_by = None;
-                    return Ok(());
-                }
+    let Some(order) = order_by else {
+        return Ok(());
+    };
+    let Some(first_table_reference) = table_references.first_mut() else {
+        return Ok(());
+    };
+    let Some(btree_table) = first_table_reference.btree() else {
+        return Ok(());
+    };
+    let Operation::Scan {
+        index, iter_dir, ..
+    } = &mut first_table_reference.op
+    else {
+        return Ok(());
+    };
 
-                // Find the best matching index for the ORDER BY columns
-                let table_name = first_table_reference.table.get_name();
-                let mut best_index = (None, 0);
+    assert!(
+        index.is_none(),
+        "Nothing shouldve transformed the scan to use an index yet"
+    );
 
-                for (_, indexes) in available_indexes.iter() {
-                    for index_candidate in indexes.iter().filter(|i| &i.table_name == table_name) {
-                        let matching_columns = index_candidate.columns.iter().enumerate().take_while(|(i, c)| {
+    // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
+    if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
+        *iter_dir = Some(match order[0].1 {
+            Direction::Ascending => IterationDirection::Forwards,
+            Direction::Descending => IterationDirection::Backwards,
+        });
+        *order_by = None;
+        return Ok(());
+    }
+
+    // Find the best matching index for the ORDER BY columns
+    let table_name = &btree_table.name;
+    let mut best_index = (None, 0);
+
+    for (_, indexes) in available_indexes.iter() {
+        for index_candidate in indexes.iter().filter(|i| &i.table_name == table_name) {
+            let matching_columns = index_candidate.columns.iter().enumerate().take_while(|(i, c)| {
                             if let Some((Expr::Column { table, column, .. }, _)) = order.get(*i) {
-                                let col_idx_in_table = first_table_reference
-                                    .table
-                                    .columns()
+                                let col_idx_in_table = btree_table
+                                    .columns
                                     .iter()
                                     .position(|tc| tc.name.as_ref() == Some(&c.name));
                                 matches!(col_idx_in_table, Some(col_idx) if *table == 0 && *column == col_idx)
@@ -149,53 +159,46 @@ fn use_indexes(
                             }
                         }).count();
 
-                        if matching_columns > best_index.1 {
-                            best_index = (Some(index_candidate), matching_columns);
-                        }
-                    }
-                }
+            if matching_columns > best_index.1 {
+                best_index = (Some(index_candidate), matching_columns);
+            }
+        }
+    }
 
-                // If we found a matching index, use it for scanning
-                if let (Some(matching_index), match_count) = best_index {
-                    *index = Some(matching_index.clone());
-                    // If the order by direction matches the index direction, we can iterate the index in forwards order.
-                    // If they don't, we must iterate the index in backwards order.
-                    let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
-                    *iter_dir = Some(match (index_direction, order[0].1) {
+    // If we found a matching index, use it for scanning
+    if let (Some(matching_index), match_count) = best_index {
+        *index = Some(matching_index.clone());
+        // If the order by direction matches the index direction, we can iterate the index in forwards order.
+        // If they don't, we must iterate the index in backwards order.
+        let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
+        *iter_dir = Some(match (index_direction, order[0].1) {
+            (Order::Ascending, Direction::Ascending)
+            | (Order::Descending, Direction::Descending) => IterationDirection::Forwards,
+            (Order::Ascending, Direction::Descending)
+            | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
+        });
+
+        // If the index covers all ORDER BY columns, and the ORDER BY directions are
+        // in agreement with the index direction, we can remove the ORDER BY clause.
+        if match_count == order.len() {
+            let full_match = {
+                let mut full_match = false;
+                for (i, (_, direction)) in order.iter().enumerate() {
+                    match (&matching_index.columns[i].order, direction) {
                         (Order::Ascending, Direction::Ascending)
                         | (Order::Descending, Direction::Descending) => {
-                            IterationDirection::Forwards
+                            full_match = true;
                         }
-                        (Order::Ascending, Direction::Descending)
-                        | (Order::Descending, Direction::Ascending) => {
-                            IterationDirection::Backwards
-                        }
-                    });
-
-                    // If the index covers all ORDER BY columns, and the ORDER BY directions are
-                    // in agreement with the index direction, we can remove the ORDER BY clause.
-                    if match_count == order.len() {
-                        let full_match = {
-                            let mut full_match = false;
-                            for (i, (_, direction)) in order.iter().enumerate() {
-                                match (&matching_index.columns[i].order, direction) {
-                                    (Order::Ascending, Direction::Ascending)
-                                    | (Order::Descending, Direction::Descending) => {
-                                        full_match = true;
-                                    }
-                                    _ => {
-                                        full_match = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            full_match
-                        };
-                        if full_match {
-                            *order_by = None;
+                        _ => {
+                            full_match = false;
+                            break;
                         }
                     }
                 }
+                full_match
+            };
+            if full_match {
+                *order_by = None;
             }
         }
     }
