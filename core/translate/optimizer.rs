@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use limbo_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
-    schema::{BTreeTable, Index, Order, Schema},
+    schema::{Index, Order, Schema},
     Result,
 };
 
@@ -133,10 +133,10 @@ fn use_indexes(
 
     // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
     if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
-        *iter_dir = Some(match order[0].1 {
+        *iter_dir = match order[0].1 {
             Direction::Ascending => IterationDirection::Forwards,
             Direction::Descending => IterationDirection::Backwards,
-        });
+        };
         *order_by = None;
         return Ok(());
     }
@@ -171,12 +171,12 @@ fn use_indexes(
         // If the order by direction matches the index direction, we can iterate the index in forwards order.
         // If they don't, we must iterate the index in backwards order.
         let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
-        *iter_dir = Some(match (index_direction, order[0].1) {
+        *iter_dir = match (index_direction, order[0].1) {
             (Order::Ascending, Direction::Ascending)
             | (Order::Descending, Direction::Descending) => IterationDirection::Forwards,
             (Order::Ascending, Direction::Descending)
             | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
-        });
+        };
 
         // If the index covers all ORDER BY columns, and the ORDER BY directions are
         // in agreement with the index direction, we can remove the ORDER BY clause.

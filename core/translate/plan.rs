@@ -245,12 +245,9 @@ pub struct TableReference {
 pub enum Operation {
     // Scan operation
     // This operation is used to scan a table.
-    // The iter_dir are uset to indicate the direction of the iterator.
-    // The use of Option for iter_dir is aimed at implementing a conservative optimization strategy: it only pushes
-    // iter_dir down to Scan when iter_dir is None, to prevent potential result set errors caused by multiple
-    // assignments. for more detailed discussions, please refer to https://github.com/tursodatabase/limbo/pull/376
+    // The iter_dir is used to indicate the direction of the iterator.
     Scan {
-        iter_dir: Option<IterationDirection>,
+        iter_dir: IterationDirection,
         /// The index that we are using to scan the table, if any.
         index: Option<Arc<Index>>,
     },

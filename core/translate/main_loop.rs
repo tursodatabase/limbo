@@ -280,10 +280,7 @@ pub fn open_loop(
                 let index_cursor_id = index.as_ref().map(|i| program.resolve_cursor_id(&i.name));
                 let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
                 if !matches!(&table.table, Table::Virtual(_)) {
-                    if iter_dir
-                        .as_ref()
-                        .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                    {
+                    if *iter_dir == IterationDirection::Backwards {
                         program.emit_insn(Insn::LastAsync {
                             cursor_id: iteration_cursor_id,
                         });
@@ -294,11 +291,8 @@ pub fn open_loop(
                     }
                 }
                 match &table.table {
-                    Table::BTree(_) => program.emit_insn(
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
+                    Table::BTree(_) => {
+                        program.emit_insn(if *iter_dir == IterationDirection::Backwards {
                             Insn::LastAwait {
                                 cursor_id: iteration_cursor_id,
                                 pc_if_empty: loop_end,
@@ -308,8 +302,8 @@ pub fn open_loop(
                                 cursor_id: iteration_cursor_id,
                                 pc_if_empty: loop_end,
                             }
-                        },
-                    ),
+                        })
+                    }
                     Table::Virtual(ref table) => {
                         let start_reg = program
                             .alloc_registers(table.args.as_ref().map(|a| a.len()).unwrap_or(0));
@@ -767,10 +761,7 @@ pub fn close_loop(
                 let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
                 match &table.table {
                     Table::BTree(_) => {
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
+                        if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::PrevAsync {
                                 cursor_id: iteration_cursor_id,
                             });
@@ -779,10 +770,7 @@ pub fn close_loop(
                                 cursor_id: iteration_cursor_id,
                             });
                         }
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
+                        if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::PrevAwait {
                                 cursor_id: iteration_cursor_id,
                                 pc_if_next: loop_labels.loop_start,
