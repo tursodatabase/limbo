@@ -326,7 +326,10 @@ impl BTreeCursor {
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
-    fn get_prev_record(&mut self) -> Result<CursorResult<(Option<u64>, Option<ImmutableRecord>)>> {
+    fn get_prev_record(
+        &mut self,
+        predicate: Option<(SeekKey<'_>, SeekOp)>,
+    ) -> Result<CursorResult<(Option<u64>, Option<ImmutableRecord>)>> {
         loop {
             let page = self.stack.top();
             let cell_idx = self.stack.current_cell_index();
@@ -340,6 +343,7 @@ impl BTreeCursor {
                         break;
                     }
                     if self.stack.has_parent() {
+                        self.going_upwards = true;
                         self.stack.pop();
                     } else {
                         // moved to begin of btree
@@ -403,8 +407,102 @@ impl BTreeCursor {
                     self.stack.retreat();
                     return Ok(CursorResult::Ok((Some(_rowid), Some(record))));
                 }
-                BTreeCell::IndexInteriorCell(_) => todo!(),
-                BTreeCell::IndexLeafCell(_) => todo!(),
+                BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                    payload,
+                    left_child_page,
+                    first_overflow_page,
+                    payload_size,
+                }) => {
+                    if !self.going_upwards {
+                        let mem_page = self.pager.read_page(left_child_page as usize)?;
+                        self.stack.push(mem_page);
+                        continue;
+                    }
+                    let record = if let Some(next_page) = first_overflow_page {
+                        return_if_io!(self.process_overflow_read(
+                            payload,
+                            next_page,
+                            payload_size
+                        ))
+                    } else {
+                        crate::storage::sqlite3_ondisk::read_record(payload)?
+                    };
+
+                    self.going_upwards = false;
+                    self.stack.retreat();
+                    if predicate.is_none() {
+                        let rowid = match record.last_value() {
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
+                            _ => unreachable!("index cells should have an integer rowid"),
+                        };
+                        return Ok(CursorResult::Ok((Some(rowid), Some(record))));
+                    }
+
+                    let (key, op) = predicate.as_ref().unwrap();
+                    let SeekKey::IndexKey(index_key) = key else {
+                        unreachable!("index seek key should be a record");
+                    };
+                    let order =
+                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
+                    let found = match op {
+                        SeekOp::GT => order.is_gt(),
+                        SeekOp::GE => order.is_ge(),
+                        SeekOp::EQ => order.is_eq(),
+                    };
+                    if found {
+                        let rowid = match record.last_value() {
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
+                            _ => unreachable!("index cells should have an integer rowid"),
+                        };
+                        return Ok(CursorResult::Ok((Some(rowid), Some(record))));
+                    } else {
+                        continue;
+                    }
+                }
+                BTreeCell::IndexLeafCell(IndexLeafCell {
+                    payload,
+                    first_overflow_page,
+                    payload_size,
+                }) => {
+                    let record = if let Some(next_page) = first_overflow_page {
+                        return_if_io!(self.process_overflow_read(
+                            payload,
+                            next_page,
+                            payload_size
+                        ))
+                    } else {
+                        crate::storage::sqlite3_ondisk::read_record(payload)?
+                    };
+
+                    self.stack.retreat();
+                    if predicate.is_none() {
+                        let rowid = match record.last_value() {
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
+                            _ => unreachable!("index cells should have an integer rowid"),
+                        };
+                        return Ok(CursorResult::Ok((Some(rowid), Some(record))));
+                    }
+                    let (key, op) = predicate.as_ref().unwrap();
+                    let SeekKey::IndexKey(index_key) = key else {
+                        unreachable!("index seek key should be a record");
+                    };
+                    let order =
+                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
+                    let found = match op {
+                        SeekOp::GT => order.is_lt(),
+                        SeekOp::GE => order.is_le(),
+                        SeekOp::EQ => order.is_le(),
+                    };
+                    if found {
+                        let rowid = match record.last_value() {
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
+                            _ => unreachable!("index cells should have an integer rowid"),
+                        };
+                        return Ok(CursorResult::Ok((Some(rowid), Some(record))));
+                    } else {
+                        continue;
+                    }
+                }
             }
         }
     }
@@ -1905,7 +2003,7 @@ impl BTreeCursor {
 
     pub fn prev(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
-        match self.get_prev_record()? {
+        match self.get_prev_record(None)? {
             CursorResult::Ok((rowid, record)) => {
                 self.rowid.replace(rowid);
                 self.record.replace(record);
