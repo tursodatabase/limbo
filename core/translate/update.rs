@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::translate::plan::Operation;
+use crate::vdbe::BranchOffset;
 use crate::{
     bail_parse_error,
     schema::{Schema, Table},
@@ -53,6 +56,7 @@ pub fn translate_update(
     body: &mut Update,
     syms: &SymbolTable,
 ) -> crate::Result<ProgramBuilder> {
+    let resolver = Resolver::new(syms);
     // TODO: freestyling these numbers
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
@@ -60,7 +64,6 @@ pub fn translate_update(
         approx_num_insns: 20,
         approx_num_labels: 4,
     });
-
     if body.with.is_some() {
         bail_parse_error!("WITH clause is not supported");
     }
@@ -73,18 +76,17 @@ pub fn translate_update(
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
     if let Table::Virtual(_) = table.as_ref() {
-        bail_parse_error!("vtable update not yet supported");
-    }
-    let resolver = Resolver::new(syms);
+        return translate_vtab_update(program, body, table, &resolver);
+    };
+    let Some(btree_table) = table.btree() else {
+        crate::bail_parse_error!("table {} is not a BTree table", table_name.0);
+    };
 
     let init_label = program.allocate_label();
     program.emit_insn(Insn::Init {
         target_pc: init_label,
     });
     let start_offset = program.offset();
-    let Some(btree_table) = table.btree() else {
-        crate::bail_corrupt_error!("Parse error: no such table: {}", table_name);
-    };
     let cursor_id = program.alloc_cursor_id(
         Some(table_name.0.clone()),
         CursorType::BTreeTable(btree_table.clone()),
@@ -205,6 +207,137 @@ pub fn translate_update(
         description: String::new(),
     });
     program.resolve_label(init_label, program.offset());
+    program.emit_insn(Insn::Transaction { write: true });
+
+    program.emit_constant_insns();
+    program.emit_insn(Insn::Goto {
+        target_pc: start_offset,
+    });
+    program.table_references = referenced_tables.clone();
+    Ok(program)
+}
+
+fn translate_vtab_update(
+    mut program: ProgramBuilder,
+    body: &mut Update,
+    table: Arc<Table>,
+    resolver: &Resolver,
+) -> crate::Result<ProgramBuilder> {
+    let start_label = program.allocate_label();
+    program.emit_insn(Insn::Init {
+        target_pc: start_label,
+    });
+    let start_offset = program.offset();
+    let vtab = table.virtual_table().unwrap();
+    let name = table.get_name().to_string();
+    let cursor_id =
+        program.alloc_cursor_id(Some(name.clone()), CursorType::VirtualTable(vtab.clone()));
+    let referenced_tables = vec![TableReference {
+        table: Table::Virtual(vtab.clone()),
+        identifier: name,
+        op: Operation::Scan { iter_dir: None },
+        join_info: None,
+    }];
+    program.emit_insn(Insn::VOpenAsync { cursor_id });
+    program.emit_insn(Insn::VOpenAwait {});
+
+    let end_label = program.allocate_label();
+    let skip_label = program.allocate_label();
+
+    // Update for virtual tables uses the same VUpdate op as Insert/Delete,
+    // there needs to be an integer value in the first two args in order to trigger an update
+    // argc: 2 + num_columns to update
+    // argv[0]: old rowid
+    // argv[1]: new rowid (copied from/same as old rowid if not explicitly updated)
+    // argv[2..]: updated column values for the row
+    //
+    // for now VFilter just starts the scan
+    program.emit_insn(Insn::VFilter {
+        cursor_id,
+        pc_if_empty: end_label,
+        args_reg: 0,
+        arg_count: 0,
+    });
+    let arg_count = 2 + table.columns().len();
+    let loop_start = program.offset();
+    let start_reg = program.alloc_registers(arg_count);
+    let old_rowid = start_reg;
+    let new_rowid = start_reg + 1;
+    let column_regs = start_reg + 2;
+
+    program.emit_insn(Insn::RowId {
+        cursor_id,
+        dest: old_rowid,
+    });
+    // TODO: handle user updating rowid explicitly
+    program.emit_insn(Insn::Copy {
+        src_reg: old_rowid,
+        dst_reg: new_rowid,
+        amount: 1,
+    });
+    for (i, _) in table.columns().iter().enumerate() {
+        let dest = column_regs + i;
+        program.emit_insn(Insn::VColumn {
+            cursor_id,
+            column: i,
+            dest,
+        });
+    }
+
+    // translate where clause if present
+    // TODO: impl xBestIndex + use VFilter for where clause
+    if let Some(ref mut where_clause) = body.where_clause {
+        bind_column_references(where_clause, &referenced_tables, None)?;
+        translate_condition_expr(
+            &mut program,
+            &referenced_tables,
+            where_clause,
+            ConditionMetadata {
+                jump_if_condition_is_true: false,
+                jump_target_when_true: BranchOffset::Placeholder,
+                jump_target_when_false: skip_label,
+            },
+            resolver,
+        )?;
+    }
+    for expr in body.sets.iter() {
+        let Some(col_index) = table.columns().iter().position(|t| {
+            t.name
+                .as_ref()
+                .unwrap()
+                .eq_ignore_ascii_case(&expr.col_names[0].0)
+        }) else {
+            bail_parse_error!("column {} not found", expr.col_names[0].0);
+        };
+        translate_expr(
+            &mut program,
+            Some(&referenced_tables),
+            &expr.expr,
+            column_regs + col_index,
+            resolver,
+        )?;
+    }
+
+    program.emit_insn(Insn::VUpdate {
+        cursor_id,
+        arg_count,
+        start_reg: old_rowid,
+        vtab_ptr: vtab.implementation.ctx as usize,
+        conflict_action: 0, // TODO: handling conflict actions
+    });
+
+    program.resolve_label(skip_label, program.offset());
+    program.emit_insn(Insn::VNext {
+        cursor_id,
+        pc_if_next: loop_start,
+    });
+
+    program.resolve_label(end_label, program.offset());
+    program.emit_insn(Insn::Halt {
+        err_code: 0,
+        description: String::new(),
+    });
+    program.resolve_label(start_label, program.offset());
     program.emit_insn(Insn::Transaction { write: true });
 
     program.emit_constant_insns();
