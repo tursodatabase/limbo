@@ -323,9 +323,9 @@ impl ProgramState {
         let cursors = self.cursors.borrow_mut();
         std::cell::RefMut::map(cursors, |c| {
             c.get_mut(cursor_id)
-                .expect(&format!("cursor id {} out of bounds", cursor_id))
+                .unwrap_or_else(|| panic!("cursor id {} out of bounds", cursor_id))
                 .as_mut()
-                .expect(&format!("cursor id {} not allocated", cursor_id))
+                .unwrap_or_else(|| panic!("cursor id {} not allocated", cursor_id))
         })
     }
 }
