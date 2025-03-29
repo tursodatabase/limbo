@@ -1,5 +1,6 @@
 use tracing::debug;
 
+use crate::mvcc::database::RowID;
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::{
     read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
@@ -13,13 +14,15 @@ use crate::types::{
 use crate::{return_corrupt, LimboError, Result};
 
 use std::cell::{Cell, Ref, RefCell};
+use std::cmp::Ordering;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
-    write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
+    read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
+    DATABASE_HEADER_SIZE,
 };
 
 /*
@@ -559,8 +562,8 @@ impl BTreeCursor {
                 BTreeCell::TableLeafCell(TableLeafCell {
                     _rowid,
                     _payload,
-                    first_overflow_page,
                     payload_size,
+                    first_overflow_page,
                 }) => {
                     assert!(predicate.is_none());
                     let record = if let Some(next_page) = first_overflow_page {
@@ -611,7 +614,7 @@ impl BTreeCursor {
                         unreachable!("index seek key should be a record");
                     };
                     let order =
-                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
+                        compare_immutable_to_record(&record.get_values(), index_key.get_values());
                     let found = match op {
                         SeekOp::GT => order.is_gt(),
                         SeekOp::GE => order.is_ge(),
@@ -655,7 +658,7 @@ impl BTreeCursor {
                         unreachable!("index seek key should be a record");
                     };
                     let order =
-                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
+                        compare_immutable_to_record(&record.get_values(), index_key.get_values());
                     let found = match op {
                         SeekOp::GT => order.is_lt(),
                         SeekOp::GE => order.is_le(),
@@ -755,7 +758,7 @@ impl BTreeCursor {
                         };
                         let order = compare_immutable_to_record(
                             &record.get_values().as_slice()[..record.len() - 1],
-                            &index_key.get_values().as_slice()[..],
+                            index_key.get_values().as_slice(),
                         );
                         let found = match op {
                             SeekOp::GT => order.is_gt(),
@@ -940,8 +943,8 @@ impl BTreeCursor {
                             crate::storage::sqlite3_ondisk::read_record(payload)?
                         };
                         let order = compare_record_to_immutable(
-                            &index_key.get_values(),
-                            &record.get_values(),
+                            index_key.get_values(),
+                            record.get_values(),
                         );
                         let target_leaf_page_is_in_the_left_subtree = match cmp {
                             SeekOp::GT => order.is_lt(),
@@ -980,6 +983,58 @@ impl BTreeCursor {
                 }
             }
         }
+    }
+
+    pub fn insert_index_key(&mut self, key: &Record) -> Result<CursorResult<()>> {
+        if let CursorState::None = &self.state {
+            self.state = CursorState::Write(WriteInfo::new());
+        }
+
+        let ret = loop {
+            let write_state = self.state.mut_write_info().unwrap().state;
+            match write_state {
+                WriteState::Start => {
+                    let page = self.stack.top();
+                    return_if_locked!(page);
+                    page.set_dirty();
+                    self.pager.add_dirty(page.get().id);
+                    let page = page.get().contents.as_mut().unwrap();
+
+                    assert!(matches!(page.page_type(), PageType::IndexLeaf));
+                    let mut key_bytes = Vec::new();
+                    key.serialize(&mut key_bytes);
+                    let cell_idx = self.find_index_cell(page, &key_bytes);
+
+                    insert_into_cell(
+                        page,
+                        key_bytes.as_slice(),
+                        cell_idx,
+                        self.usable_space() as u16,
+                    );
+                    let overflow = {
+                        debug!(
+                            "insert_into_page(overflow, cell_count={})",
+                            page.cell_count()
+                        );
+                        page.overflow_cells.len()
+                    };
+                    let write_info = self.state.mut_write_info().unwrap();
+                    write_info.state = if overflow > 0 {
+                        WriteState::BalanceStart
+                    } else {
+                        WriteState::Finish
+                    };
+                }
+                WriteState::BalanceStart
+                | WriteState::BalanceNonRoot
+                | WriteState::BalanceNonRootWaitLoadPages => {
+                    return_if_io!(self.balance());
+                }
+                WriteState::Finish => break Ok(CursorResult::Ok(())),
+            }
+        };
+        self.state = CursorState::None;
+        ret
     }
 
     /// Insert a record into the btree.
@@ -1852,6 +1907,36 @@ impl BTreeCursor {
         cell_idx
     }
 
+    fn find_index_cell(&self, page: &PageContent, key_bytes: &[u8]) -> usize {
+        let mut cell_idx = 0;
+        let cell_count = page.cell_count();
+        while cell_idx < cell_count {
+            match page
+                .cell_get(
+                    cell_idx,
+                    payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
+                    payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
+                    self.usable_space(),
+                )
+                .unwrap()
+            {
+                BTreeCell::IndexLeafCell(IndexLeafCell { payload, .. }) => {
+                    if key_bytes <= payload {
+                        break;
+                    }
+                }
+                BTreeCell::IndexInteriorCell(IndexInteriorCell { payload, .. }) => {
+                    if key_bytes <= payload {
+                        break;
+                    }
+                }
+                _ => todo!(),
+            }
+            cell_idx += 1;
+        }
+        cell_idx
+    }
+
     pub fn seek_to_last(&mut self) -> Result<CursorResult<()>> {
         return_if_io!(self.move_to_rightmost());
         let (rowid, record) = return_if_io!(self.get_next_record(None));
@@ -1967,6 +2052,31 @@ impl BTreeCursor {
                 self.rowid.replace(Some(*int_key as u64));
             }
         };
+        Ok(CursorResult::Ok(()))
+    }
+
+    pub fn insert_index(
+        &mut self,
+        key_record: &Record,
+        moved_before: bool,
+    ) -> Result<CursorResult<()>> {
+        match &self.mv_cursor {
+            Some(mv_cursor) => {
+                // unlikely?, but still possible
+                let mut key_buf = Vec::new();
+                key_record.serialize(&mut key_buf);
+                let row_id = RowID::new(self.table_id() as u64, 0); // or dummy
+                let row = crate::mvcc::database::Row::new(row_id, key_buf);
+                mv_cursor.borrow_mut().insert(row).unwrap();
+            }
+            None => {
+                if !moved_before {
+                    return_if_io!(self.move_to(SeekKey::IndexKey(key_record), SeekOp::EQ));
+                }
+                return_if_io!(self.insert_index_key(key_record));
+            }
+        }
+
         Ok(CursorResult::Ok(()))
     }
 
@@ -2286,6 +2396,25 @@ impl BTreeCursor {
 
     pub fn get_null_flag(&self) -> bool {
         self.null_flag
+    }
+
+    // looking up indexes that need to be unique, we cannot compare the rowid
+    pub fn index_exists(&mut self, key: &Record) -> Result<CursorResult<bool>> {
+        assert!(self.mv_cursor.is_none());
+        let (_, record) = return_if_io!(self.do_seek(SeekKey::IndexKey(key), SeekOp::GE));
+        if let Some(record) = record {
+            // get existing record, excluding the rowid
+            assert!(record.count() > 0);
+            let existing_key = &record.get_values()[..record.count() - 1];
+            let inserted_key_vals = &key.get_values();
+
+            if existing_key == *inserted_key_vals {
+                return Ok(CursorResult::Ok(true)); // duplicate
+            }
+        } else {
+            return Err(LimboError::InvalidArgument("Expected Record key".into()));
+        }
+        Ok(CursorResult::Ok(false)) // no matching key found
     }
 
     pub fn exists(&mut self, key: &OwnedValue) -> Result<CursorResult<bool>> {

@@ -36,6 +36,44 @@ impl CmpInsFlags {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct IdxInsertFlags(pub u8);
+impl IdxInsertFlags {
+    pub const APPEND: u8 = 0x01; // Hint: insert likely at the end
+    pub const NCHANGE: u8 = 0x02; // Increment the change counter
+    pub const USE_SEEK: u8 = 0x04; // Skip seek if last one was same key
+    pub fn new() -> Self {
+        IdxInsertFlags(0)
+    }
+    pub fn has(&self, flag: u8) -> bool {
+        (self.0 & flag) != 0
+    }
+    pub fn append(mut self, append: bool) -> Self {
+        if append {
+            self.0 |= IdxInsertFlags::APPEND;
+        } else {
+            self.0 &= !IdxInsertFlags::APPEND;
+        }
+        self
+    }
+    pub fn use_seek(mut self, seek: bool) -> Self {
+        if seek {
+            self.0 |= IdxInsertFlags::USE_SEEK;
+        } else {
+            self.0 &= !IdxInsertFlags::USE_SEEK;
+        }
+        self
+    }
+    pub fn nchange(mut self, change: bool) -> Self {
+        if change {
+            self.0 |= IdxInsertFlags::NCHANGE;
+        } else {
+            self.0 &= !IdxInsertFlags::NCHANGE;
+        }
+        self
+    }
+}
+
 #[derive(Description, Debug)]
 pub enum Insn {
     // Initialize the program state and jump to the given PC.
@@ -429,6 +467,20 @@ pub enum Insn {
         target_pc: BranchOffset,
     },
 
+    // cursor_id is a cursor pointing to a B-Tree index that uses integer keys, this op writes the value obtained from MakeRecord into the index.
+    // P3 + P4 are for the original column values that make up that key in unpacked (pre-serialized) form.
+    // If P5 has the OPFLAG_APPEND bit set, that is a hint to the b-tree layer that this insert is likely to be an append.
+    // OPFLAG_NCHANGE bit set, then the change counter is incremented by this instruction. If the OPFLAG_NCHANGE bit is clear, then the change counter is unchanged.
+    IdxInsertAsync {
+        cursor_id: CursorID,
+        record_reg: usize, // P2 the register containing the record to insert
+        unpacked_start: Option<usize>, // P3 the index of the first register for the unpacked key
+        unpacked_count: Option<u16>, // P4 # of unpacked values in the key in P2
+        flags: IdxInsertFlags, // TODO: optimization
+    },
+    IdxInsertAwait {
+        cursor_id: CursorID,
+    },
     // The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
     // If the P1 index entry is greater or equal than the key value then jump to P2. Otherwise fall through to the next instruction.
     IdxGE {

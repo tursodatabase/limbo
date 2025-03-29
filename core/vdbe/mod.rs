@@ -1607,10 +1607,9 @@ impl Program {
                             let cursor = cursor.as_btree_mut();
                             let record_from_regs: Record =
                                 make_owned_record(&state.registers, start_reg, num_regs);
-                            let found = return_if_io!(
+                            return_if_io!(
                                 cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GT)
-                            );
-                            found
+                            )
                         };
                         if !found {
                             state.pc = target_pc.to_offset_int();
@@ -1635,7 +1634,7 @@ impl Program {
                                     ));
                                 }
                             };
-                            let found = match rowid {
+                            match rowid {
                                 Some(rowid) => {
                                     let found = return_if_io!(
                                         cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GT)
@@ -1647,8 +1646,7 @@ impl Program {
                                     }
                                 }
                                 None => state.pc + 1,
-                            };
-                            found
+                            }
                         };
                         state.pc = pc;
                     }
@@ -3148,6 +3146,48 @@ impl Program {
                     }
                     state.pc += 1;
                 }
+                Insn::IdxInsertAsync {
+                    cursor_id,
+                    record_reg,
+                    ..
+                } => {
+                    let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                    let CursorType::BTreeIndex(index_meta) = cursor_type else {
+                        panic!("IdxInsert: not a BTree index cursor");
+                    };
+                    {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_btree_mut();
+                        let record = match state.registers[*record_reg] {
+                            Register::Record(ref r) => r,
+                            _ => unreachable!("Not a record! Cannot insert a non record value."),
+                        };
+                        if index_meta.unique {
+                            // check for uniqueness violation. TODO: actually handle async
+                            match cursor.index_exists(record)? {
+                                CursorResult::Ok(true) => {
+                                    return Err(LimboError::Constraint(
+                                        "UNIQUE constraint failed: duplicate key".into(),
+                                    ))
+                                }
+                                CursorResult::IO => return Ok(StepResult::IO),
+                                CursorResult::Ok(false) => {}
+                            }
+                        }
+                        // insert record as key
+                        return_if_io!(cursor.insert_index_key(record));
+                    }
+                    state.pc += 1;
+                }
+                Insn::IdxInsertAwait { cursor_id } => {
+                    {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_btree_mut();
+                        cursor.wait_for_completion()?;
+                    }
+                    // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
+                    state.pc += 1;
+                }
                 Insn::DeleteAsync { cursor_id } => {
                     {
                         let mut cursor = state.get_cursor(*cursor_id);
@@ -3271,7 +3311,7 @@ impl Program {
                     state.pc += 1;
                 }
                 // this cursor may be reused for next insert
-                // Update: tablemoveto is used to travers on not exists, on insert depending on flags if nonseek it traverses again.
+                // Update: tablemoveto is used to traverse on not exists, on insert depending on flags if nonseek it traverses again.
                 // If not there might be some optimizations obviously.
                 Insn::OpenWriteAsync {
                     cursor_id,

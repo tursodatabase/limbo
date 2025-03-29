@@ -155,8 +155,8 @@ pub fn translate_create_table(
     Ok(program)
 }
 
-#[derive(Debug)]
-enum SchemaEntryType {
+#[derive(Debug, Clone, Copy)]
+pub enum SchemaEntryType {
     Table,
     Index,
 }
@@ -169,9 +169,9 @@ impl SchemaEntryType {
         }
     }
 }
-const SQLITE_TABLEID: &str = "sqlite_schema";
+pub const SQLITE_TABLEID: &str = "sqlite_schema";
 
-fn emit_schema_entry(
+pub fn emit_schema_entry(
     program: &mut ProgramBuilder,
     sqlite_schema_cursor_id: usize,
     entry_type: SchemaEntryType,
