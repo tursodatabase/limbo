@@ -426,10 +426,11 @@ impl BTreeCursor {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
 
+                    // Going upwards = we just moved to an interior cell from a leaf.
+                    // On the first pass we must take the record from the interior cell (since unlike table btrees, index interior cells have payloads)
+                    // We then mark going_upwards=false so that we go back down the tree on the next invocation.
                     if self.going_upwards {
                         self.going_upwards = false;
-                    } else {
-                        self.stack.retreat();
                     }
                     if predicate.is_none() {
                         let rowid = match record.last_value() {
