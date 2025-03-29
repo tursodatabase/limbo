@@ -655,6 +655,21 @@ fn emit_loop_source(
                     &t_ctx.resolver,
                 )?;
             }
+
+            let if_label = if let Some(flag) = t_ctx.reg_agg_flag {
+                let if_label = program.allocate_label();
+                program.emit_insn(Insn::If {
+                    reg: flag,
+                    target_pc: if_label,
+                    jump_if_null: false,
+                });
+                Some(if_label)
+            } else {
+                None
+            };
+
+            let col_start = t_ctx.reg_result_cols_start.unwrap();
+
             for (i, rc) in plan.result_columns.iter().enumerate() {
                 if rc.contains_aggregates {
                     // Do nothing, aggregates are computed above
@@ -662,7 +677,9 @@ fn emit_loop_source(
                     // it will be computed after the aggregations are finalized.
                     continue;
                 }
-                let reg = start_reg + num_aggs + i;
+
+                let reg = col_start + i;
+
                 translate_expr(
                     program,
                     Some(&plan.table_references),
@@ -671,6 +688,12 @@ fn emit_loop_source(
                     &t_ctx.resolver,
                 )?;
             }
+            if let Some(label) = if_label {
+                program.resolve_label(label, program.offset());
+                let flag = t_ctx.reg_agg_flag.unwrap();
+                program.emit_int(1, flag);
+            }
+
             Ok(())
         }
         LoopEmitTarget::QueryResult => {
