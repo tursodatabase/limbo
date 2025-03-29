@@ -141,3 +141,15 @@ Collin|15}
 do_execsql_test case-insensitive-alias {
     select u.first_name as fF, count(1) > 0 as cC from users u where fF = 'Jamie' group by fF order by cC;
 } {Jamie|1}
+
+do_execsql_test age_idx_order_desc {
+    select first_name from users order by age desc limit 3;
+} {Robert
+Sydney
+Matthew}
+
+do_execsql_test rowid_or_integer_pk_desc {
+    select first_name from users order by id desc limit 3;
+} {Nicole
+Gina
+Dorothy}
