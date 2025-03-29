@@ -153,3 +153,12 @@ do_execsql_test rowid_or_integer_pk_desc {
 } {Nicole
 Gina
 Dorothy}
+
+# These two following tests may seem dumb but they verify that index scanning by age_idx doesn't drop any rows due to BTree bugs
+do_execsql_test orderby_asc_verify_rows {
+    select count(1) from (select * from users order by age desc)
+} {10000}
+
+do_execsql_test orderby_desc_verify_rows {
+    select count(1) from (select * from users order by age desc)
+} {10000}
