@@ -416,6 +416,8 @@ impl BTreeCursor {
                     if !self.going_upwards {
                         let mem_page = self.pager.read_page(left_child_page as usize)?;
                         self.stack.push(mem_page);
+                        // use cell_index = i32::MAX to tell next loop to go to the end of the current page
+                        self.stack.set_cell_index(i32::MAX);
                         continue;
                     }
                     let record = if let Some(next_page) = first_overflow_page {
@@ -424,8 +426,11 @@ impl BTreeCursor {
                         crate::storage::sqlite3_ondisk::read_record(payload)?
                     };
 
-                    self.going_upwards = false;
-                    self.stack.retreat();
+                    if self.going_upwards {
+                        self.going_upwards = false;
+                    } else {
+                        self.stack.retreat();
+                    }
                     if predicate.is_none() {
                         let rowid = match record.last_value() {
                             Some(RefValue::Integer(rowid)) => *rowid as u64,
