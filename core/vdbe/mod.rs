@@ -35,6 +35,8 @@ use crate::functions::printf::exec_printf;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
+use crate::storage::database::DatabaseFile;
+use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::wal::CheckpointResult;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
@@ -49,7 +51,7 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
-use crate::{bail_constraint_error, info, CheckpointStatus};
+use crate::{bail_constraint_error, info, CheckpointStatus,  BufferPool, MemoryIO, OpenFlags, WalFile, WalFileShared, IO};
 #[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
@@ -69,6 +71,7 @@ use insn::{
 };
 
 use likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
+use parking_lot::RwLock;
 use rand::distributions::{Distribution, Uniform};
 use rand::{thread_rng, Rng};
 use regex::{Regex, RegexBuilder};
@@ -867,7 +870,8 @@ impl Program {
                         None => None,
                     };
                     let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
-                    let mut cursors = state.cursors.borrow_mut();
+                    let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
+                        state.cursors.borrow_mut();
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
                             cursors
@@ -3482,7 +3486,87 @@ impl Program {
                 Insn::Noop => {
                     // Do nothing
                     // Advance the program counter for the next opcode
-                    state.pc += 1
+                    state.pc += 1;
+                }
+                Insn::OpenEphemeral {
+                    cursor_id,
+                    is_btree,
+                } => {
+                    // OpenEphemeral works by using a in-memory storage for the pages regardless
+                    // of the underlying storage, and passing it to BTreeCursor. This is useful for temporary tables and indices.
+
+                    // TODO: Optimize to avoid recreating the pager every time OpenEphemeral is called
+                    let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
+                    let file = io.open_file("", OpenFlags::Create, true)?;
+                    let page_io = Arc::new(DatabaseFile::new(file));
+
+                    let db_header = Pager::begin_open(page_io.clone())?;
+
+                    let buffer_pool = Rc::new(BufferPool::new(512));
+
+                    let page_size = db_header.lock().page_size;
+
+                    let shared_wal = WalFileShared::open_shared(&io, "", page_size)?;
+
+                    let wal = Rc::new(RefCell::new(WalFile::new(
+                        io.clone(),
+                        page_size as usize,
+                        shared_wal,
+                        buffer_pool.clone(),
+                    )));
+
+                    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+
+                    let pager = Rc::new(Pager::finish_open(
+                        db_header,
+                        page_io,
+                        wal,
+                        io,
+                        page_cache,
+                        buffer_pool,
+                    )?);
+                    let root_page = pager.btree_create(*is_btree as usize);
+
+                    let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
+                    let mv_cursor = match state.mv_tx_id {
+                        Some(tx_id) => {
+                            let table_id = root_page as u64;
+                            let mv_store = mv_store.as_ref().unwrap().clone();
+                            let mv_cursor = Rc::new(RefCell::new(
+                                MvCursor::new(mv_store, tx_id, table_id).unwrap(),
+                            ));
+                            Some(mv_cursor)
+                        }
+                        None => None,
+                    };
+                    let cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+                    let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
+                        state.cursors.borrow_mut();
+                    // Table content is erased if the cursor already exists
+                    match cursor_type {
+                        CursorType::BTreeTable(_) => {
+                            cursors
+                                .get_mut(*cursor_id)
+                                .unwrap()
+                                .replace(Cursor::new_btree(cursor));
+                        }
+                        CursorType::BTreeIndex(_) => {
+                            cursors
+                                .get_mut(*cursor_id)
+                                .unwrap()
+                                .replace(Cursor::new_btree(cursor));
+                        }
+                        CursorType::Pseudo(_) => {
+                            panic!("OpenEphemeral on pseudo cursor");
+                        }
+                        CursorType::Sorter => {
+                            panic!("OpenEphemeral on sorter cursor");
+                        }
+                        CursorType::VirtualTable(_) => {
+                            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpenAsync instead");
+                        }
+                    }
+                    state.pc += 1;
                 }
             }
         }
