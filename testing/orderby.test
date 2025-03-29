@@ -162,3 +162,9 @@ do_execsql_test orderby_asc_verify_rows {
 do_execsql_test orderby_desc_verify_rows {
     select count(1) from (select * from users order by age desc)
 } {10000}
+
+do_execsql_test orderby_desc_with_offset {
+    select first_name, age from users order by age desc limit 3 offset 666;
+} {Francis|94
+Matthew|94
+Theresa|94}
