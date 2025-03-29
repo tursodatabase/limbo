@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
-    schema::{Index, Schema},
+    schema::{Index, Order, Schema},
     Result,
 };
 
@@ -38,9 +38,8 @@ fn optimize_select_plan(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
+        &mut plan.order_by,
     )?;
-
-    eliminate_unnecessary_orderby(plan, schema)?;
 
     Ok(())
 }
@@ -58,6 +57,7 @@ fn optimize_delete_plan(plan: &mut DeletePlan, schema: &Schema) -> Result<()> {
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
+        &mut None,
     )?;
 
     Ok(())
@@ -68,61 +68,6 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
         if let Operation::Subquery { plan, .. } = &mut table.op {
             optimize_select_plan(&mut *plan, schema)?;
         }
-    }
-
-    Ok(())
-}
-
-fn query_is_already_ordered_by(
-    table_references: &[TableReference],
-    key: &mut ast::Expr,
-    available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-) -> Result<bool> {
-    let first_table = table_references.first();
-    if first_table.is_none() {
-        return Ok(false);
-    }
-    let table_reference = first_table.unwrap();
-    match &table_reference.op {
-        Operation::Scan { .. } => Ok(key.is_rowid_alias_of(0)),
-        Operation::Search(search) => match search {
-            Search::RowidEq { .. } => Ok(key.is_rowid_alias_of(0)),
-            Search::RowidSearch { .. } => Ok(key.is_rowid_alias_of(0)),
-            Search::IndexSearch { index, .. } => {
-                let index_rc = key.check_index_scan(0, &table_reference, available_indexes)?;
-                let index_is_the_same = index_rc
-                    .map(|irc| Arc::ptr_eq(index, &irc))
-                    .unwrap_or(false);
-                Ok(index_is_the_same)
-            }
-        },
-        _ => Ok(false),
-    }
-}
-
-fn eliminate_unnecessary_orderby(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
-    if plan.order_by.is_none() {
-        return Ok(());
-    }
-    if plan.table_references.len() == 0 {
-        return Ok(());
-    }
-
-    let o = plan.order_by.as_mut().unwrap();
-
-    if o.len() != 1 {
-        // TODO: handle multiple order by keys
-        return Ok(());
-    }
-
-    let (key, direction) = o.first_mut().unwrap();
-
-    let already_ordered =
-        query_is_already_ordered_by(&plan.table_references, key, &schema.indexes)?;
-
-    if already_ordered {
-        push_scan_direction(&mut plan.table_references[0], direction);
-        plan.order_by = None;
     }
 
     Ok(())
@@ -141,11 +86,9 @@ fn use_indexes(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut Vec<WhereTerm>,
+    order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
 ) -> Result<()> {
-    if where_clause.is_empty() {
-        return Ok(());
-    }
-
+    // First pass: try to use indexes for WHERE conditions
     'outer: for (table_index, table_reference) in table_references.iter_mut().enumerate() {
         if let Operation::Scan { .. } = &mut table_reference.op {
             let mut i = 0;
@@ -163,6 +106,107 @@ fn use_indexes(
                 }
                 i += 1;
             }
+        }
+    }
+
+    // Second pass: handle ORDER BY optimization if present
+    let Some(order) = order_by else {
+        return Ok(());
+    };
+    let Some(first_table_reference) = table_references.first_mut() else {
+        return Ok(());
+    };
+    let Some(btree_table) = first_table_reference.btree() else {
+        return Ok(());
+    };
+    let Operation::Scan {
+        index, iter_dir, ..
+    } = &mut first_table_reference.op
+    else {
+        return Ok(());
+    };
+
+    assert!(
+        index.is_none(),
+        "Nothing shouldve transformed the scan to use an index yet"
+    );
+
+    // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
+    if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
+        *iter_dir = match order[0].1 {
+            Direction::Ascending => IterationDirection::Forwards,
+            Direction::Descending => IterationDirection::Backwards,
+        };
+        *order_by = None;
+        return Ok(());
+    }
+
+    // Find the best matching index for the ORDER BY columns
+    let table_name = &btree_table.name;
+    let mut best_index = (None, 0);
+
+    for (_, indexes) in available_indexes.iter() {
+        for index_candidate in indexes.iter().filter(|i| &i.table_name == table_name) {
+            let matching_columns = index_candidate.columns.iter().enumerate().take_while(|(i, c)| {
+                            if let Some((Expr::Column { table, column, .. }, _)) = order.get(*i) {
+                                let col_idx_in_table = btree_table
+                                    .columns
+                                    .iter()
+                                    .position(|tc| tc.name.as_ref() == Some(&c.name));
+                                matches!(col_idx_in_table, Some(col_idx) if *table == 0 && *column == col_idx)
+                            } else {
+                                false
+                            }
+                        }).count();
+
+            if matching_columns > best_index.1 {
+                best_index = (Some(index_candidate), matching_columns);
+            }
+        }
+    }
+
+    let Some(matching_index) = best_index.0 else {
+        return Ok(());
+    };
+    let match_count = best_index.1;
+
+    // If we found a matching index, use it for scanning
+    *index = Some(matching_index.clone());
+    // If the order by direction matches the index direction, we can iterate the index in forwards order.
+    // If they don't, we must iterate the index in backwards order.
+    let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
+    *iter_dir =
+        match (index_direction, order[0].1) {
+            (Order::Ascending, Direction::Ascending)
+            | (Order::Descending, Direction::Descending) => IterationDirection::Forwards,
+            (Order::Ascending, Direction::Descending)
+            | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
+        };
+
+    // If the index covers all ORDER BY columns, and one of the following applies:
+    // - the ORDER BY directions exactly match the index orderings,
+    // - the ORDER by directions are the exact opposite of the index orderings,
+    // we can remove the ORDER BY clause.
+    if match_count == order.len() {
+        let full_match = {
+            let mut all_match_forward = true;
+            let mut all_match_reverse = true;
+            for (i, (_, direction)) in order.iter().enumerate() {
+                match (&matching_index.columns[i].order, direction) {
+                    (Order::Ascending, Direction::Ascending)
+                    | (Order::Descending, Direction::Descending) => {
+                        all_match_reverse = false;
+                    }
+                    (Order::Ascending, Direction::Descending)
+                    | (Order::Descending, Direction::Ascending) => {
+                        all_match_forward = false;
+                    }
+                }
+            }
+            all_match_forward || all_match_reverse
+        };
+        if full_match {
+            *order_by = None;
         }
     }
 
@@ -202,20 +246,6 @@ fn eliminate_constant_conditions(
     }
 
     Ok(ConstantConditionEliminationResult::Continue)
-}
-
-fn push_scan_direction(table: &mut TableReference, direction: &Direction) {
-    if let Operation::Scan {
-        ref mut iter_dir, ..
-    } = table.op
-    {
-        if iter_dir.is_none() {
-            match direction {
-                Direction::Ascending => *iter_dir = Some(IterationDirection::Forwards),
-                Direction::Descending => *iter_dir = Some(IterationDirection::Backwards),
-            }
-        }
-    }
 }
 
 fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {

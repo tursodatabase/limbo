@@ -1176,9 +1176,9 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::LastAsync { .. } => (
+            Insn::LastAsync { cursor_id } => (
                 "LastAsync",
-                0,
+                *cursor_id as i32,
                 0,
                 0,
                 OwnedValue::build_text(""),
@@ -1203,27 +1203,27 @@ pub fn insn_to_str(
                 0,
                 where_clause.clone(),
             ),
-            Insn::LastAwait { .. } => (
+            Insn::LastAwait { cursor_id, .. } => (
                 "LastAwait",
-                0,
+                *cursor_id as i32,
                 0,
                 0,
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
             ),
-            Insn::PrevAsync { .. } => (
+            Insn::PrevAsync { cursor_id } => (
                 "PrevAsync",
-                0,
+                *cursor_id as i32,
                 0,
                 0,
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
             ),
-            Insn::PrevAwait { .. } => (
+            Insn::PrevAwait { cursor_id, .. } => (
                 "PrevAwait",
-                0,
+                *cursor_id as i32,
                 0,
                 0,
                 OwnedValue::build_text(""),

@@ -78,7 +78,7 @@ pub fn init_loop(
             }
         }
         match &table.op {
-            Operation::Scan { .. } => {
+            Operation::Scan { index, .. } => {
                 let cursor_id = program.alloc_cursor_id(
                     Some(table.identifier.clone()),
                     match &table.table {
@@ -89,6 +89,9 @@ pub fn init_loop(
                         other => panic!("Invalid table reference type in Scan: {:?}", other),
                     },
                 );
+                let index_cursor_id = index.as_ref().map(|i| {
+                    program.alloc_cursor_id(Some(i.name.clone()), CursorType::BTreeIndex(i.clone()))
+                });
                 match (mode, &table.table) {
                     (OperationMode::SELECT, Table::BTree(_)) => {
                         let root_page = table.btree().unwrap().root_page;
@@ -97,6 +100,13 @@ pub fn init_loop(
                             root_page,
                         });
                         program.emit_insn(Insn::OpenReadAwait {});
+                        if let Some(index_cursor_id) = index_cursor_id {
+                            program.emit_insn(Insn::OpenReadAsync {
+                                cursor_id: index_cursor_id,
+                                root_page: index.as_ref().unwrap().root_page,
+                            });
+                            program.emit_insn(Insn::OpenReadAwait {});
+                        }
                     }
                     (OperationMode::DELETE, Table::BTree(_)) => {
                         let root_page = table.btree().unwrap().root_page;
@@ -104,6 +114,12 @@ pub fn init_loop(
                             cursor_id,
                             root_page,
                         });
+                        if let Some(index_cursor_id) = index_cursor_id {
+                            program.emit_insn(Insn::OpenWriteAsync {
+                                cursor_id: index_cursor_id,
+                                root_page: index.as_ref().unwrap().root_page,
+                            });
+                        }
                         program.emit_insn(Insn::OpenWriteAwait {});
                     }
                     (OperationMode::SELECT, Table::Virtual(_)) => {
@@ -259,36 +275,35 @@ pub fn open_loop(
                     program.resolve_label(jump_target_when_true, program.offset());
                 }
             }
-            Operation::Scan { iter_dir } => {
+            Operation::Scan { iter_dir, index } => {
                 let cursor_id = program.resolve_cursor_id(&table.identifier);
-
+                let index_cursor_id = index.as_ref().map(|i| program.resolve_cursor_id(&i.name));
+                let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
                 if !matches!(&table.table, Table::Virtual(_)) {
-                    if iter_dir
-                        .as_ref()
-                        .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                    {
-                        program.emit_insn(Insn::LastAsync { cursor_id });
+                    if *iter_dir == IterationDirection::Backwards {
+                        program.emit_insn(Insn::LastAsync {
+                            cursor_id: iteration_cursor_id,
+                        });
                     } else {
-                        program.emit_insn(Insn::RewindAsync { cursor_id });
+                        program.emit_insn(Insn::RewindAsync {
+                            cursor_id: iteration_cursor_id,
+                        });
                     }
                 }
                 match &table.table {
-                    Table::BTree(_) => program.emit_insn(
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
+                    Table::BTree(_) => {
+                        program.emit_insn(if *iter_dir == IterationDirection::Backwards {
                             Insn::LastAwait {
-                                cursor_id,
+                                cursor_id: iteration_cursor_id,
                                 pc_if_empty: loop_end,
                             }
                         } else {
                             Insn::RewindAwait {
-                                cursor_id,
+                                cursor_id: iteration_cursor_id,
                                 pc_if_empty: loop_end,
                             }
-                        },
-                    ),
+                        })
+                    }
                     Table::Virtual(ref table) => {
                         let start_reg = program
                             .alloc_registers(table.args.as_ref().map(|a| a.len()).unwrap_or(0));
@@ -313,6 +328,13 @@ pub fn open_loop(
                     other => panic!("Unsupported table reference type: {:?}", other),
                 }
                 program.resolve_label(loop_start, program.offset());
+
+                if let Some(index_cursor_id) = index_cursor_id {
+                    program.emit_insn(Insn::DeferredSeek {
+                        index_cursor_id,
+                        table_cursor_id: cursor_id,
+                    });
+                }
 
                 for cond in predicates
                     .iter()
@@ -729,30 +751,33 @@ pub fn close_loop(
                     target_pc: loop_labels.loop_start,
                 });
             }
-            Operation::Scan { iter_dir, .. } => {
+            Operation::Scan {
+                index, iter_dir, ..
+            } => {
                 program.resolve_label(loop_labels.next, program.offset());
+
                 let cursor_id = program.resolve_cursor_id(&table.identifier);
+                let index_cursor_id = index.as_ref().map(|i| program.resolve_cursor_id(&i.name));
+                let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
                 match &table.table {
                     Table::BTree(_) => {
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
-                            program.emit_insn(Insn::PrevAsync { cursor_id });
+                        if *iter_dir == IterationDirection::Backwards {
+                            program.emit_insn(Insn::PrevAsync {
+                                cursor_id: iteration_cursor_id,
+                            });
                         } else {
-                            program.emit_insn(Insn::NextAsync { cursor_id });
+                            program.emit_insn(Insn::NextAsync {
+                                cursor_id: iteration_cursor_id,
+                            });
                         }
-                        if iter_dir
-                            .as_ref()
-                            .is_some_and(|dir| *dir == IterationDirection::Backwards)
-                        {
+                        if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::PrevAwait {
-                                cursor_id,
+                                cursor_id: iteration_cursor_id,
                                 pc_if_next: loop_labels.loop_start,
                             });
                         } else {
                             program.emit_insn(Insn::NextAwait {
-                                cursor_id,
+                                cursor_id: iteration_cursor_id,
                                 pc_if_next: loop_labels.loop_start,
                             });
                         }
