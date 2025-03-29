@@ -3157,9 +3157,9 @@ impl Program {
                     {
                         let mut cursor = state.get_cursor(*cursor_id);
                         let cursor = cursor.as_btree_mut();
-                        let record = match &state.registers[*record_reg] {
-                            OwnedValue::Record(ref r) => r,
-                            _ => return Err(LimboError::InternalError("expected record".into())),
+                        let record = match state.registers[*record_reg] {
+                            Register::Record(ref r) => r,
+                            _ => unreachable!("Not a record! Cannot insert a non record value."),
                         };
                         if index_meta.unique {
                             // check for uniqueness violation. TODO: actually handle async
@@ -3173,12 +3173,8 @@ impl Program {
                                 CursorResult::Ok(false) => {}
                             }
                         }
-                        // insert record as key, value as empty record
-                        return_if_io!(cursor.insert(
-                            &OwnedValue::Record(record.clone()),
-                            &Record::new(vec![]),
-                            true
-                        ));
+                        // insert record as key
+                        return_if_io!(cursor.insert_index_key(record));
                     }
                     state.pc += 1;
                 }
