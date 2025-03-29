@@ -165,41 +165,45 @@ fn use_indexes(
         }
     }
 
+    let Some(matching_index) = best_index.0 else {
+        return Ok(());
+    };
+    let match_count = best_index.1;
+
     // If we found a matching index, use it for scanning
-    if let (Some(matching_index), match_count) = best_index {
-        *index = Some(matching_index.clone());
-        // If the order by direction matches the index direction, we can iterate the index in forwards order.
-        // If they don't, we must iterate the index in backwards order.
-        let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
-        *iter_dir = match (index_direction, order[0].1) {
+    *index = Some(matching_index.clone());
+    // If the order by direction matches the index direction, we can iterate the index in forwards order.
+    // If they don't, we must iterate the index in backwards order.
+    let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
+    *iter_dir =
+        match (index_direction, order[0].1) {
             (Order::Ascending, Direction::Ascending)
             | (Order::Descending, Direction::Descending) => IterationDirection::Forwards,
             (Order::Ascending, Direction::Descending)
             | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
         };
 
-        // If the index covers all ORDER BY columns, and the ORDER BY directions are
-        // in agreement with the index direction, we can remove the ORDER BY clause.
-        if match_count == order.len() {
-            let full_match = {
-                let mut full_match = false;
-                for (i, (_, direction)) in order.iter().enumerate() {
-                    match (&matching_index.columns[i].order, direction) {
-                        (Order::Ascending, Direction::Ascending)
-                        | (Order::Descending, Direction::Descending) => {
-                            full_match = true;
-                        }
-                        _ => {
-                            full_match = false;
-                            break;
-                        }
+    // If the index covers all ORDER BY columns, and the ORDER BY directions are
+    // in agreement with the index direction, we can remove the ORDER BY clause.
+    if match_count == order.len() {
+        let full_match = {
+            let mut full_match = false;
+            for (i, (_, direction)) in order.iter().enumerate() {
+                match (&matching_index.columns[i].order, direction) {
+                    (Order::Ascending, Direction::Ascending)
+                    | (Order::Descending, Direction::Descending) => {
+                        full_match = true;
+                    }
+                    _ => {
+                        full_match = false;
+                        break;
                     }
                 }
-                full_match
-            };
-            if full_match {
-                *order_by = None;
             }
+            full_match
+        };
+        if full_match {
+            *order_by = None;
         }
     }
 
