@@ -183,24 +183,27 @@ fn use_indexes(
             | (Order::Descending, Direction::Ascending) => IterationDirection::Backwards,
         };
 
-    // If the index covers all ORDER BY columns, and the ORDER BY directions are
-    // in agreement with the index direction, we can remove the ORDER BY clause.
+    // If the index covers all ORDER BY columns, and one of the following applies:
+    // - the ORDER BY directions exactly match the index orderings,
+    // - the ORDER by directions are the exact opposite of the index orderings,
+    // we can remove the ORDER BY clause.
     if match_count == order.len() {
         let full_match = {
-            let mut full_match = false;
+            let mut all_match_forward = true;
+            let mut all_match_reverse = true;
             for (i, (_, direction)) in order.iter().enumerate() {
                 match (&matching_index.columns[i].order, direction) {
                     (Order::Ascending, Direction::Ascending)
                     | (Order::Descending, Direction::Descending) => {
-                        full_match = true;
+                        all_match_reverse = false;
                     }
-                    _ => {
-                        full_match = false;
-                        break;
+                    (Order::Ascending, Direction::Descending)
+                    | (Order::Descending, Direction::Ascending) => {
+                        all_match_forward = false;
                     }
                 }
             }
-            full_match
+            all_match_forward || all_match_reverse
         };
         if full_match {
             *order_by = None;
