@@ -3484,6 +3484,11 @@ impl Program {
                     // Advance the program counter for the next opcode
                     state.pc += 1
                 }
+                Insn::AddImm { reg, value } => {
+                    let current_value = state.registers[*reg].to_i64();
+                    state.registers[*reg] = OwnedValue::Integer(current_value + *value);
+                    state.pc += 1;
+                }
             }
         }
     }
