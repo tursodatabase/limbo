@@ -78,7 +78,7 @@ pub fn init_loop(
             }
         }
         match &table.op {
-            Operation::Scan { .. } => {
+            Operation::Scan { index, .. } => {
                 let cursor_id = program.alloc_cursor_id(
                     Some(table.identifier.clone()),
                     match &table.table {
@@ -259,7 +259,7 @@ pub fn open_loop(
                     program.resolve_label(jump_target_when_true, program.offset());
                 }
             }
-            Operation::Scan { iter_dir } => {
+            Operation::Scan { iter_dir, index } => {
                 let cursor_id = program.resolve_cursor_id(&table.identifier);
 
                 if !matches!(&table.table, Table::Virtual(_)) {
@@ -729,7 +729,7 @@ pub fn close_loop(
                     target_pc: loop_labels.loop_start,
                 });
             }
-            Operation::Scan { iter_dir, .. } => {
+            Operation::Scan { index, iter_dir, .. } => {
                 program.resolve_label(loop_labels.next, program.offset());
                 let cursor_id = program.resolve_cursor_id(&table.identifier);
                 match &table.table {

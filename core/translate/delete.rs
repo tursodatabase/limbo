@@ -53,7 +53,7 @@ pub fn prepare_delete_plan(
     let table_references = vec![TableReference {
         table,
         identifier: name,
-        op: Operation::Scan { iter_dir: None },
+        op: Operation::Scan { iter_dir: None, index: None },
         join_info: None,
     }];
 

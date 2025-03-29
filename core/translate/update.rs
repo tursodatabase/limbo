@@ -106,7 +106,7 @@ pub fn translate_update(
     let referenced_tables = vec![TableReference {
         table: Table::BTree(btree_table.clone()),
         identifier: table_name.0.clone(),
-        op: Operation::Scan { iter_dir: None },
+        op: Operation::Scan { iter_dir: None, index: None },
         join_info: None,
     }];
 

@@ -251,6 +251,8 @@ pub enum Operation {
     // assignments. for more detailed discussions, please refer to https://github.com/tursodatabase/limbo/pull/376
     Scan {
         iter_dir: Option<IterationDirection>,
+        /// The index that we are using to scan the table, if any.
+        index: Option<Arc<Index>>,
     },
     // Search operation
     // This operation is used to search for a row in a table using an index
