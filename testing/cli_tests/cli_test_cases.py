@@ -242,6 +242,28 @@ def test_table_patterns():
     shell.quit()
 
 
+def test_update_with_limit():
+    limbo = TestLimboShell(
+        "CREATE TABLE t (a,b,c); insert into t values (1,2,3), (4,5,6), (7,8,9), (1,2,3),(4,5,6), (7,8,9);"
+    )
+    limbo.run_test("update-limit", "UPDATE t SET a = 10 LIMIT 1;", "")
+    limbo.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 10;", "1")
+    limbo.run_test("update-limit-zero", "UPDATE t SET a = 100 LIMIT 0;", "")
+    limbo.run_test(
+        "update-limit-zero-result", "SELECT COUNT(*) from t WHERE a = 100;", "0"
+    )
+    limbo.run_test("update-limit-all", "UPDATE t SET a = 100 LIMIT -1;", "")
+    # negative limit is treated as no limit in sqlite due to check for --val = 0
+    limbo.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 100;", "6")
+    limbo.run_test(
+        "udpate-limit-where", "UPDATE t SET a = 333 WHERE b = 5 LIMIT 1;", ""
+    )
+    limbo.run_test(
+        "update-limit-where-result", "SELECT COUNT(*) from t WHERE a = 333;", "1"
+    )
+    limbo.quit()
+
+
 if __name__ == "__main__":
     print("Running all Limbo CLI tests...")
     test_basic_queries()
@@ -259,4 +281,5 @@ if __name__ == "__main__":
     test_import_csv_verbose()
     test_import_csv_skip()
     test_table_patterns()
+    test_update_with_limit()
     print("All tests have passed")

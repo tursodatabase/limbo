@@ -7,15 +7,12 @@ use std::{
     sync::Arc,
 };
 
+use crate::schema::{PseudoTable, Type};
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, Index, Table},
     vdbe::BranchOffset,
     VirtualTable,
-};
-use crate::{
-    schema::{PseudoTable, Type},
-    translate::plan::Plan::{Delete, Select},
 };
 
 #[derive(Debug, Clone)]
@@ -112,6 +109,7 @@ impl Ord for EvalAt {
 pub enum Plan {
     Select(SelectPlan),
     Delete(DeletePlan),
+    Update(UpdatePlan),
 }
 
 /// The type of the query, either top level or subquery
@@ -170,7 +168,23 @@ pub struct DeletePlan {
     pub contains_constant_false_condition: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+pub struct UpdatePlan {
+    // table being updated is always first
+    pub table_references: Vec<TableReference>,
+    // (colum index, new value) pairs
+    pub set_clauses: Vec<(usize, ast::Expr)>,
+    pub where_clause: Vec<WhereTerm>,
+    pub order_by: Option<Vec<(ast::Expr, Direction)>>,
+    // TODO: support OFFSET
+    pub limit: Option<isize>,
+    // TODO: optional RETURNING clause
+    pub returning: Option<Vec<ResultSetColumn>>,
+    // whether the WHERE clause is always false
+    pub contains_constant_false_condition: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IterationDirection {
     Forwards,
     Backwards,
@@ -370,8 +384,9 @@ impl Display for Aggregate {
 impl Display for Plan {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Select(select_plan) => select_plan.fmt(f),
-            Delete(delete_plan) => delete_plan.fmt(f),
+            Self::Select(select_plan) => select_plan.fmt(f),
+            Self::Delete(delete_plan) => delete_plan.fmt(f),
+            Self::Update(update_plan) => update_plan.fmt(f),
         }
     }
 }
@@ -458,6 +473,80 @@ impl Display for DeletePlan {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+impl fmt::Display for UpdatePlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "QUERY PLAN")?;
+
+        for (i, reference) in self.table_references.iter().enumerate() {
+            let is_last = i == self.table_references.len() - 1;
+            let indent = if i == 0 {
+                if is_last { "`--" } else { "|--" }.to_string()
+            } else {
+                format!(
+                    "   {}{}",
+                    "|  ".repeat(i - 1),
+                    if is_last { "`--" } else { "|--" }
+                )
+            };
+
+            match &reference.op {
+                Operation::Scan { .. } => {
+                    let table_name = if reference.table.get_name() == reference.identifier {
+                        reference.identifier.clone()
+                    } else {
+                        format!("{} AS {}", reference.table.get_name(), reference.identifier)
+                    };
+
+                    if i == 0 {
+                        writeln!(f, "{}UPDATE {}", indent, table_name)?;
+                    } else {
+                        writeln!(f, "{}SCAN {}", indent, table_name)?;
+                    }
+                }
+                Operation::Search(search) => match search {
+                    Search::RowidEq { .. } | Search::RowidSearch { .. } => {
+                        writeln!(
+                            f,
+                            "{}SEARCH {} USING INTEGER PRIMARY KEY (rowid=?)",
+                            indent, reference.identifier
+                        )?;
+                    }
+                    Search::IndexSearch { index, .. } => {
+                        writeln!(
+                            f,
+                            "{}SEARCH {} USING INDEX {}",
+                            indent, reference.identifier, index.name
+                        )?;
+                    }
+                },
+                Operation::Subquery { plan, .. } => {
+                    writeln!(f, "{}SUBQUERY {}", indent, reference.identifier)?;
+                    for line in format!("{}", plan).lines() {
+                        writeln!(f, "{}   {}", indent, line)?;
+                    }
+                }
+            }
+        }
+        if let Some(order_by) = &self.order_by {
+            writeln!(f, "ORDER BY:")?;
+            for (expr, dir) in order_by {
+                writeln!(f, "  - {} {}", expr, dir)?;
+            }
+        }
+        if let Some(limit) = self.limit {
+            writeln!(f, "LIMIT: {}", limit)?;
+        }
+        if let Some(ret) = &self.returning {
+            writeln!(f, "RETURNING:")?;
+            for col in ret {
+                writeln!(f, "  - {}", col.expr)?;
+            }
+        }
+
         Ok(())
     }
 }
