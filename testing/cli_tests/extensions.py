@@ -341,7 +341,7 @@ def test_kv():
     limbo = TestLimboShell()
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
-        lambda res: "Virtual table module not found: kv_store" in res,
+        lambda res: "Parse error: no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
     limbo.run_test_fn(
