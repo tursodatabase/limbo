@@ -94,6 +94,10 @@ test-json:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/json.test
 .PHONY: test-json
 
+test-writes: limbo
+	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/writes.py
+.PHONY: test-writes
+
 clickbench:
 	./perf/clickbench/benchmark.sh
 .PHONY: clickbench
