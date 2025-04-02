@@ -36,7 +36,10 @@ use crate::functions::printf::exec_printf;
 use crate::bail_constraint_error;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
-use crate::schema::{affinity, Affinity};
+use crate::schema::{
+    affinity, Affinity, SQLITE_AFF_INTEGER, SQLITE_AFF_NONE, SQLITE_AFF_NUMERIC, SQLITE_AFF_REAL,
+    SQLITE_AFF_TEXT,
+};
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::wal::CheckpointResult;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
@@ -1266,8 +1269,20 @@ impl Program {
                     start_reg,
                     count,
                     dest_reg,
+                    affinity_string,
                 } => {
+                    if let Some(af_str) = affinity_string {
+                        state.registers[*start_reg..*start_reg + *count]
+                            .iter_mut()
+                            .zip(af_str.chars())
+                            .for_each(|(reg, ch)| {
+                                let reg = reg.borrow_mut();
+                                apply_affinity_char(reg, ch);
+                            });
+                    };
+
                     let record = make_record(&state.registers, start_reg, count);
+
                     state.registers[*dest_reg] = Register::Record(record);
                     state.pc += 1;
                 }
@@ -4414,6 +4429,67 @@ fn exec_if(reg: &OwnedValue, jump_if_null: bool, not: bool) -> bool {
         OwnedValue::Integer(_) | OwnedValue::Float(_) => !not,
         OwnedValue::Null => jump_if_null,
         _ => false,
+    }
+}
+
+fn apply_affinity_char(target: &mut Register, ch: char) {
+    if let Register::OwnedValue(value) = target {
+        if matches!(value, OwnedValue::Blob(_)) {
+            return;
+        }
+        match ch {
+            SQLITE_AFF_NONE => return,
+            SQLITE_AFF_TEXT => {
+                if matches!(value, OwnedValue::Text(_) | OwnedValue::Null) {
+                    return;
+                }
+                let text = value.to_string();
+                *value = OwnedValue::Text(text.into());
+            }
+            SQLITE_AFF_INTEGER | SQLITE_AFF_NUMERIC => {
+                if !matches!(value, OwnedValue::Text(_) | OwnedValue::Float(_)) {
+                    return;
+                }
+
+                if let OwnedValue::Float(fl) = *value {
+                    if let Ok(int) = cast_real_to_integer(fl).map(OwnedValue::Integer) {
+                        *value = int;
+                    }
+                    return;
+                }
+
+                let text = value.to_text().unwrap();
+                let Ok(num) = checked_cast_text_to_numeric(&text) else {
+                    return;
+                };
+
+                *value = match &num {
+                    OwnedValue::Float(fl) => cast_real_to_integer(*fl)
+                        .map(OwnedValue::Integer)
+                        .unwrap_or(num),
+                    OwnedValue::Integer(_) if text.starts_with("0x") => {
+                        return;
+                    }
+                    _ => num,
+                };
+            }
+
+            SQLITE_AFF_REAL => {
+                if let OwnedValue::Integer(i) = value {
+                    *value = OwnedValue::Float(*i as f64);
+                } else if let OwnedValue::Text(t) = value {
+                    if t.as_str().starts_with("0x") {
+                        return;
+                    }
+                    if let Ok(num) = checked_cast_text_to_numeric(t.as_str()) {
+                        *value = num;
+                    } else {
+                        return;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        };
     }
 }
 
