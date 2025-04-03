@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
 
 sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -537,7 +537,7 @@ def cleanup():
         os.remove("testing/vfs.db-wal")
 
 
-if __name__ == "__main__":
+def main():
     try:
         test_regexp()
         test_uuid()
@@ -554,3 +554,7 @@ if __name__ == "__main__":
         exit(1)
     cleanup()
     print("All tests passed successfully.")
+
+
+if __name__ == "__main__":
+    main()

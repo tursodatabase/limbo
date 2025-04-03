@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
 
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -151,7 +151,7 @@ def cleanup(db_fullpath: str):
             os.remove(path)
 
 
-if __name__ == "__main__":
+def main():
     tests = blob_tests()
     db_path = "testing/writes.db"
     schema = "CREATE TABLE test (t1 BLOB, t2 INTEGER);"
@@ -173,3 +173,7 @@ if __name__ == "__main__":
         # delete db after every compat test so we we have fresh db for next test
         cleanup(db_path)
     print("All tests passed successfully.")
+
+
+if __name__ == "__main__":
+    main()

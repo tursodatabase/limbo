@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
 from pathlib import Path
 import time
 import os
@@ -300,7 +300,7 @@ def test_insert_default_values():
     limbo.quit()
 
 
-if __name__ == "__main__":
+def main():
     print("Running all Limbo CLI tests...")
     test_basic_queries()
     test_schema_operations()
@@ -320,3 +320,7 @@ if __name__ == "__main__":
     test_update_with_limit()
     test_update_with_limit_and_offset()
     print("All tests have passed")
+
+
+if __name__ == "__main__":
+    main()
