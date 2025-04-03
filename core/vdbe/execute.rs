@@ -1768,17 +1768,14 @@ pub fn op_row_id(
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                let rowid = index_cursor.rowid()?;
-                rowid
+                index_cursor.rowid()?
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            let deferred_seek =
-                match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
-                    CursorResult::Ok(_) => None,
-                    CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
-                };
-            deferred_seek
+            match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+                CursorResult::Ok(_) => None,
+                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+            }
         };
         if let Some(deferred_seek) = deferred_seek {
             state.deferred_seek = Some(deferred_seek);
