@@ -61,12 +61,12 @@ class InsertTest(BaseModel):
                 lambda res: self.db_schema in res,
                 "Tables created by previous Limbo test exist in db file",
             )
-        # TODO Have some pydantic object be passed to this function with common fields
-        # To extract the information necessary to query the db in sqlite
-        # The object should contain Schema information and queries that should be run to
-        # test in sqlite for compatibility sakes
+            sqlite.run_test_fn(
+                "SELECT count(*) FROM test;",
+                lambda res: res == str(self.vals * 2),
+                "Counting total rows inserted",
+            )
         print()
-        pass
 
 
 def validate_with_expected(result: str, expected: str):
@@ -75,7 +75,7 @@ def validate_with_expected(result: str, expected: str):
 
 # TODO no delete tests for now
 def blob_tests() -> list[InsertTest]:
-    tests: list[dict] = []
+    tests: list[InsertTest] = []
 
     for vals in range(0, 1000, 100):
         tests.append(
@@ -121,28 +121,6 @@ def blob_tests() -> list[InsertTest]:
     return tests
 
 
-def test_sqlite_compat(db_fullpath: str, schema: str):
-    with TestLimboShell(
-        init_commands="",
-        exec_name="sqlite3",
-        flags=f"{db_fullpath}",
-    ) as sqlite:
-        sqlite.run_test_fn(
-            ".show",
-            lambda res: f"filename: {db_fullpath}" in res,
-            "Opened db file created with Limbo in sqlite3",
-        )
-        sqlite.run_test_fn(
-            ".schema",
-            lambda res: schema in res,
-            "Tables created by previous Limbo test exist in db file",
-        )
-    # TODO Have some pydantic object be passed to this function with common fields
-    # To extract the information necessary to query the db in sqlite
-    # The object should contain Schema information and queries that should be run to
-    # test in sqlite for compatibility sakes
-
-
 def cleanup(db_fullpath: str):
     wal_path = f"{db_fullpath}-wal"
     shm_path = f"{db_fullpath}-shm"
@@ -158,7 +136,7 @@ def main():
         db_path = test.db_path
         try:
             # Use with syntax to automatically close shell on error
-            with TestLimboShell() as limbo:
+            with TestLimboShell("") as limbo:
                 limbo.execute_dot(f".open {db_path}")
                 test.run(limbo)
 
