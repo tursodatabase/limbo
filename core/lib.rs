@@ -157,9 +157,9 @@ impl Database {
             let mut schema = schema
                 .try_write()
                 .expect("lock on schema should succeed first try");
-            let syms = conn.syms.borrow();
+            let syms = conn.syms.borrow_mut();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, io, syms.deref(), None)
+                parse_schema_rows(rows, &mut schema, io, syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -532,13 +532,15 @@ impl Connection {
             .schema
             .try_write()
             .expect("lock on schema should succeed first try");
-        let syms = self.syms.borrow();
-        if let Err(LimboError::ExtensionError(e)) =
-            parse_schema_rows(rows, &mut schema, self.pager.io.clone(), syms.deref(), None)
         {
-            // this means that a vtab exists and we no longer have the module loaded. we print
-            // a warning to the user to load the module
-            eprintln!("Warning: {}", e);
+            let syms = self.syms.borrow_mut();
+            if let Err(LimboError::ExtensionError(e)) =
+                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), syms, None)
+            {
+                // this means that a vtab exists and we no longer have the module loaded. we print
+                // a warning to the user to load the module
+                eprintln!("Warning: {}", e);
+            }
         }
         Ok(())
     }
@@ -653,7 +655,7 @@ impl VirtualTable {
                 module_name
             )))?;
         if let VTabKind::VirtualTable = kind {
-            if module.module_kind != VTabKind::VirtualTable {
+            if module.module_kind == VTabKind::TableValuedFunction {
                 return Err(LimboError::ExtensionError(format!(
                     "{} is not a virtual table module",
                     module_name

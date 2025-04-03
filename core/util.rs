@@ -1,5 +1,5 @@
 use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
-use std::{rc::Rc, sync::Arc};
+use std::{cell::RefMut, rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
@@ -40,7 +40,7 @@ pub fn parse_schema_rows(
     rows: Option<Statement>,
     schema: &mut Schema,
     io: Arc<dyn IO>,
-    syms: &SymbolTable,
+    mut syms: RefMut<SymbolTable>,
     mv_tx_id: Option<u64>,
 ) -> Result<()> {
     if let Some(mut rows) = rows {
@@ -60,12 +60,35 @@ pub fn parse_schema_rows(
                             let sql: &str = row.get::<&str>(4)?;
                             if root_page == 0 && sql.to_lowercase().contains("create virtual") {
                                 let name: &str = row.get::<&str>(1)?;
-                                let Some(vtab) = syms.vtabs.get(name) else {
-                                    return Err(LimboError::ExtensionError(format!(
-                                        "Virtual table Module for {} not found in symbol table,
-                                        please load extension first",
-                                        name
-                                    )));
+                                // a virtual table is found in the sqlite_schema, but it's no
+                                // longer in the symbol table. We need to recreate it.
+                                let vtab = if let Some(vtab) = syms.vtabs.get(name) {
+                                    vtab.clone()
+                                } else {
+                                    // "create virtual table using mod"
+                                    let mod_name = module_name_from_sql(sql)?;
+                                    if let Some(vmod) = syms.vtab_modules.get(mod_name) {
+                                        if let limbo_ext::VTabKind::VirtualTable = vmod.module_kind
+                                        {
+                                            let vtab = crate::VirtualTable::from_args(
+                                                Some(name),
+                                                mod_name,
+                                                module_args_from_sql(sql)?,
+                                                &syms,
+                                                vmod.module_kind,
+                                                None,
+                                            )?;
+                                            syms.vtabs.insert(name.to_string(), vtab.clone());
+                                            vtab
+                                        } else {
+                                            return Err(LimboError::Corrupt("Table valued function: {name} registered as virtual table in schema".to_string()));
+                                        }
+                                    } else {
+                                        return Err(LimboError::ExtensionError(format!(
+                                            "Virtual table module '{}' not found\nPlease load extension",
+                                            &mod_name
+                                        )));
+                                    }
                                 };
                                 schema.add_virtual_table(vtab.clone());
                             } else {
@@ -136,6 +159,99 @@ pub fn check_ident_equivalency(ident1: &str, ident2: &str) -> bool {
         identifier
     }
     strip_quotes(ident1).eq_ignore_ascii_case(strip_quotes(ident2))
+}
+
+fn module_name_from_sql(sql: &str) -> Result<&str> {
+    if let Some(start) = sql.find("USING") {
+        let start = start + 6;
+        // stop at the first space, semicolon, or parenthesis
+        let end = sql[start..]
+            .find(|c: char| c.is_whitespace() || c == ';' || c == '(')
+            .unwrap_or(sql.len() - start)
+            + start;
+        Ok(sql[start..end].trim())
+    } else {
+        Err(LimboError::InvalidArgument(
+            "Expected 'USING' in module name".to_string(),
+        ))
+    }
+}
+
+// CREATE VIRTUAL TABLE table_name USING module_name(arg1, arg2, ...);
+// CREATE VIRTUAL TABLE table_name USING module_name;
+fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
+    if !sql.contains('(') {
+        return Ok(vec![]);
+    }
+    let start = sql.find('(').ok_or_else(|| {
+        LimboError::InvalidArgument("Expected '(' in module argument list".to_string())
+    })? + 1;
+    let end = sql.rfind(')').ok_or_else(|| {
+        LimboError::InvalidArgument("Expected ')' in module argument list".to_string())
+    })?;
+
+    let mut args = Vec::new();
+    let mut current_arg = String::new();
+    let mut chars = sql[start..end].chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                if in_quotes {
+                    if chars.peek() == Some(&'\'') {
+                        // Escaped quote
+                        current_arg.push('\'');
+                        chars.next();
+                    } else {
+                        in_quotes = false;
+                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        current_arg.clear();
+                        // Skip until comma or end
+                        while let Some(&nc) = chars.peek() {
+                            if nc == ',' {
+                                chars.next(); // Consume comma
+                                break;
+                            } else if nc.is_whitespace() {
+                                chars.next();
+                            } else {
+                                return Err(LimboError::InvalidArgument(
+                                    "Unexpected characters after quoted argument".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    in_quotes = true;
+                }
+            }
+            ',' => {
+                if !in_quotes {
+                    if !current_arg.trim().is_empty() {
+                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        current_arg.clear();
+                    }
+                } else {
+                    current_arg.push(c);
+                }
+            }
+            _ => {
+                current_arg.push(c);
+            }
+        }
+    }
+
+    if !current_arg.trim().is_empty() && !in_quotes {
+        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+    }
+
+    if in_quotes {
+        return Err(LimboError::InvalidArgument(
+            "Unterminated string literal in module arguments".to_string(),
+        ));
+    }
+
+    Ok(args)
 }
 
 pub fn check_literal_equivalency(lhs: &Literal, rhs: &Literal) -> bool {

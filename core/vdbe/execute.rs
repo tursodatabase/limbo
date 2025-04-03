@@ -917,12 +917,21 @@ pub fn op_vcreate(
             "Failed to upgrade Connection".to_string(),
         ));
     };
+    let mod_type = conn
+        .syms
+        .borrow()
+        .vtab_modules
+        .get(&module_name)
+        .ok_or_else(|| {
+            crate::LimboError::ExtensionError(format!("Module {} not found", module_name))
+        })?
+        .module_kind;
     let table = crate::VirtualTable::from_args(
         Some(&table_name),
         &module_name,
         args,
         &conn.syms.borrow(),
-        limbo_ext::VTabKind::VirtualTable,
+        mod_type,
         None,
     )?;
     {
@@ -4119,7 +4128,7 @@ pub fn op_parse_schema(
         Some(stmt),
         &mut schema,
         conn.pager.io.clone(),
-        &conn.syms.borrow(),
+        conn.syms.borrow_mut(),
         state.mv_tx_id,
     )?;
     state.pc += 1;
