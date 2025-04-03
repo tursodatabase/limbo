@@ -1389,6 +1389,22 @@ pub fn insn_to_str(
                 0,
                 format!("auto_commit={}, rollback={}", auto_commit, rollback),
             ),
+            Insn::OpenEphemeral {
+                cursor_id,
+                is_btree,
+            } => (
+                "OpenEphemeral",
+                *cursor_id as i32,
+                *is_btree as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "cursor={} is_btree={}",
+                    cursor_id,
+                    if *is_btree { "true" } else { "false" }
+                ),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",
