@@ -4,7 +4,10 @@ name = "limbo_test"
 readme = "README.md"
 requires-python = ">=3.13"
 version = "0.1.0"
-dependencies = ["faker>=37.1.0", "pydantic>=2.11.1", "rich>=14.0.0"]
+dependencies = [
+    "faker>=37.1.0",
+ "pydantic>=2.11.1",
+]
 
 [project.scripts]
 test-writes = "cli_tests.writes:main"
