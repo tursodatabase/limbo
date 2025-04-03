@@ -66,7 +66,7 @@ uv-sync:
 	uv sync --all-packages
 .PHONE: uv-sync
 
-test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-writes
+test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update
 .PHONY: test
 
 test-extensions: limbo uv-sync
@@ -102,9 +102,13 @@ test-memory:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/memory.py
 .PHONY: test-memory
 
-test-writes: limbo uv-sync
-	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-writes
-.PHONY: test-writes
+test-write: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-write
+.PHONY: test-write
+
+test-update: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-update
+.PHONY: test-update
 
 clickbench:
 	./perf/clickbench/benchmark.sh
