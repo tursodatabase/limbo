@@ -61,7 +61,7 @@ pub fn parse_schema_rows(
                             if root_page == 0 && sql.to_lowercase().contains("create virtual") {
                                 let name: &str = row.get::<&str>(1)?;
                                 let Some(vtab) = syms.vtabs.get(name) else {
-                                    return Err(LimboError::InvalidArgument(format!(
+                                    return Err(LimboError::ExtensionError(format!(
                                         "Virtual table Module for {} not found in symbol table,
                                         please load extension first",
                                         name

@@ -1535,8 +1535,8 @@ pub fn op_transaction(
         }
     } else {
         let connection = program.connection.upgrade().unwrap();
-        let current_state = connection.transaction_state.borrow().clone();
-        let (new_transaction_state, updated) = match (&current_state, write) {
+        let current_state = connection.transaction_state.get();
+        let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
             (TransactionState::Write, false) => (TransactionState::Write, false),
             (TransactionState::Read, true) => (TransactionState::Write, true),
@@ -1590,7 +1590,7 @@ pub fn op_auto_commit(
         };
     }
 
-    if *auto_commit != *conn.auto_commit.borrow() {
+    if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             todo!("Rollback is not implemented");
         } else {
