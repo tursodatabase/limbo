@@ -5,12 +5,16 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 use super::MemoryIO;
 
-pub struct GenericIO {}
+pub struct GenericIO {
+    memory_io: Arc<MemoryIO>,
+}
 
 impl GenericIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'generic'");
-        Ok(Self {})
+        Ok(Self {
+            memory_io: Arc::new(MemoryIO::new()),
+        })
     }
 }
 

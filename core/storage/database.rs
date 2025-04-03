@@ -1,4 +1,3 @@
-#[cfg(feature = "fs")]
 use crate::error::LimboError;
 use crate::{io::Completion, Buffer, Result};
 use std::{cell::RefCell, sync::Arc};

@@ -11,7 +11,9 @@ pub struct WindowsIO {
 impl WindowsIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'syscall'");
-        Ok(Self {})
+        Ok(Self {
+            memory_io: Arc::new(MemoryIO::new()),
+        })
     }
 }
 
@@ -28,7 +30,6 @@ impl IO for WindowsIO {
             .open(path)?;
         Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
-            memory_io: Arc::new(MemoryIO::new()),
         }))
     }
 

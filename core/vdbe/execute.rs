@@ -4556,7 +4556,7 @@ pub fn op_open_ephemeral(
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
             let table_id = root_page as u64;
-            let mv_store = mv_store.as_ref().unwrap().clone();
+            let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
                 MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
             ));
