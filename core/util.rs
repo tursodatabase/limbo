@@ -60,8 +60,14 @@ pub fn parse_schema_rows(
                             let sql: &str = row.get::<&str>(4)?;
                             if root_page == 0 && sql.to_lowercase().contains("create virtual") {
                                 let name: &str = row.get::<&str>(1)?;
-                                let vtab = syms.vtabs.get(name).unwrap().clone();
-                                schema.add_virtual_table(vtab);
+                                let Some(vtab) = syms.vtabs.get(name) else {
+                                    return Err(LimboError::InvalidArgument(format!(
+                                        "Virtual table Module for {} not found in symbol table,
+                                        please load extension first",
+                                        name
+                                    )));
+                                };
+                                schema.add_virtual_table(vtab.clone());
                             } else {
                                 let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
                                 schema.add_btree_table(Rc::new(table));
