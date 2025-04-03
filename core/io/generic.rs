@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
+use super::MemoryIO;
 
 pub struct GenericIO {}
 
@@ -26,6 +27,7 @@ impl IO for GenericIO {
             .open(path)?;
         Ok(Arc::new(GenericFile {
             file: RefCell::new(file),
+            memory_io: Arc::new(MemoryIO::new()),
         }))
     }
 
@@ -48,10 +50,15 @@ impl Clock for GenericIO {
             micros: now.timestamp_subsec_micros(),
         }
     }
+
+    fn get_memory_io(&self) -> Option<Arc<super::MemoryIO>> {
+        Some(self.memory_io.clone())
+    }    
 }
 
 pub struct GenericFile {
     file: RefCell<std::fs::File>,
+    memory_io: Arc<MemoryIO>,
 }
 
 unsafe impl Send for GenericFile {}

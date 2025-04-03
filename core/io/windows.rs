@@ -3,8 +3,10 @@ use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
-
-pub struct WindowsIO {}
+use super::MemoryIO;
+pub struct WindowsIO {
+    memory_io: Arc<MemoryIO>,
+}
 
 impl WindowsIO {
     pub fn new() -> Result<Self> {
@@ -26,6 +28,7 @@ impl IO for WindowsIO {
             .open(path)?;
         Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
+            memory_io: Arc::new(MemoryIO::new()),
         }))
     }
 
@@ -47,6 +50,10 @@ impl Clock for WindowsIO {
             secs: now.timestamp(),
             micros: now.timestamp_subsec_micros(),
         }
+    }
+  
+    fn get_memory_io(&self) -> Option<Arc<MemoryIO>> {
+        Some(self.memory_io.clone())
     }
 }
 
