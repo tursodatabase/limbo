@@ -5,6 +5,7 @@ from time import sleep
 import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
+from cli_tests import console
 
 
 PIPE_BUF = 4096
@@ -79,7 +80,7 @@ class LimboShell:
             if not (ready + errors):
                 break
             error_output = self.pipe.stderr.read(PIPE_BUF).decode()
-            print(error_output, end="")
+            console.error(error_output, end="")
         raise RuntimeError("Error encountered in Limbo shell.")
 
     @staticmethod
@@ -130,7 +131,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         self.shell.quit()
 
     def run_test(self, name: str, sql: str, expected: str) -> None:
-        print(f"Running test: {name}")
+        console.info(f"Running test: {name}")
         actual = self.shell.execute(sql)
         assert actual == expected, (
             f"Test failed: {name}\n"
@@ -140,9 +141,9 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         )
 
     def debug_print(self, sql: str):
-        print(f"debugging: {sql}")
+        console.debug(f"debugging: {sql}")
         actual = self.shell.execute(sql)
-        print(f"OUTPUT:\n{repr(actual)}")
+        console.debug(f"OUTPUT:\n{repr(actual)}")
 
     def run_test_fn(
         self, sql: str, validate: Callable[[str], bool], desc: str = ""
@@ -150,7 +151,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         # Print the test that is executing before executing the sql command
         # Printing later confuses the user of the code what test has actually failed
         if desc:
-            print(f"Testing: {desc}")
+            console.info(f"Testing: {desc}")
         actual = self.shell.execute(sql)
         assert validate(actual), f"Test failed\nSQL: {sql}\nActual:\n{repr(actual)}"
 

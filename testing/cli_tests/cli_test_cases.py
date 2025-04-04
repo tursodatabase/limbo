@@ -3,6 +3,7 @@ from cli_tests.test_limbo_cli import TestLimboShell
 from pathlib import Path
 import time
 import os
+from cli_tests import console
 
 
 def test_basic_queries():
@@ -301,7 +302,7 @@ def test_insert_default_values():
 
 
 def main():
-    print("Running all Limbo CLI tests...")
+    console.info("Running all Limbo CLI tests...")
     test_basic_queries()
     test_schema_operations()
     test_file_operations()
@@ -319,7 +320,7 @@ def main():
     test_table_patterns()
     test_update_with_limit()
     test_update_with_limit_and_offset()
-    print("All tests have passed")
+    console.info("All tests have passed")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 import os
 from cli_tests.test_limbo_cli import TestLimboShell
 from pydantic import BaseModel
+from cli_tests import console
 
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -44,7 +45,7 @@ class InsertTest(BaseModel):
         )
 
     def test_compat(self):
-        print("Testing in SQLite\n")
+        console.info("Testing in SQLite\n")
 
         with TestLimboShell(
             init_commands="",
@@ -66,7 +67,7 @@ class InsertTest(BaseModel):
                 lambda res: res == str(self.vals * 2),
                 "Counting total rows inserted",
             )
-        print()
+        console.info()
 
 
 def validate_with_expected(result: str, expected: str):
@@ -133,6 +134,7 @@ def cleanup(db_fullpath: str):
 def main():
     tests = blob_tests()
     for test in tests:
+        console.info(test)
         db_path = test.db_path
         try:
             # Use with syntax to automatically close shell on error
@@ -143,12 +145,12 @@ def main():
             test.test_compat()
 
         except Exception as e:
-            print(f"Test FAILED: {e}")
+            console.error(f"Test FAILED: {e}")
             cleanup(db_path)
             exit(1)
         # delete db after every compat test so we we have fresh db for next test
         cleanup(db_path)
-    print("All tests passed successfully.")
+    console.info("All tests passed successfully.")
 
 
 if __name__ == "__main__":
