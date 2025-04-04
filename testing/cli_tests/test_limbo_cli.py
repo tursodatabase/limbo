@@ -80,7 +80,7 @@ class LimboShell:
             if not (ready + errors):
                 break
             error_output = self.pipe.stderr.read(PIPE_BUF).decode()
-            console.error(error_output, end="")
+            console.error(error_output, end="", _stack_offset=2)
         raise RuntimeError("Error encountered in Limbo shell.")
 
     @staticmethod
@@ -131,7 +131,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         self.shell.quit()
 
     def run_test(self, name: str, sql: str, expected: str) -> None:
-        console.info(f"Running test: {name}")
+        console.info(f"Running test: {name}", _stack_offset=2)
         actual = self.shell.execute(sql)
         assert actual == expected, (
             f"Test failed: {name}\n"
@@ -141,9 +141,9 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         )
 
     def debug_print(self, sql: str):
-        console.debug(f"debugging: {sql}")
+        console.debug(f"debugging: {sql}", _stack_offset=2)
         actual = self.shell.execute(sql)
-        console.debug(f"OUTPUT:\n{repr(actual)}")
+        console.debug(f"OUTPUT:\n{repr(actual)}", _stack_offset=2)
 
     def run_test_fn(
         self, sql: str, validate: Callable[[str], bool], desc: str = ""
@@ -151,7 +151,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         # Print the test that is executing before executing the sql command
         # Printing later confuses the user of the code what test has actually failed
         if desc:
-            console.info(f"Testing: {desc}")
+            console.info(f"Testing: {desc}", _stack_offset=2)
         actual = self.shell.execute(sql)
         assert validate(actual), f"Test failed\nSQL: {sql}\nActual:\n{repr(actual)}"
 
