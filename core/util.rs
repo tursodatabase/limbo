@@ -1753,4 +1753,88 @@ pub mod tests {
             Ok((OwnedValueType::Float, "1.23e4"))
         );
     }
+
+    #[test]
+    fn test_module_name_basic() {
+        let sql = "CREATE VIRTUAL TABLE x USING y;";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "y");
+    }
+
+    #[test]
+    fn test_module_name_with_args() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('a', 'b');";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "modname");
+    }
+
+    #[test]
+    fn test_module_name_missing_using() {
+        let sql = "CREATE VIRTUAL TABLE x (a, b);";
+        assert!(module_name_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_name_no_semicolon() {
+        let sql = "CREATE VIRTUAL TABLE x USING limbo(a, b)";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "limbo");
+    }
+
+    #[test]
+    fn test_module_name_no_semicolon_or_args() {
+        let sql = "CREATE VIRTUAL TABLE x USING limbo";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "limbo");
+    }
+
+    #[test]
+    fn test_module_args_none() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname;";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 0);
+    }
+
+    #[test]
+    fn test_module_args_basic() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1', 'arg2');";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!("arg1", args[0].to_text().unwrap());
+        assert_eq!("arg2", args[1].to_text().unwrap());
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
+    }
+
+    #[test]
+    fn test_module_args_with_escaped_quote() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('a''b', 'c');";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].to_text().unwrap(), "a'b");
+        assert_eq!(args[1].to_text().unwrap(), "c");
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
+    }
+
+    #[test]
+    fn test_module_args_unterminated_string() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1, 'arg2');";
+        assert!(module_args_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_args_extra_garbage_after_quote() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1'x);";
+        assert!(module_args_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_args_trailing_comma() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1',);";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 1);
+        assert_eq!("arg1", args[0].to_text().unwrap());
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
+    }
 }
