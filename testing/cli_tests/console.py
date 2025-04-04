@@ -1,0 +1,62 @@
+from typing import Any, Optional, Union
+from rich.console import Console, JustifyMethod
+from rich.theme import Theme
+from rich.style import Style
+
+
+custom_theme = Theme({"info": "blue", "error": "bold red"})
+console = Console(theme=custom_theme)
+
+
+def info(
+    *objects: Any,
+    sep: str = " ",
+    end: str = "\n",
+    style: Optional[Union[str, Style]] = None,
+    justify: Optional[JustifyMethod] = None,
+    emoji: Optional[bool] = None,
+    markup: Optional[bool] = None,
+    highlight: Optional[bool] = None,
+    log_locals: bool = False,
+    _stack_offset: int = 1,
+):
+    console.log(
+        "[info]INFO[/info]",
+        *objects,
+        sep=sep,
+        end=end,
+        style=style,
+        justify=justify,
+        emoji=emoji,
+        markup=markup,
+        highlight=highlight,
+        log_locals=log_locals,
+        _stack_offset=_stack_offset,
+    )
+
+
+def error(
+    *objects: Any,
+    sep: str = " ",
+    end: str = "\n",
+    style: Optional[Union[str, Style]] = None,
+    justify: Optional[JustifyMethod] = None,
+    emoji: Optional[bool] = None,
+    markup: Optional[bool] = None,
+    highlight: Optional[bool] = None,
+    log_locals: bool = False,
+    _stack_offset: int = 1,
+):
+    console.log(
+        "[error]ERROR[/error]",
+        *objects,
+        sep=sep,
+        end=end,
+        style=style,
+        justify=justify,
+        emoji=emoji,
+        markup=markup,
+        highlight=highlight,
+        log_locals=log_locals,
+        _stack_offset=_stack_offset,
+    )

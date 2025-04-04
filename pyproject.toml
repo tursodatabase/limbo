@@ -1,5 +1,7 @@
 [project]
-dependencies = []
+dependencies = [
+    "rich>=14.0.0",
+]
 name = "limbo"
 readme = "README.md"
 requires-python = ">=3.13"
