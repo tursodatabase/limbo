@@ -98,7 +98,7 @@ impl IO for SimulatorIO {
         self.rng.borrow_mut().next_u64() as i64
     }
 
-    fn get_memory_io(&self) -> Option<Arc<limbo_core::MemoryIO>> {
+    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
         todo!()
     }
 }

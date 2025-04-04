@@ -6,14 +6,12 @@ use tracing::{debug, trace};
 use super::MemoryIO;
 
 pub struct GenericIO {
-    memory_io: Arc<MemoryIO>,
 }
 
 impl GenericIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'generic'");
         Ok(Self {
-            memory_io: Arc::new(MemoryIO::new()),
         })
     }
 }
@@ -55,9 +53,9 @@ impl Clock for GenericIO {
         }
     }
 
-    fn get_memory_io(&self) -> Option<Arc<super::MemoryIO>> {
-        Some(self.memory_io.clone())
-    }    
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }   
 }
 
 pub struct GenericFile {

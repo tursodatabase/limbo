@@ -167,7 +167,6 @@ pub struct UnixIO {
     poller: PollHandler,
     events: EventsHandler,
     callbacks: OwnedCallbacks,
-    memory_io: Arc<MemoryIO>,
 }
 
 unsafe impl Send for UnixIO {}
@@ -181,7 +180,6 @@ impl UnixIO {
             poller: PollHandler::new(),
             events: EventsHandler::new(),
             callbacks: OwnedCallbacks::new(),
-            memory_io: Arc::new(MemoryIO::new()),
         })
     }
 }
@@ -261,8 +259,8 @@ impl IO for UnixIO {
         i64::from_ne_bytes(buf)
     }
     
-    fn get_memory_io(&self) -> Option<Arc<MemoryIO>> {
-        Some(self.memory_io.clone())
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

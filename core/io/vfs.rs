@@ -70,8 +70,8 @@ impl VfsMod {
         }
     }
 
-    fn get_memory_io(&self) -> Option<Arc<MemoryIO>> {
-        None
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

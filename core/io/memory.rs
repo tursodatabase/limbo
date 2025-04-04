@@ -59,8 +59,8 @@ impl IO for MemoryIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_memory_io(&self) -> Option<Arc<MemoryIO>> {
-        None
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 
