@@ -532,7 +532,7 @@ fn emit_update_insns(
         )?;
         program.resolve_label(jump_target, program.offset());
     }
-    let mut beg = program.alloc_registers(
+    let beg = program.alloc_registers(
         table_ref.table.columns().len()
             + if is_virtual {
                 2 // two args before the relevant columns for VUpdate
