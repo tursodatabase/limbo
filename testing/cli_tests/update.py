@@ -2,6 +2,7 @@
 import os
 from cli_tests.test_limbo_cli import TestLimboShell
 from pydantic import BaseModel
+from cli_tests import console
 
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -61,7 +62,7 @@ class UpdateTest(BaseModel):
         limbo.run_test(self.name, stmt, "")
 
     def test_compat(self):
-        print("Testing in SQLite\n")
+        console.info("Testing in SQLite\n")
 
         with TestLimboShell(
             init_commands="",
@@ -99,7 +100,7 @@ class UpdateTest(BaseModel):
                 "".join(stmt),
                 "\n".join(expected),
             )
-        print()
+        console.info()
 
 
 def cleanup(db_fullpath: str):
@@ -113,6 +114,8 @@ def cleanup(db_fullpath: str):
 
 def main():
     test = UpdateTest(name="Update 1 column", vals=1)
+    console.info(test)
+
     db_path = test.db_path
     try:
         test.init_db()
@@ -123,12 +126,12 @@ def main():
         test.test_compat()
 
     except Exception as e:
-        print(f"Test FAILED: {e}")
+        console.error(f"Test FAILED: {e}")
         cleanup(db_path)
         exit(1)
     # delete db after every compat test so we we have fresh db for next test
     cleanup(db_path)
-    print("All tests passed successfully.")
+    console.info("All tests passed successfully.")
 
 
 if __name__ == "__main__":
