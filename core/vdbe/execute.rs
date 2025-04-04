@@ -917,12 +917,21 @@ pub fn op_vcreate(
             "Failed to upgrade Connection".to_string(),
         ));
     };
+    let mod_type = conn
+        .syms
+        .borrow()
+        .vtab_modules
+        .get(&module_name)
+        .ok_or_else(|| {
+            crate::LimboError::ExtensionError(format!("Module {} not found", module_name))
+        })?
+        .module_kind;
     let table = crate::VirtualTable::from_args(
         Some(&table_name),
         &module_name,
         args,
         &conn.syms.borrow(),
-        limbo_ext::VTabKind::VirtualTable,
+        mod_type,
         None,
     )?;
     {
@@ -1535,8 +1544,8 @@ pub fn op_transaction(
         }
     } else {
         let connection = program.connection.upgrade().unwrap();
-        let current_state = connection.transaction_state.borrow().clone();
-        let (new_transaction_state, updated) = match (&current_state, write) {
+        let current_state = connection.transaction_state.get();
+        let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
             (TransactionState::Write, false) => (TransactionState::Write, false),
             (TransactionState::Read, true) => (TransactionState::Write, true),
@@ -1590,7 +1599,7 @@ pub fn op_auto_commit(
         };
     }
 
-    if *auto_commit != *conn.auto_commit.borrow() {
+    if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             todo!("Rollback is not implemented");
         } else {
@@ -4115,13 +4124,15 @@ pub fn op_parse_schema(
     ))?;
     let mut schema = conn.schema.write();
     // TODO: This function below is synchronous, make it async
-    parse_schema_rows(
-        Some(stmt),
-        &mut schema,
-        conn.pager.io.clone(),
-        &conn.syms.borrow(),
-        state.mv_tx_id,
-    )?;
+    {
+        parse_schema_rows(
+            Some(stmt),
+            &mut schema,
+            conn.pager.io.clone(),
+            &conn.syms.borrow(),
+            state.mv_tx_id,
+        )?;
+    }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

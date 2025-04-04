@@ -130,6 +130,7 @@ fn prologue<'a>(
     Ok((t_ctx, init_label, start_offset))
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum TransactionMode {
     None,
     Read,
