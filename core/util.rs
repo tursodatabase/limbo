@@ -1,5 +1,5 @@
 use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
-use std::{cell::RefMut, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
@@ -40,7 +40,7 @@ pub fn parse_schema_rows(
     rows: Option<Statement>,
     schema: &mut Schema,
     io: Arc<dyn IO>,
-    mut syms: RefMut<SymbolTable>,
+    syms: &SymbolTable,
     mv_tx_id: Option<u64>,
 ) -> Result<()> {
     if let Some(mut rows) = rows {
@@ -70,16 +70,14 @@ pub fn parse_schema_rows(
                                     if let Some(vmod) = syms.vtab_modules.get(mod_name) {
                                         if let limbo_ext::VTabKind::VirtualTable = vmod.module_kind
                                         {
-                                            let vtab = crate::VirtualTable::from_args(
+                                            crate::VirtualTable::from_args(
                                                 Some(name),
                                                 mod_name,
                                                 module_args_from_sql(sql)?,
-                                                &syms,
+                                                syms,
                                                 vmod.module_kind,
                                                 None,
-                                            )?;
-                                            syms.vtabs.insert(name.to_string(), vtab.clone());
-                                            vtab
+                                            )?
                                         } else {
                                             return Err(LimboError::Corrupt("Table valued function: {name} registered as virtual table in schema".to_string()));
                                         }
@@ -90,7 +88,7 @@ pub fn parse_schema_rows(
                                         )));
                                     }
                                 };
-                                schema.add_virtual_table(vtab.clone());
+                                schema.add_virtual_table(vtab);
                             } else {
                                 let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
                                 schema.add_btree_table(Rc::new(table));

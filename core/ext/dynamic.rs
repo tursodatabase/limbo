@@ -54,7 +54,9 @@ impl Connection {
                     LimboError::ExtensionError("Error unlocking extension libraries".to_string())
                 })?
                 .push((Arc::new(lib), api_ref));
-            self.parse_schema_rows()?;
+            {
+                self.parse_schema_rows()?;
+            }
             Ok(())
         } else {
             if !api_ptr.is_null() {

@@ -157,9 +157,9 @@ impl Database {
             let mut schema = schema
                 .try_write()
                 .expect("lock on schema should succeed first try");
-            let syms = conn.syms.borrow_mut();
+            let syms = conn.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, io, syms, None)
+                parse_schema_rows(rows, &mut schema, io, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -533,9 +533,9 @@ impl Connection {
             .try_write()
             .expect("lock on schema should succeed first try");
         {
-            let syms = self.syms.borrow_mut();
+            let syms = self.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), syms, None)
+                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
