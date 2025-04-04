@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::sync::Arc;
 
-use super::{Buffer, Completion, File, OpenFlags, IO};
+use super::{Buffer, Completion, File, MemoryIO, OpenFlags, IO};
 
 impl IO for VfsMod {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
@@ -51,6 +51,10 @@ impl IO for VfsMod {
             let cstr = CString::from_raw(chars as *mut _);
             cstr.to_string_lossy().into_owned()
         }
+    }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

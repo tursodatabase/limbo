@@ -1,5 +1,5 @@
 use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
-use crate::{LimboError, Result};
+use crate::{LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use rustix::io_uring::iovec;
 use std::cell::RefCell;
@@ -199,6 +199,10 @@ impl IO for UringIO {
 
     fn get_current_time(&self) -> String {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+    
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

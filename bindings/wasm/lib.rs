@@ -296,6 +296,10 @@ impl limbo_core::IO for PlatformIO {
         let date = Date::new();
         date.toISOString()
     }
+
+    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
+        Arc::new(limbo_core::MemoryIO::new())
+    }
 }
 
 #[wasm_bindgen]

@@ -51,6 +51,10 @@ impl IO for MemoryIO {
     fn get_current_time(&self) -> String {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
     }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
 }
 
 pub struct MemoryFile {

@@ -3,13 +3,15 @@ use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
-
-pub struct WindowsIO {}
+use super::MemoryIO;
+pub struct WindowsIO {
+}
 
 impl WindowsIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'syscall'");
-        Ok(Self {})
+        Ok(Self {
+        })
     }
 }
 
@@ -41,6 +43,10 @@ impl IO for WindowsIO {
 
     fn get_current_time(&self) -> String {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+  
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

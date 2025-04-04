@@ -6,6 +6,9 @@ use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
 };
 use crate::functions::printf::exec_printf;
+use crate::storage::database::FileMemoryStorage;
+use crate::storage::page_cache::DumbLruPageCache;
+use std::sync::Arc;
 use std::{borrow::BorrowMut, rc::Rc};
 
 use crate::pseudo::PseudoCursor;
@@ -24,7 +27,9 @@ use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
 
-use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
+use crate::{
+    info, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult, TransactionState, IO,
+};
 
 use super::insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
@@ -32,6 +37,7 @@ use super::insn::{
     exec_subtract, Cookie,
 };
 use super::HaltState;
+use parking_lot::RwLock;
 use rand::thread_rng;
 
 use super::likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
@@ -4305,6 +4311,85 @@ pub fn op_noop(
 ) -> Result<InsnFunctionStepResult> {
     // Do nothing
     // Advance the program counter for the next opcode
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_open_ephemeral(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::OpenEphemeral {
+        cursor_id,
+        is_btree,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let conn = program.connection.upgrade().unwrap();
+    let io = conn.pager.io.get_memory_io();
+
+    let file = io.open_file("", OpenFlags::Create, true)?;
+    let page_io = Arc::new(FileMemoryStorage::new(file));
+
+    let db_header = Pager::begin_open(page_io.clone())?;
+    let buffer_pool = Rc::new(BufferPool::new(512));
+    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+
+    let pager = Rc::new(Pager::finish_open(
+        db_header,
+        page_io,
+        None,
+        io,
+        page_cache,
+        buffer_pool,
+    )?);
+
+    let root_page = pager.btree_create(*is_btree as usize);
+
+    let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
+    let mv_cursor = match state.mv_tx_id {
+        Some(tx_id) => {
+            let table_id = root_page as u64;
+            let mv_store = mv_store.unwrap().clone();
+            let mv_cursor = Rc::new(RefCell::new(
+                MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+            ));
+            Some(mv_cursor)
+        }
+        None => None,
+    };
+    let cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+    let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
+    // Table content is erased if the cursor already exists
+    match cursor_type {
+        CursorType::BTreeTable(_) => {
+            cursors
+                .get_mut(*cursor_id)
+                .unwrap()
+                .replace(Cursor::new_btree(cursor));
+        }
+        CursorType::BTreeIndex(_) => {
+            cursors
+                .get_mut(*cursor_id)
+                .unwrap()
+                .replace(Cursor::new_btree(cursor));
+        }
+        CursorType::Pseudo(_) => {
+            panic!("OpenEphemeral on pseudo cursor");
+        }
+        CursorType::Sorter => {
+            panic!("OpenEphemeral on sorter cursor");
+        }
+        CursorType::VirtualTable(_) => {
+            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpenAsync instead");
+        }
+    }
+
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

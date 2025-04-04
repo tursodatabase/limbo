@@ -3,13 +3,16 @@ use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
+use super::MemoryIO;
 
-pub struct GenericIO {}
+pub struct GenericIO {
+}
 
 impl GenericIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'generic'");
-        Ok(Self {})
+        Ok(Self {
+        })
     }
 }
 
@@ -26,6 +29,7 @@ impl IO for GenericIO {
             .open(path)?;
         Ok(Arc::new(GenericFile {
             file: RefCell::new(file),
+            memory_io: Arc::new(MemoryIO::new()),
         }))
     }
 
@@ -42,10 +46,15 @@ impl IO for GenericIO {
     fn get_current_time(&self) -> String {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
     }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }   
 }
 
 pub struct GenericFile {
     file: RefCell<std::fs::File>,
+    memory_io: Arc<MemoryIO>,
 }
 
 unsafe impl Send for GenericFile {}

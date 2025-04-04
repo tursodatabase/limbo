@@ -3980,7 +3980,7 @@ mod tests {
         let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10)));
         let pager = {
             let db_header = Arc::new(SpinLock::new(db_header.clone()));
-            Pager::finish_open(db_header, db_file, wal, io, page_cache, buffer_pool).unwrap()
+            Pager::finish_open(db_header, db_file, Some(wal), io, page_cache, buffer_pool).unwrap()
         };
         let pager = Rc::new(pager);
         let page1 = pager.allocate_page().unwrap();
@@ -4275,7 +4275,7 @@ mod tests {
             Pager::finish_open(
                 db_header.clone(),
                 db_file,
-                wal,
+                Some(wal),
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
                 buffer_pool,

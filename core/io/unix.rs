@@ -2,7 +2,7 @@ use crate::error::LimboError;
 use crate::io::common;
 use crate::Result;
 
-use super::{Completion, File, OpenFlags, IO};
+use super::{Completion, File, MemoryIO, OpenFlags, IO};
 use polling::{Event, Events, Poller};
 use rustix::{
     fd::{AsFd, AsRawFd},
@@ -250,6 +250,10 @@ impl IO for UnixIO {
 
     fn get_current_time(&self) -> String {
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+    
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

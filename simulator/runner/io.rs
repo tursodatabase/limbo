@@ -92,4 +92,8 @@ impl IO for SimulatorIO {
     fn get_current_time(&self) -> String {
         "2024-01-01 00:00:00".to_string()
     }
+
+    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
+        todo!()
+    }
 }
