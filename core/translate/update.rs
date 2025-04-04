@@ -64,13 +64,16 @@ pub fn translate_update(
 }
 
 pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<Plan> {
+    if body.with.is_some() {
+        bail_parse_error!("WITH clause is not supported");
+    }
+    if body.or_conflict.is_some() {
+        bail_parse_error!("ON CONFLICT clause is not supported");
+    }
     let table_name = &body.tbl_name.name;
     let table = match schema.get_table(table_name.0.as_str()) {
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
-    };
-    let Some(btree_table) = table.btree() else {
-        bail_parse_error!("Error: {} is not a btree table", table_name);
     };
     let iter_dir: Option<IterationDirection> = body.order_by.as_ref().and_then(|order_by| {
         order_by.first().and_then(|ob| {
@@ -81,7 +84,11 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         })
     });
     let table_references = vec![TableReference {
-        table: Table::BTree(btree_table.clone()),
+        table: match table.as_ref() {
+            Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
+            Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
+            _ => unreachable!(),
+        },
         identifier: table_name.0.clone(),
         op: Operation::Scan { iter_dir },
         join_info: None,
@@ -91,8 +98,8 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .iter_mut()
         .map(|set| {
             let ident = normalize_ident(set.col_names[0].0.as_str());
-            let col_index = btree_table
-                .columns
+            let col_index = table
+                .columns()
                 .iter()
                 .enumerate()
                 .find_map(|(i, col)| {

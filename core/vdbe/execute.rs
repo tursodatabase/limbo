@@ -1502,7 +1502,7 @@ pub fn op_halt(
             )));
         }
     }
-    match program.halt(pager.clone(), state, mv_store.clone())? {
+    match program.halt(pager.clone(), state, mv_store)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1581,7 +1581,7 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.upgrade().unwrap();
     if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
-        return match program.halt(pager.clone(), state, mv_store.clone())? {
+        return match program.halt(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1609,7 +1609,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    return match program.halt(pager.clone(), state, mv_store.clone())? {
+    return match program.halt(pager.clone(), state, mv_store)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1768,17 +1768,14 @@ pub fn op_row_id(
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                let rowid = index_cursor.rowid()?;
-                rowid
+                index_cursor.rowid()?
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            let deferred_seek =
-                match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
-                    CursorResult::Ok(_) => None,
-                    CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
-                };
-            deferred_seek
+            match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+                CursorResult::Ok(_) => None,
+                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+            }
         };
         if let Some(deferred_seek) = deferred_seek {
             state.deferred_seek = Some(deferred_seek);
