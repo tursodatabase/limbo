@@ -5,7 +5,7 @@ from rich.style import Style
 
 
 custom_theme = Theme({"info": "bold blue", "error": "bold red", "debug": "bold blue"})
-console = Console(theme=custom_theme)
+console = Console(theme=custom_theme, force_terminal=True)
 
 
 def info(
