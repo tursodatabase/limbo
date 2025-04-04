@@ -61,11 +61,11 @@ pub fn parse_schema_rows(
                             if root_page == 0 && sql.to_lowercase().contains("create virtual") {
                                 let name: &str = row.get::<&str>(1)?;
                                 // a virtual table is found in the sqlite_schema, but it's no
-                                // longer in the symbol table. We need to recreate it.
+                                // longer in the in-memory schema. We need to recreate it if
+                                // the module is loaded in the symbol table.
                                 let vtab = if let Some(vtab) = syms.vtabs.get(name) {
                                     vtab.clone()
                                 } else {
-                                    // "create virtual table using mod"
                                     let mod_name = module_name_from_sql(sql)?;
                                     if let Some(vmod) = syms.vtab_modules.get(mod_name) {
                                         if let limbo_ext::VTabKind::VirtualTable = vmod.module_kind
@@ -82,6 +82,7 @@ pub fn parse_schema_rows(
                                             return Err(LimboError::Corrupt("Table valued function: {name} registered as virtual table in schema".to_string()));
                                         }
                                     } else {
+                                        // the extension isn't loaded, so we emit a warning.
                                         return Err(LimboError::ExtensionError(format!(
                                             "Virtual table module '{}' not found\nPlease load extension",
                                             &mod_name
