@@ -62,6 +62,10 @@ pub struct TranslateCtx<'a> {
     pub label_main_loop_end: Option<BranchOffset>,
     // First register of the aggregation results
     pub reg_agg_start: Option<usize>,
+    // In non-group-by statements with aggregations (e.g. SELECT foo, bar, sum(baz) FROM t),
+    // we want to emit the non-aggregate columns (foo and bar) only once.
+    // This register is a flag that tracks whether we have already done that.
+    pub reg_nonagg_emit_once_flag: Option<usize>,
     // First register of the result columns of the query
     pub reg_result_cols_start: Option<usize>,
     // The register holding the limit value, if any.
@@ -115,6 +119,7 @@ fn prologue<'a>(
         labels_main_loop: (0..table_count).map(|_| LoopLabels::new(program)).collect(),
         label_main_loop_end: None,
         reg_agg_start: None,
+        reg_nonagg_emit_once_flag: None,
         reg_limit: None,
         reg_offset: None,
         reg_limit_offset_sum: None,
@@ -243,6 +248,18 @@ pub fn emit_query<'a>(
         });
     }
 
+    // For non-grouped aggregation queries that also have non-aggregate columns,
+    // we need to ensure non-aggregate columns are only emitted once.
+    // This flag helps track whether we've already emitted these columns.
+    if !plan.aggregates.is_empty()
+        && plan.group_by.is_none()
+        && plan.result_columns.iter().any(|c| !c.contains_aggregates)
+    {
+        let flag = program.alloc_register();
+        program.emit_int(0, flag); // Initialize flag to 0 (not yet emitted)
+        t_ctx.reg_nonagg_emit_once_flag = Some(flag);
+    }
+
     // Allocate registers for result columns
     t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
 
@@ -251,8 +268,8 @@ pub fn emit_query<'a>(
         init_order_by(program, t_ctx, order_by)?;
     }
 
-    if let Some(ref mut group_by) = plan.group_by {
-        init_group_by(program, t_ctx, group_by, &plan.aggregates)?;
+    if let Some(ref group_by) = plan.group_by {
+        init_group_by(program, t_ctx, group_by, &plan)?;
     }
     init_loop(
         program,
