@@ -394,7 +394,7 @@ impl Program {
                 }
                 mv_transactions.clear();
             }
-            return Ok(StepResult::Done);
+            Ok(StepResult::Done)
         } else {
             let connection = self
                 .connection
@@ -408,30 +408,28 @@ impl Program {
             );
             if program_state.halt_state.is_some() {
                 self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())
-            } else {
-                if auto_commit {
-                    let current_state = connection.transaction_state.borrow().clone();
-                    match current_state {
-                        TransactionState::Write => self.step_end_write_txn(
-                            &pager,
-                            &mut program_state.halt_state,
-                            connection.deref(),
-                        ),
-                        TransactionState::Read => {
-                            connection.transaction_state.replace(TransactionState::None);
-                            pager.end_read_tx()?;
-                            Ok(StepResult::Done)
-                        }
-                        TransactionState::None => Ok(StepResult::Done),
+            } else if auto_commit {
+                let current_state = connection.transaction_state.borrow().clone();
+                match current_state {
+                    TransactionState::Write => self.step_end_write_txn(
+                        &pager,
+                        &mut program_state.halt_state,
+                        connection.deref(),
+                    ),
+                    TransactionState::Read => {
+                        connection.transaction_state.replace(TransactionState::None);
+                        pager.end_read_tx()?;
+                        Ok(StepResult::Done)
                     }
-                } else {
-                    if self.change_cnt_on {
-                        if let Some(conn) = self.connection.upgrade() {
-                            conn.set_changes(self.n_change.get());
-                        }
-                    }
-                    Ok(StepResult::Done)
+                    TransactionState::None => Ok(StepResult::Done),
                 }
+            } else {
+                if self.change_cnt_on {
+                    if let Some(conn) = self.connection.upgrade() {
+                        conn.set_changes(self.n_change.get());
+                    }
+                }
+                Ok(StepResult::Done)
             }
         }
     }

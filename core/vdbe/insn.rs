@@ -38,6 +38,56 @@ impl CmpInsFlags {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IdxInsertFlags(pub u8);
+impl IdxInsertFlags {
+    pub const APPEND: u8 = 0x01; // Hint: insert likely at the end
+    pub const NCHANGE: u8 = 0x02; // Increment the change counter
+    pub const USE_SEEK: u8 = 0x04; // Skip seek if last one was same key
+    pub fn new() -> Self {
+        IdxInsertFlags(0)
+    }
+    pub fn has(&self, flag: u8) -> bool {
+        (self.0 & flag) != 0
+    }
+    pub fn append(mut self, append: bool) -> Self {
+        if append {
+            self.0 |= IdxInsertFlags::APPEND;
+        } else {
+            self.0 &= !IdxInsertFlags::APPEND;
+        }
+        self
+    }
+    pub fn use_seek(mut self, seek: bool) -> Self {
+        if seek {
+            self.0 |= IdxInsertFlags::USE_SEEK;
+        } else {
+            self.0 &= !IdxInsertFlags::USE_SEEK;
+        }
+        self
+    }
+    pub fn nchange(mut self, change: bool) -> Self {
+        if change {
+            self.0 |= IdxInsertFlags::NCHANGE;
+        } else {
+            self.0 &= !IdxInsertFlags::NCHANGE;
+        }
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum RegisterOrLiteral<T: Copy> {
+    Register(usize),
+    Literal(T),
+}
+
+impl From<PageIdx> for RegisterOrLiteral<PageIdx> {
+    fn from(value: PageIdx) -> Self {
+        RegisterOrLiteral::Literal(value)
+    }
+}
+
 #[derive(Description, Debug)]
 pub enum Insn {
     /// Initialize the program state and jump to the given PC.
@@ -401,6 +451,9 @@ pub enum Insn {
         src_reg: usize,
         target_pc: BranchOffset,
     },
+    SeekEnd {
+        cursor_id: CursorID,
+    },
 
     /// P1 is an open index cursor and P3 is a cursor on the corresponding table. This opcode does a deferred seek of the P3 table cursor to the row that corresponds to the current row of P1.
     /// This is a deferred seek. Nothing actually happens until the cursor is used to read a record. That way, if no reads occur, no unnecessary I/O happens.
@@ -429,6 +482,21 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
+    },
+
+    /// cursor_id is a cursor pointing to a B-Tree index that uses integer keys, this op writes the value obtained from MakeRecord into the index.
+    /// P3 + P4 are for the original column values that make up that key in unpacked (pre-serialized) form.
+    /// If P5 has the OPFLAG_APPEND bit set, that is a hint to the b-tree layer that this insert is likely to be an append.
+    /// OPFLAG_NCHANGE bit set, then the change counter is incremented by this instruction. If the OPFLAG_NCHANGE bit is clear, then the change counter is unchanged
+    IdxInsertAsync {
+        cursor_id: CursorID,
+        record_reg: usize, // P2 the register containing the record to insert
+        unpacked_start: Option<usize>, // P3 the index of the first register for the unpacked key
+        unpacked_count: Option<u16>, // P4 # of unpacked values in the key in P2
+        flags: IdxInsertFlags, // TODO: optimization
+    },
+    IdxInsertAwait {
+        cursor_id: CursorID,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -587,7 +655,7 @@ pub enum Insn {
 
     OpenWriteAsync {
         cursor_id: CursorID,
-        root_page: PageIdx,
+        root_page: RegisterOrLiteral<PageIdx>,
     },
 
     OpenWriteAwait {},
@@ -1237,6 +1305,7 @@ impl Insn {
             Insn::DeferredSeek { .. } => execute::op_deferred_seek,
             Insn::SeekGE { .. } => execute::op_seek_ge,
             Insn::SeekGT { .. } => execute::op_seek_gt,
+            Insn::SeekEnd { .. } => execute::op_seek_end,
             Insn::IdxGE { .. } => execute::op_idx_ge,
             Insn::IdxGT { .. } => execute::op_idx_gt,
             Insn::IdxLE { .. } => execute::op_idx_le,
@@ -1258,7 +1327,8 @@ impl Insn {
             Insn::Yield { .. } => execute::op_yield,
             Insn::InsertAsync { .. } => execute::op_insert_async,
             Insn::InsertAwait { .. } => execute::op_insert_await,
-
+            Insn::IdxInsertAsync { .. } => execute::op_idx_insert_async,
+            Insn::IdxInsertAwait { .. } => execute::op_idx_insert_await,
             Insn::DeleteAsync { .. } => execute::op_delete_async,
 
             Insn::DeleteAwait { .. } => execute::op_delete_await,

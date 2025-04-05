@@ -11,7 +11,7 @@ use std::{borrow::BorrowMut, rc::Rc};
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
-use crate::storage::btree::BTreeCursor;
+use crate::storage::btree::{BTreeCursor, BTreeKey};
 use crate::storage::wal::CheckpointResult;
 use crate::types::{
     AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, SeekKey, SeekOp,
@@ -21,7 +21,7 @@ use crate::util::{
     checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
 };
 use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
+use crate::vdbe::insn::{IdxInsertFlags, Insn};
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
 
 use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
@@ -29,7 +29,7 @@ use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
 use super::insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
     exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
-    exec_subtract, Cookie,
+    exec_subtract, Cookie, RegisterOrLiteral,
 };
 use super::HaltState;
 use rand::thread_rng;
@@ -2049,6 +2049,24 @@ pub fn op_idx_ge(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_seek_end(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::SeekEnd { cursor_id } = *insn {
+        let mut cursor = state.get_cursor(cursor_id);
+        let cursor = cursor.as_btree_mut();
+        return_if_io!(cursor.seek_end());
+    } else {
+        unreachable!("unexpected Insn {:?}", insn)
+    }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_idx_le(
     program: &Program,
     state: &mut ProgramState,
@@ -3648,11 +3666,14 @@ pub fn op_insert_async(
             Register::Record(r) => r,
             _ => unreachable!("Not a record! Cannot insert a non record value."),
         };
-        let key = &state.registers[*key_reg];
+        let key = match &state.registers[*key_reg].get_owned_value() {
+            OwnedValue::Integer(i) => *i,
+            _ => unreachable!("expected integer key"),
+        };
         // NOTE(pere): Sending moved_before == true is okay because we moved before but
         // if we were to set to false after starting a balance procedure, it might
         // leave undefined state.
-        return_if_io!(cursor.insert(key.get_owned_value(), record, true));
+        return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key as u64, Some(record)), true));
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -3703,6 +3724,73 @@ pub fn op_delete_async(
         return_if_io!(cursor.delete());
     }
     state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_idx_insert_async(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::IdxInsertAsync {
+        cursor_id,
+        record_reg,
+        flags,
+        ..
+    } = *insn
+    {
+        let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
+        let CursorType::BTreeIndex(index_meta) = cursor_type else {
+            panic!("IdxInsert: not a BTree index cursor");
+        };
+        {
+            let mut cursor = state.get_cursor(cursor_id);
+            let cursor = cursor.as_btree_mut();
+            let record = match &state.registers[record_reg] {
+                Register::Record(ref r) => r,
+                _ => return Err(LimboError::InternalError("expected record".into())),
+            };
+            let moved_before = if index_meta.unique {
+                // check for uniqueness violation
+                match cursor.key_exists_in_index(record)? {
+                    CursorResult::Ok(true) => {
+                        return Err(LimboError::Constraint(
+                            "UNIQUE constraint failed: duplicate key".into(),
+                        ))
+                    }
+                    CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                    CursorResult::Ok(false) => {}
+                };
+                false
+            } else {
+                flags.has(IdxInsertFlags::USE_SEEK)
+            };
+            // insert record as key
+            return_if_io!(cursor.insert(&BTreeKey::new_index_key(record), moved_before));
+        }
+        state.pc += 1;
+    }
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_idx_insert_await(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::IdxInsertAwait { cursor_id } = *insn {
+        {
+            let mut cursor = state.get_cursor(cursor_id);
+            let cursor = cursor.as_btree_mut();
+            cursor.wait_for_completion()?;
+        }
+        // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
+        state.pc += 1;
+    }
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -3889,16 +3977,28 @@ pub fn op_open_write_async(
     let Insn::OpenWriteAsync {
         cursor_id,
         root_page,
+        ..
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
+    };
+    let root_page = match root_page {
+        RegisterOrLiteral::Literal(lit) => *lit as u64,
+        RegisterOrLiteral::Register(reg) => match &state.registers[*reg].get_owned_value() {
+            OwnedValue::Integer(val) => *val as u64,
+            _ => {
+                return Err(LimboError::InternalError(
+                    "OpenWriteAsync: the value in root_page is not an integer".into(),
+                ));
+            }
+        },
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mut cursors = state.cursors.borrow_mut();
     let is_index = cursor_type.is_index();
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
-            let table_id = *root_page as u64;
+            let table_id = root_page;
             let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
                 MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
@@ -3907,7 +4007,7 @@ pub fn op_open_write_async(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
+    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
     if is_index {
         cursors
             .get_mut(*cursor_id)

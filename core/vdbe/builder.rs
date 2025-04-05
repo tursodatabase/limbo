@@ -131,6 +131,12 @@ impl ProgramBuilder {
         self.insns.push((insn, function));
     }
 
+    pub fn close_cursors(&mut self, cursors: &[CursorID]) {
+        for cursor in cursors {
+            self.emit_insn(Insn::Close { cursor_id: *cursor });
+        }
+    }
+
     pub fn emit_string8(&mut self, value: String, dest: usize) {
         self.emit_insn(Insn::String8 { value, dest });
     }
