@@ -75,6 +75,18 @@ jobs:
           curl -L $LINK/$CARGO_C_FILE | tar xz -C ~/.cargo/bin
 
       - uses: actions/checkout@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project
+        run: uv sync --all-extras --dev --all-packages
+
       - uses: "./.github/shared/install_sqlite"
       - name: Test
         run: make test

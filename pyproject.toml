@@ -1,0 +1,17 @@
+[project]
+dependencies = [
+    "rich>=14.0.0",
+]
+name = "limbo"
+readme = "README.md"
+requires-python = ">=3.13"
+version = "0.1.0"
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+limbo_test = { workspace = true }
+
+[tool.uv.workspace]
+members = ["testing"]

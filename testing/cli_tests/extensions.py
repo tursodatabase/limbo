@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests import console
 
 sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -81,7 +82,7 @@ def test_regexp():
         lambda res: "Parse error: no such function" in res,
     )
     limbo.run_test_fn(f".load {extension_path}", null)
-    print(f"Extension {extension_path} loaded successfully.")
+    console.info(f"Extension {extension_path} loaded successfully.")
     limbo.run_test_fn("SELECT regexp('a.c', 'abc');", true)
     limbo.run_test_fn("SELECT regexp('a.c', 'ac');", false)
     limbo.run_test_fn("SELECT regexp('[0-9]+', 'the year is 2021');", true)
@@ -495,7 +496,7 @@ def test_vfs():
         lambda res: res == "50",
         "Tested large write to testfs",
     )
-    print("Tested large write to testfs")
+    console.info("Tested large write to testfs")
     # Pere: I commented this out because it added an extra row that made the test test_sqlite_vfs_compat fail
     # it didn't segfault from my side so maybe this is necessary?
     # # open regular db file to ensure we don't segfault when vfs file is dropped
@@ -541,7 +542,7 @@ def cleanup():
         os.remove("testing/vfs.db-wal")
 
 
-if __name__ == "__main__":
+def main():
     try:
         test_regexp()
         test_uuid()
@@ -553,8 +554,12 @@ if __name__ == "__main__":
         test_vfs()
         test_sqlite_vfs_compat()
     except Exception as e:
-        print(f"Test FAILED: {e}")
+        console.error(f"Test FAILED: {e}")
         cleanup()
         exit(1)
     cleanup()
-    print("All tests passed successfully.")
+    console.info("All tests passed successfully.")
+
+
+if __name__ == "__main__":
+    main()
