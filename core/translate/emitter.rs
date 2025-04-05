@@ -442,25 +442,11 @@ fn emit_program_for_update(
 
     // Exit on LIMIT 0
     if let Some(0) = plan.limit {
-        epilogue(program, init_label, start_offset, TransactionMode::Read)?;
+        epilogue(program, init_label, start_offset, TransactionMode::None)?;
         program.result_columns = plan.returning.unwrap_or_default();
         program.table_references = plan.table_references;
         return Ok(());
     }
-    let after_main_loop_label = program.allocate_label();
-    t_ctx.label_main_loop_end = Some(after_main_loop_label);
-    if plan.contains_constant_false_condition {
-        program.emit_insn(Insn::Goto {
-            target_pc: after_main_loop_label,
-        });
-    }
-    let skip_label = program.allocate_label();
-    init_loop(
-        program,
-        &mut t_ctx,
-        &plan.table_references,
-        OperationMode::UPDATE,
-    )?;
     if t_ctx.reg_limit.is_none() && plan.limit.is_some() {
         let reg = program.alloc_register();
         t_ctx.reg_limit = Some(reg);
@@ -469,7 +455,36 @@ fn emit_program_for_update(
             dest: reg,
         });
         program.mark_last_insn_constant();
+        if t_ctx.reg_offset.is_none() && plan.offset.is_some_and(|n| n.ne(&0)) {
+            let reg = program.alloc_register();
+            t_ctx.reg_offset = Some(reg);
+            program.emit_insn(Insn::Integer {
+                value: plan.offset.unwrap() as i64,
+                dest: reg,
+            });
+            program.mark_last_insn_constant();
+            let combined_reg = program.alloc_register();
+            t_ctx.reg_limit_offset_sum = Some(combined_reg);
+            program.emit_insn(Insn::OffsetLimit {
+                limit_reg: t_ctx.reg_limit.unwrap(),
+                offset_reg: reg,
+                combined_reg,
+            });
+        }
     }
+    let after_main_loop_label = program.allocate_label();
+    t_ctx.label_main_loop_end = Some(after_main_loop_label);
+    if plan.contains_constant_false_condition {
+        program.emit_insn(Insn::Goto {
+            target_pc: after_main_loop_label,
+        });
+    }
+    init_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        OperationMode::UPDATE,
+    )?;
     open_loop(
         program,
         &mut t_ctx,
@@ -477,7 +492,6 @@ fn emit_program_for_update(
         &plan.where_clause,
     )?;
     emit_update_insns(&plan, &t_ctx, program)?;
-    program.resolve_label(skip_label, program.offset());
     close_loop(program, &mut t_ctx, &plan.table_references)?;
 
     program.resolve_label(after_main_loop_label, program.offset());
@@ -495,6 +509,7 @@ fn emit_update_insns(
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
     let table_ref = &plan.table_references.first().unwrap();
+    let loop_labels = t_ctx.labels_main_loop.first().unwrap();
     let (cursor_id, index) = match &table_ref.op {
         Operation::Scan { .. } => (program.resolve_cursor_id(&table_ref.identifier), None),
         Operation::Search(search) => match search {
@@ -508,24 +523,6 @@ fn emit_update_insns(
         },
         _ => return Ok(()),
     };
-
-    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
-        let jump_target = program.allocate_label();
-        let meta = ConditionMetadata {
-            jump_if_condition_is_true: false,
-            jump_target_when_true: jump_target,
-            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
-        };
-        translate_condition_expr(
-            program,
-            &plan.table_references,
-            &cond.expr,
-            meta,
-            &t_ctx.resolver,
-        )?;
-        program.resolve_label(jump_target, program.offset());
-    }
-    let first_col_reg = program.alloc_registers(table_ref.table.columns().len());
     let rowid_reg = program.alloc_register();
     program.emit_insn(Insn::RowId {
         cursor_id,
@@ -537,6 +534,29 @@ fn emit_update_insns(
         target_pc: t_ctx.label_main_loop_end.unwrap(),
     });
 
+    if let Some(offset) = t_ctx.reg_offset {
+        program.emit_insn(Insn::IfPos {
+            reg: offset,
+            target_pc: loop_labels.next,
+            decrement_by: 1,
+        });
+    }
+
+    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: BranchOffset::Placeholder,
+            jump_target_when_false: loop_labels.next,
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+    }
+    let first_col_reg = program.alloc_registers(table_ref.table.columns().len());
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
     for idx in 0..table_ref.columns().len() {

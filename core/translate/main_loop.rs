@@ -37,11 +37,11 @@ pub struct LeftJoinMetadata {
 #[derive(Debug, Clone, Copy)]
 pub struct LoopLabels {
     /// jump to the start of the loop body
-    loop_start: BranchOffset,
+    pub loop_start: BranchOffset,
     /// jump to the NextAsync instruction (or equivalent)
-    next: BranchOffset,
+    pub next: BranchOffset,
     /// jump to the end of the loop, exiting it
-    loop_end: BranchOffset,
+    pub loop_end: BranchOffset,
 }
 
 impl LoopLabels {
