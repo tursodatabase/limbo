@@ -22,6 +22,9 @@ cargo new --lib extensions/your_crate_name
 
 Add the crate to your `extensions/your_crate_name/Cargo.toml`:
 
+This modification in `Cargo.toml` is only needed if you are creating an extension as a separate Crate. If you are 
+creating an extension inside `core`, this step should be skipped.
+
 ```toml
 
 [features]

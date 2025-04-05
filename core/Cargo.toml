@@ -14,7 +14,7 @@ name = "limbo_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "uuid", "time", "json"]
+default = ["fs", "uuid", "time", "json", "static"]
 fs = ["limbo_ext/vfs"]
 json = []
 uuid = ["limbo_uuid/static"]
@@ -27,6 +27,7 @@ series = ["limbo_series/static"]
 ipaddr = ["limbo_ipaddr/static"]
 completion = ["limbo_completion/static"]
 testvfs = ["limbo_ext_tests/static"]
+static = ["limbo_ext/static"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.6.1", optional = true }
