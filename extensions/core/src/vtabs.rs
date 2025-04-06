@@ -263,4 +263,5 @@ pub struct ConstraintInfo {
     pub column_index: u32,
     pub op: ConstraintOp,
     pub usable: bool,
+    pub pred_idx: usize,
 }

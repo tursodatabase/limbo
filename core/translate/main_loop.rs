@@ -1,4 +1,4 @@
-use limbo_ext::{ConstraintInfo, OrderByInfo};
+use limbo_ext::OrderByInfo;
 use limbo_sqlite3_parser::ast;
 
 use crate::{
@@ -308,12 +308,18 @@ pub fn open_loop(
                         });
                     }
                     Table::Virtual(ref vtab) => {
-                        let constraints: Vec<ConstraintInfo> = predicates
+                        // Collect usable constraints and track which predicate each came from
+                        let converted_constraints = predicates
                             .iter()
-                            .filter(|p| p.applies_to_table(&table.table, tables))
-                            .filter_map(|p| try_convert_to_constraint_info(p, table_index))
-                            .collect();
+                            .enumerate()
+                            .filter_map(|(i, pred)| {
+                                try_convert_to_constraint_info(pred, table_index, i)
+                                    .map(|c| (c, &predicates[i]))
+                            })
+                            .collect::<Vec<_>>();
 
+                        let constraints: Vec<_> =
+                            converted_constraints.iter().map(|(c, _)| *c).collect();
                         let order_by = vec![OrderByInfo {
                             column_index: *t_ctx
                                 .result_column_indexes_in_orderby_sorter
@@ -322,19 +328,44 @@ pub fn open_loop(
                             desc: matches!(iter_dir, IterationDirection::Backwards),
                         }];
                         let index_info = vtab.best_index(&constraints, &order_by);
-                        let start_reg = program
-                            .alloc_registers(vtab.args.as_ref().map(|a| a.len()).unwrap_or(0));
-                        let mut cur_reg = start_reg;
-                        let args = match vtab.args.as_ref() {
-                            Some(args) => args,
-                            None => &vec![],
-                        };
-                        for arg in args {
-                            let reg = cur_reg;
-                            cur_reg += 1;
-                            let _ =
-                                translate_expr(program, Some(tables), arg, reg, &t_ctx.resolver)?;
+
+                        // Translate arguments to pass into VFilter
+                        let args_needed = index_info
+                            .constraint_usages
+                            .iter()
+                            .filter(|u| u.argv_index.is_some())
+                            .count();
+                        let start_reg = program.alloc_registers(args_needed);
+                        let mut arg_regs = vec![];
+
+                        for (i, usage) in index_info.constraint_usages.iter().enumerate() {
+                            if let Some(argv_index) = usage.argv_index {
+                                let (_, pred) = &converted_constraints[i];
+
+                                // this is the literal side of the expression (col = 'literal')
+                                let ast::Expr::Binary(lhs, _, rhs) = &pred.expr else {
+                                    continue;
+                                };
+
+                                let literal_expr = match (&**lhs, &**rhs) {
+                                    (ast::Expr::Column { .. }, rhs) => rhs,
+                                    (lhs, ast::Expr::Column { .. }) => lhs,
+                                    _ => continue,
+                                };
+
+                                let target_reg = start_reg + (argv_index - 1) as usize;
+                                translate_expr(
+                                    program,
+                                    Some(tables),
+                                    literal_expr,
+                                    target_reg,
+                                    &t_ctx.resolver,
+                                )?;
+                                arg_regs.push(target_reg);
+                            }
                         }
+
+                        // Encode idx_str to pass to VFilter
                         let mut maybe_idx_str_reg = None;
                         if let Some(idx_str) = index_info.idx_str {
                             let reg = program.alloc_register();
@@ -347,11 +378,32 @@ pub fn open_loop(
                         program.emit_insn(Insn::VFilter {
                             cursor_id,
                             pc_if_empty: loop_end,
-                            arg_count: vtab.args.as_ref().map_or(0, |args| args.len()),
+                            arg_count: args_needed,
                             args_reg: start_reg,
                             idx_str: maybe_idx_str_reg,
                             idx_num: index_info.idx_num as usize,
                         });
+
+                        // Remove predicates omitted by best_index
+                        let omit_predicates: Vec<usize> = predicates
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| {
+                                !index_info.constraint_usages.iter().enumerate().any(
+                                    |(j, usage)| {
+                                        usage.argv_index.is_some()
+                                            && !usage.omit
+                                            && constraints
+                                                .get(j)
+                                                .map_or(false, |c| c.pred_idx == *i)
+                                    },
+                                )
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+                        t_ctx
+                            .omit_predicates
+                            .extend_from_slice(&omit_predicates[..]);
                     }
                     other => panic!("Unsupported table reference type: {:?}", other),
                 }
