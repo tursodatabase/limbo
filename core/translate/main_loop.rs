@@ -416,10 +416,14 @@ pub fn open_loop(
                     });
                 }
 
-                for cond in predicates
+                for (i, cond) in predicates
                     .iter()
-                    .filter(|cond| cond.should_eval_at_loop(table_index))
+                    .enumerate()
+                    .filter(|(_, cond)| cond.should_eval_at_loop(table_index))
                 {
+                    if t_ctx.omit_predicates.contains(&i) {
+                        continue;
+                    }
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
                         jump_if_condition_is_true: false,
