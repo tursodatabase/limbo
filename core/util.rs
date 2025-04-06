@@ -537,6 +537,7 @@ pub fn can_pushdown_predicate(expr: &Expr) -> bool {
                 &name.0,
                 args.as_ref().map_or(0, |a| a.len()),
             );
+            // is deterministic
             matches!(function, Ok(Func::Scalar(_)))
         }
         Expr::Like { lhs, rhs, .. } => can_pushdown_predicate(lhs) && can_pushdown_predicate(rhs),
@@ -554,10 +555,6 @@ pub fn can_pushdown_predicate(expr: &Expr) -> bool {
         Expr::InTable { lhs, .. } => can_pushdown_predicate(lhs),
         _ => false,
     }
-}
-
-fn is_deterministic(func: &Func) -> bool {
-    matches!(func, Func::Scalar(_))
 }
 
 #[derive(Debug, Default, PartialEq)]
