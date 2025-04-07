@@ -99,10 +99,13 @@ impl VTabModule for KVStoreVTab {
                         cursor.rows.push((rowid, k.clone(), v.clone()));
                         cursor.index = Some(0);
                     } else {
+                        cursor.rows.clear();
                         cursor.index = None;
+                        return ResultCode::EOF;
                     }
                     return ResultCode::OK;
                 }
+                cursor.rows.clear();
                 cursor.index = None;
                 ResultCode::OK
             }
@@ -113,12 +116,13 @@ impl VTabModule for KVStoreVTab {
                     .map(|(&rowid, (k, v))| (rowid, k.clone(), v.clone()))
                     .collect();
                 cursor.rows.sort_by_key(|(rowid, _, _)| *rowid);
-                cursor.index = if cursor.rows.is_empty() {
-                    None
+                if cursor.rows.is_empty() {
+                    cursor.index = None;
+                    ResultCode::EOF
                 } else {
-                    Some(0)
-                };
-                ResultCode::OK
+                    cursor.index = Some(0);
+                    ResultCode::OK
+                }
             }
         }
     }
@@ -156,6 +160,7 @@ impl VTabModule for KVStoreVTab {
         let _ = self.insert(values)?;
         Ok(())
     }
+
     fn eof(cursor: &Self::VCursor) -> bool {
         cursor.index.is_some_and(|s| s >= cursor.rows.len()) || cursor.index.is_none()
     }

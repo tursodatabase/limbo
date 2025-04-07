@@ -1,4 +1,4 @@
-use limbo_ext::OrderByInfo;
+use limbo_ext::{OrderByInfo, VTabKind};
 use limbo_sqlite3_parser::ast;
 
 use crate::{
@@ -308,102 +308,122 @@ pub fn open_loop(
                         });
                     }
                     Table::Virtual(ref vtab) => {
-                        // Collect usable constraints and track which predicate each came from
-                        let converted_constraints = predicates
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, pred)| {
-                                try_convert_to_constraint_info(pred, table_index, i)
-                                    .map(|c| (c, &predicates[i]))
-                            })
-                            .collect::<Vec<_>>();
+                        // Virtual tables may be used either as VTab or TVF, distinguished by vtab.name.
+                        let (start_reg, count, maybe_idx_str, maybe_idx_int) = if vtab
+                            .kind
+                            .eq(&VTabKind::VirtualTable)
+                        {
+                            // Build converted constraints from the predicates.
+                            let mut converted_constraints = Vec::with_capacity(predicates.len());
+                            for (i, pred) in predicates.iter().enumerate() {
+                                if let Some(cinfo) =
+                                    try_convert_to_constraint_info(pred, table_index, i)
+                                {
+                                    converted_constraints.push((cinfo, pred));
+                                }
+                            }
+                            let constraints: Vec<_> =
+                                converted_constraints.iter().map(|(c, _)| *c).collect();
+                            let order_by = vec![OrderByInfo {
+                                column_index: *t_ctx
+                                    .result_column_indexes_in_orderby_sorter
+                                    .first()
+                                    .unwrap_or(&0)
+                                    as u32,
+                                desc: matches!(iter_dir, IterationDirection::Backwards),
+                            }];
+                            let index_info = vtab.best_index(&constraints, &order_by);
 
-                        let constraints: Vec<_> =
-                            converted_constraints.iter().map(|(c, _)| *c).collect();
-                        let order_by = vec![OrderByInfo {
-                            column_index: *t_ctx
-                                .result_column_indexes_in_orderby_sorter
-                                .first()
-                                .unwrap_or(&0) as u32,
-                            desc: matches!(iter_dir, IterationDirection::Backwards),
-                        }];
-                        let index_info = vtab.best_index(&constraints, &order_by);
+                            // Determine the number of VFilter arguments (constraints with an argv_index).
+                            let args_needed = index_info
+                                .constraint_usages
+                                .iter()
+                                .filter(|u| u.argv_index.is_some())
+                                .count();
+                            let start_reg = program.alloc_registers(args_needed);
 
-                        // Translate arguments to pass into VFilter
-                        let args_needed = index_info
-                            .constraint_usages
-                            .iter()
-                            .filter(|u| u.argv_index.is_some())
-                            .count();
-                        let start_reg = program.alloc_registers(args_needed);
-                        let mut arg_regs = vec![];
+                            // For each constraint used by best_index, translate the literal side.
+                            for (i, usage) in index_info.constraint_usages.iter().enumerate() {
+                                if let Some(argv_index) = usage.argv_index {
+                                    if let Some((_, pred)) = converted_constraints.get(i) {
+                                        if let ast::Expr::Binary(lhs, _, rhs) = &pred.expr {
+                                            let literal_expr = match (&**lhs, &**rhs) {
+                                                (ast::Expr::Column { .. }, lit) => lit,
+                                                (lit, ast::Expr::Column { .. }) => lit,
+                                                _ => continue,
+                                            };
+                                            // argv_index is 1-based; adjust to get the proper register offset.
+                                            let target_reg = start_reg + (argv_index - 1) as usize;
+                                            translate_expr(
+                                                program,
+                                                Some(tables),
+                                                literal_expr,
+                                                target_reg,
+                                                &t_ctx.resolver,
+                                            )?;
+                                        }
+                                    }
+                                }
+                            }
 
-                        for (i, usage) in index_info.constraint_usages.iter().enumerate() {
-                            if let Some(argv_index) = usage.argv_index {
-                                let (_, pred) = &converted_constraints[i];
+                            // If best_index provided an idx_str, translate it.
+                            let maybe_idx_str = if let Some(idx_str) = index_info.idx_str {
+                                let reg = program.alloc_register();
+                                program.emit_insn(Insn::String8 {
+                                    dest: reg,
+                                    value: idx_str,
+                                });
+                                Some(reg)
+                            } else {
+                                None
+                            };
 
-                                // this is the literal side of the expression (col = 'literal')
-                                let ast::Expr::Binary(lhs, _, rhs) = &pred.expr else {
-                                    continue;
-                                };
-
-                                let literal_expr = match (&**lhs, &**rhs) {
-                                    (ast::Expr::Column { .. }, rhs) => rhs,
-                                    (lhs, ast::Expr::Column { .. }) => lhs,
-                                    _ => continue,
-                                };
-
-                                let target_reg = start_reg + (argv_index - 1) as usize;
-                                translate_expr(
+                            // Record (in t_ctx) the indices of predicates that best_index tells us to omit.
+                            // Here we insert directly into t_ctx.omit_predicates (assumed to be a HashSet).
+                            for (j, usage) in index_info.constraint_usages.iter().enumerate() {
+                                if usage.argv_index.is_some() && usage.omit {
+                                    if let Some(constraint) = constraints.get(j) {
+                                        t_ctx.omit_predicates.push(constraint.pred_idx);
+                                    }
+                                }
+                            }
+                            (
+                                start_reg,
+                                args_needed,
+                                maybe_idx_str,
+                                Some(index_info.idx_num),
+                            )
+                        } else {
+                            // For table-valued functions (TVFs): translate the table args.
+                            let args = match vtab.args.as_ref() {
+                                Some(args) => args,
+                                None => &vec![],
+                            };
+                            let start_reg = program.alloc_registers(args.len());
+                            let mut cur_reg = start_reg;
+                            for arg in args {
+                                let reg = cur_reg;
+                                cur_reg += 1;
+                                let _ = translate_expr(
                                     program,
                                     Some(tables),
-                                    literal_expr,
-                                    target_reg,
+                                    arg,
+                                    reg,
                                     &t_ctx.resolver,
                                 )?;
-                                arg_regs.push(target_reg);
                             }
-                        }
+                            (start_reg, args.len(), None, None)
+                        };
 
-                        // Encode idx_str to pass to VFilter
-                        let mut maybe_idx_str_reg = None;
-                        if let Some(idx_str) = index_info.idx_str {
-                            let reg = program.alloc_register();
-                            program.emit_insn(Insn::String8 {
-                                dest: reg,
-                                value: idx_str,
-                            });
-                            maybe_idx_str_reg = Some(reg);
-                        }
+                        // Emit VFilter with the computed arguments.
                         program.emit_insn(Insn::VFilter {
                             cursor_id,
                             pc_if_empty: loop_end,
-                            arg_count: args_needed,
+                            arg_count: count,
                             args_reg: start_reg,
-                            idx_str: maybe_idx_str_reg,
-                            idx_num: index_info.idx_num as usize,
+                            idx_str: maybe_idx_str,
+                            idx_num: maybe_idx_int.unwrap_or(0) as usize,
                         });
-
-                        // Remove predicates omitted by best_index
-                        let omit_predicates: Vec<usize> = predicates
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| {
-                                !index_info.constraint_usages.iter().enumerate().any(
-                                    |(j, usage)| {
-                                        usage.argv_index.is_some()
-                                            && !usage.omit
-                                            && constraints
-                                                .get(j)
-                                                .map_or(false, |c| c.pred_idx == *i)
-                                    },
-                                )
-                            })
-                            .map(|(i, _)| i)
-                            .collect();
-                        t_ctx
-                            .omit_predicates
-                            .extend_from_slice(&omit_predicates[..]);
                     }
                     other => panic!("Unsupported table reference type: {:?}", other),
                 }
@@ -416,14 +436,9 @@ pub fn open_loop(
                     });
                 }
 
-                for (i, cond) in predicates
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, cond)| cond.should_eval_at_loop(table_index))
-                {
-                    if t_ctx.omit_predicates.contains(&i) {
-                        continue;
-                    }
+                for (_, cond) in predicates.iter().enumerate().filter(|(i, cond)| {
+                    cond.should_eval_at_loop(table_index) && !t_ctx.omit_predicates.contains(i)
+                }) {
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
                         jump_if_condition_is_true: false,
