@@ -1266,15 +1266,45 @@ impl BTreeCursor {
                         // check if we don't need to balance
                         // don't continue if there are no overflow cells
                         let page = current_page.get().contents.as_mut().unwrap();
-                        if page.overflow_cells.is_empty() {
+                        println!("pagetype in balance= {:?}", page.page_type());
+                        let free_space = compute_free_space(page, self.usable_space() as u16);
+                        println!(
+                            "freespace:  {}; usablespace: {}; comparison:{}",
+                            free_space,
+                            self.usable_space(),
+                            free_space as isize * 3 - self.usable_space() as isize * 2
+                        );
+                        if page.overflow_cells.is_empty()
+                            && free_space as usize * 3 <= self.usable_space() * 2
+                        {
                             let write_info = self.state.mut_write_info().unwrap();
                             write_info.state = WriteState::Finish;
                             return Ok(CursorResult::Ok(()));
                         }
                     }
 
+                    let page = current_page.get().contents.as_mut().unwrap();
+                    println!("cells in page: {}", page.cell_count());
+                    println!("root page id: {}", self.root_page);
+                    println!("current page on stack: {}", self.stack.current());
+                    println!("current page id: {}", current_page.get().id);
+                    println!("number of overflow cells: {}", page.overflow_cells.len());
+                    println!("page has parent: {}", !self.stack.has_parent());
                     if !self.stack.has_parent() {
-                        self.balance_root();
+                        if !page.overflow_cells.is_empty() {
+                            self.balance_root();
+                        } else if page.cell_count() == 0 {
+                            println!("root has no cells");
+                            self.balance_root_underflow()?;
+                        } else {
+                            let write_info = self.state.mut_write_info().unwrap();
+                            write_info.state = WriteState::Finish;
+                            return Ok(CursorResult::Ok(()));
+                        }
+                    } else {
+                        let write_info = self.state.mut_write_info().unwrap();
+                        write_info.state = WriteState::Finish;
+                        return Ok(CursorResult::Ok(()));
                     }
 
                     let write_info = self.state.mut_write_info().unwrap();
@@ -1983,6 +2013,28 @@ impl BTreeCursor {
         self.stack.push(child.clone());
     }
 
+    fn balance_root_underflow(&mut self) -> Result<CursorResult<()>> {
+        println!("we are in balance root underflow");
+        let root = self.stack.top();
+        let root_contents = root.get().contents.as_mut().unwrap();
+        let child_page_id = root_contents.rightmost_pointer().unwrap();
+        let child = self.pager.read_page(child_page_id as usize)?;
+
+        return_if_locked!(child);
+
+        let child_contents = child.get().contents.as_mut().unwrap();
+        // Defragment child before inserting its cells into root, because root is smaller than child due to it
+        // containing header.
+        defragment_page(child_contents, self.usable_space() as u16);
+
+        self.pager.add_dirty(root.get().id);
+        self.pager.add_dirty(child.get().id);
+
+        self.copy_node_content(child.clone(), root.clone())?;
+        self.pager.free_page(Some(child), child_page_id as usize)?;
+        Ok(CursorResult::Ok(()))
+    }
+
     fn usable_space(&self) -> usize {
         self.pager.usable_space()
     }
@@ -2428,46 +2480,59 @@ impl BTreeCursor {
                         delete_info.balance_write_info = Some(write_info);
                     }
 
-                    delete_info.state = DeleteState::WaitForBalancingToComplete { target_rowid }
+                    let write_info = delete_info.balance_write_info.take().unwrap();
+                    // First switch to Write state for balancing
+                    self.state = CursorState::Write(write_info);
+                    // Then immediately switch to WaitForBalancingToComplete to preserve target_rowid
+                    self.state = CursorState::Delete(DeleteInfo {
+                        state: DeleteState::WaitForBalancingToComplete { target_rowid },
+                        balance_write_info: match &self.state {
+                            CursorState::Write(wi) => Some(wi.clone()),
+                            _ => unreachable!("Just set the state to Write"),
+                        },
+                    });
                 }
 
                 DeleteState::WaitForBalancingToComplete { target_rowid } => {
                     let delete_info = self.state.mut_delete_info().unwrap();
+                    let write_info = delete_info.balance_write_info.as_ref().unwrap();
+                    println!(
+                        "WaitForBalancingToComplete: Current WriteState: {:?}",
+                        write_info.state
+                    );
+                    match write_info.state {
+                        WriteState::Start
+                        | WriteState::BalanceStart
+                        | WriteState::BalanceNonRoot
+                        | WriteState::BalanceNonRootWaitLoadPages => {
+                            // Still in balancing states, continue balancing
+                            println!(
+                                "Before balance() call - WriteState: {:?}",
+                                write_info.state.clone()
+                            );
+                            self.state = CursorState::Write(write_info.clone());
 
-                    // Switch the CursorState to Write state for balancing
-                    let write_info = delete_info.balance_write_info.take().unwrap();
-                    self.state = CursorState::Write(write_info);
+                            return_if_io!(self.balance());
 
-                    match self.balance()? {
-                        // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
-                        // a level deeper.
-                        CursorResult::Ok(()) => {
-                            let write_info = match &self.state {
-                                CursorState::Write(wi) => wi.clone(),
-                                _ => unreachable!("Balance operation changed cursor state"),
-                            };
-
-                            // Move to seek state
-                            self.state = CursorState::Delete(DeleteInfo {
-                                state: DeleteState::SeekAfterBalancing { target_rowid },
-                                balance_write_info: Some(write_info),
-                            });
+                            // After balance call, preserve the updated write info and target_rowid
+                            match &self.state {
+                                CursorState::Write(updated_write_info) => {
+                                    self.state = CursorState::Delete(DeleteInfo {
+                                        state: DeleteState::WaitForBalancingToComplete {
+                                            target_rowid,
+                                        },
+                                        balance_write_info: Some(updated_write_info.clone()),
+                                    });
+                                }
+                                _ => unreachable!("Balance call should maintain Write state"),
+                            }
+                            continue;
                         }
-
-                        CursorResult::IO => {
-                            // Save balance progress and return IO
-                            let write_info = match &self.state {
-                                CursorState::Write(wi) => wi.clone(),
-                                _ => unreachable!("Balance operation changed cursor state"),
-                            };
-
-                            self.state = CursorState::Delete(DeleteInfo {
-                                state: DeleteState::WaitForBalancingToComplete { target_rowid },
-                                balance_write_info: Some(write_info),
-                            });
-                            return Ok(CursorResult::IO);
+                        WriteState::Finish => {
+                            // Balancing complete, move to seek state
+                            delete_info.state = DeleteState::SeekAfterBalancing { target_rowid };
                         }
-                    }
+                    };
                 }
 
                 DeleteState::SeekAfterBalancing { target_rowid } => {
@@ -2940,6 +3005,29 @@ impl BTreeCursor {
 
     fn get_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         self.reusable_immutable_record.borrow_mut()
+    }
+    fn copy_node_content(&self, src: PageRef, dst: PageRef) -> Result<()> {
+        let src_contents = src.get().contents.as_ref().unwrap();
+        let dst_contents = dst.get().contents.as_mut().unwrap();
+        let src_buf = src_contents.as_ptr();
+        let dst_buf = dst_contents.as_ptr();
+        let dst_header_offset = if dst.get().id == 1 {
+            DATABASE_HEADER_SIZE
+        } else {
+            0
+        };
+        // Copy content area
+        let content_start = src_contents.cell_content_area() as usize;
+        let content_size = self.usable_space() - content_start;
+        dst_buf[content_start..content_start + content_size]
+            .copy_from_slice(&src_buf[content_start..content_start + content_size]);
+        // Copy header and cell pointer array
+        let header_and_pointers_size =
+            src_contents.header_size() + src_contents.cell_pointer_array_size();
+        dst_buf[dst_header_offset..dst_header_offset + header_and_pointers_size].copy_from_slice(
+            &src_buf[src_contents.offset..src_contents.offset + header_and_pointers_size],
+        );
+        Ok(())
     }
 }
 
