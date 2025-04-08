@@ -1,17 +1,15 @@
+use super::MemoryIO;
 use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
-use super::MemoryIO;
-pub struct WindowsIO {
-}
+pub struct WindowsIO {}
 
 impl WindowsIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'syscall'");
-        Ok(Self {
-        })
+        Ok(Self {})
     }
 }
 
@@ -40,6 +38,10 @@ impl IO for WindowsIO {
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
 }
 
 impl Clock for WindowsIO {
@@ -49,10 +51,6 @@ impl Clock for WindowsIO {
             secs: now.timestamp(),
             micros: now.timestamp_subsec_micros(),
         }
-    }
-  
-    fn get_memory_io(&self) -> Arc<MemoryIO> {
-        Arc::new(MemoryIO::new())
     }
 }
 

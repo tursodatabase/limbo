@@ -1,4 +1,5 @@
 use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
+use crate::io::clock::{Clock, Instant};
 use crate::{LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use rustix::io_uring::iovec;
@@ -11,7 +12,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, trace};
-use crate::io::clock::{Clock, Instant};
 
 const MAX_IOVECS: u32 = 128;
 const SQPOLL_IDLE: u32 = 1000;
@@ -197,6 +197,10 @@ impl IO for UringIO {
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
 }
 
 impl Clock for UringIO {
@@ -206,10 +210,6 @@ impl Clock for UringIO {
             secs: now.timestamp(),
             micros: now.timestamp_subsec_micros(),
         }
-    }
-    
-    fn get_memory_io(&self) -> Arc<MemoryIO> {
-        Arc::new(MemoryIO::new())
     }
 }
 

@@ -1,18 +1,16 @@
+use super::MemoryIO;
 use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
-use super::MemoryIO;
 
-pub struct GenericIO {
-}
+pub struct GenericIO {}
 
 impl GenericIO {
     pub fn new() -> Result<Self> {
         debug!("Using IO backend 'generic'");
-        Ok(Self {
-        })
+        Ok(Self {})
     }
 }
 
@@ -42,6 +40,10 @@ impl IO for GenericIO {
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
+
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
 }
 
 impl Clock for GenericIO {
@@ -52,10 +54,6 @@ impl Clock for GenericIO {
             micros: now.timestamp_subsec_micros(),
         }
     }
-
-    fn get_memory_io(&self) -> Arc<MemoryIO> {
-        Arc::new(MemoryIO::new())
-    }   
 }
 
 pub struct GenericFile {
