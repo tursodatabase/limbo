@@ -632,6 +632,7 @@ pub struct VirtualTable {
     args: Option<Vec<ast::Expr>>,
     pub implementation: Rc<VTabModuleImpl>,
     columns: Vec<Column>,
+    kind: VTabKind,
 }
 
 impl VirtualTable {
@@ -673,6 +674,7 @@ impl VirtualTable {
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
+                kind,
             });
             return Ok(vtab);
         }

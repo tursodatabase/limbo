@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::ast;
 use crate::schema::Schema;
+use crate::schema::Table;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::translate::QueryMode;
@@ -542,7 +543,7 @@ pub fn translate_drop_table(
         approx_num_insns: 30,
         approx_num_labels: 1,
     });
-    let table = schema.get_btree_table(tbl_name.name.0.as_str());
+    let table = schema.get_table(tbl_name.name.0.as_str());
     if table.is_none() {
         if if_exists {
             let init_label = program.emit_init();
@@ -557,6 +558,7 @@ pub fn translate_drop_table(
         }
         bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
     }
+
     let table = table.unwrap(); // safe since we just checked for None
 
     let init_label = program.emit_init();
@@ -662,11 +664,31 @@ pub fn translate_drop_table(
     }
 
     //  3. Destroy the table structure
-    program.emit_insn(Insn::Destroy {
-        root: table.root_page,
-        former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
-        is_temp: 0,
-    });
+    match table.as_ref() {
+        Table::BTree(table) => {
+            program.emit_insn(Insn::Destroy {
+                root: table.root_page,
+                former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
+                is_temp: 0,
+            });
+        }
+        Table::Virtual(vtab) => {
+            // From what I see, TableValuedFunction is not stored in the schema as a table.
+            // But this line here below is a safeguard in case this behavior changes in the future
+            // And mirrors what SQLite does.
+            if matches!(vtab.kind, limbo_ext::VTabKind::TableValuedFunction) {
+                return Err(crate::LimboError::ParseError(format!(
+                    "table {} may not be dropped",
+                    vtab.name
+                )));
+            }
+            program.emit_insn(Insn::VDestroy {
+                table_name: vtab.name.clone(),
+                db: 0, // TODO change this for multiple databases
+            });
+        }
+        Table::Pseudo(..) => unimplemented!(),
+    };
 
     let r6 = program.alloc_register();
     let r7 = program.alloc_register();
