@@ -4,6 +4,8 @@ This document describes the compatibility of Limbo with SQLite.
 
 ## Table of contents
 
+- [Limbo compatibility with SQLite](#limbo-compatibility-with-sqlite)
+  - [Table of contents](#table-of-contents)
   - [Overview](#overview)
     - [Features](#features)
     - [Limitations](#limitations)
@@ -577,7 +579,7 @@ Modifiers:
 | VBegin         | No     |         |
 | VColumn        | Yes    |         |
 | VCreate        | Yes    |         |
-| VDestroy       | No     |         |
+| VDestroy       | Yes    |         |
 | VFilter        | Yes    |         |
 | VNext          | Yes    |         |
 | VOpen          | Yes    |VOpenAsync|
