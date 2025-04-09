@@ -97,7 +97,7 @@ pub fn translate(
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
         ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
         ast::Stmt::CreateVirtualTable(vtab) => {
-            translate_create_virtual_table(*vtab, schema, query_mode)?
+            translate_create_virtual_table(*vtab, schema, query_mode, &syms)?
         }
         ast::Stmt::Delete(delete) => {
             let Delete {
