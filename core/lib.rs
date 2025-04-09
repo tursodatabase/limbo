@@ -752,6 +752,19 @@ impl VirtualTable {
             _ => Err(LimboError::ExtensionError(rc.to_string())),
         }
     }
+
+    pub fn destroy(&self) -> Result<()> {
+        let implementation = self.implementation.as_ref();
+        let rc = unsafe {
+            (self.implementation.destroy)(
+                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
+            )
+        };
+        match rc {
+            ResultCode::OK => Ok(()),
+            _ => Err(LimboError::ExtensionError(rc.to_string())),
+        }
+    }
 }
 
 pub(crate) struct SymbolTable {

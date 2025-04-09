@@ -1135,7 +1135,12 @@ pub fn op_vdestroy(
     };
 
     {
-        conn.syms.borrow_mut().vtabs.remove(table_name);
+        let Some(vtab) = conn.syms.borrow_mut().vtabs.remove(table_name) else {
+            return Err(crate::LimboError::InternalError(
+                "Could not find Virtual Table to Destroy".to_string(),
+            ));
+        };
+        vtab.destroy()?;
     }
 
     state.pc += 1;
