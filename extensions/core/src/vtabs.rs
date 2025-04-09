@@ -153,19 +153,30 @@ pub enum ConstraintOp {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+/// Describes an ORDER BY clause in a query involving a virtual table.
+/// Passed along with the constraints to xBestIndex.
 pub struct OrderByInfo {
+    /// The index of the column referenced in the ORDER BY clause.
     pub column_index: u32,
+    /// Whether or not the clause is in descending order.
     pub desc: bool,
 }
 
+/// The internal (core) representation of an 'index' on a virtual table.
+/// Returned from xBestIndex and then processed and passed to VFilter.
 #[derive(Debug, Clone)]
 pub struct IndexInfo {
+    /// The index number, used to identify the index internally by the VTab
     pub idx_num: i32,
+    /// Optional index name. these are passed to vfilter in a tuple (idx_num, idx_str)
     pub idx_str: Option<String>,
+    /// Whether the index is used for order by
     pub order_by_consumed: bool,
     /// TODO: for eventual cost based query planning
     pub estimated_cost: f64,
+    /// Estimated number of rows that the query will return
     pub estimated_rows: u32,
+    /// List of constraints that can be used to optimize the query.
     pub constraint_usages: Vec<ConstraintUsage>,
 }
 impl Default for IndexInfo {
@@ -240,6 +251,7 @@ impl IndexInfo {
 
 #[repr(C)]
 #[derive(Clone, Debug)]
+/// FFI representation of IndexInfo.
 pub struct ExtIndexInfo {
     pub idx_num: i32,
     pub idx_str: *const u8,
@@ -251,17 +263,27 @@ pub struct ExtIndexInfo {
     pub constraint_usage_len: usize,
 }
 
+/// Returned from xBestIndex to describe how the virtual table
+/// can use the constraints in the WHERE clause of a query.
 #[derive(Debug, Clone, Copy)]
 pub struct ConstraintUsage {
-    pub argv_index: Option<u32>, // 1-based index into VFilter args
-    pub omit: bool,              // if true, core skips checking it again
+    /// 1 based index of the argument in the WHERE clause.
+    pub argv_index: Option<u32>,
+    /// If true, core can omit this constraint in the vdbe layer.
+    pub omit: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+/// The primary argument to xBestIndex, which describes a constraint
+/// in a query involving a virtual table.
 pub struct ConstraintInfo {
+    /// The index of the column referenced in the WHERE clause.
     pub column_index: u32,
+    /// The operator used in the clause.
     pub op: ConstraintOp,
+    /// Whether or not constraint is garaunteed to be enforced.
     pub usable: bool,
+    ///
     pub pred_idx: usize,
 }

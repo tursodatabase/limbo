@@ -78,6 +78,10 @@ impl WhereTerm {
 
 use crate::ast::{Expr, Operator};
 
+// This function takes an operator and returns the operator you would obtain if the operands were swapped.
+// e.g. "literal < column"
+// which is not the canonical order for constraint pushdown.
+// This function will return > so that the expression can be treated as if it were written "column > literal"
 fn reverse_operator(op: &Operator) -> Option<Operator> {
     match op {
         Operator::Equals => Some(Operator::Equals),
@@ -96,7 +100,7 @@ fn reverse_operator(op: &Operator) -> Option<Operator> {
 /// It determines whether or not it involves the given table and whether or not it can
 /// be converted into a ConstraintInfo which can be passed to the vtab module's xBestIndex
 /// method, which will possibly calculate some information to improve the query plan, that we can send
-/// back to it as arguments for the VFilter operation. Perhaps we should save the exact Expr for which a relevant column
+/// back to it as arguments for the VFilter operation.
 /// is going to be filtered against: e.g:
 /// 'SELECT key, value FROM vtab WHERE key = 'some_key';
 /// we need to send the OwnedValue('some_key') as an argument to VFilter, and possibly omit it from
@@ -125,6 +129,8 @@ pub fn try_convert_to_constraint_info(
             if table != &table_index {
                 return None;
             }
+            // if the column is on the rhs, swap the operands and possibly
+            // the operator if it's a logical comparison.
             (rhs, lhs, &reverse_operator(op).unwrap_or(*op))
         }
         _ => {

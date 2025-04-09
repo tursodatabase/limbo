@@ -525,10 +525,11 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
         .collect::<Vec<_>>())
 }
 
+/// This function checks if a given expression is a constant value that can be pushed down to the database engine.
+/// It is expected to be called with the other half of a binary expression with an Expr::Column
 pub fn can_pushdown_predicate(expr: &Expr) -> bool {
     match expr {
         Expr::Literal(_) => true,
-        Expr::Column { .. } => true,
         Expr::Binary(lhs, _, rhs) => can_pushdown_predicate(lhs) && can_pushdown_predicate(rhs),
         Expr::Parenthesized(exprs) => can_pushdown_predicate(exprs.first().unwrap()),
         Expr::Unary(_, expr) => can_pushdown_predicate(expr),
@@ -548,11 +549,6 @@ pub fn can_pushdown_predicate(expr: &Expr) -> bool {
                 && can_pushdown_predicate(start)
                 && can_pushdown_predicate(end)
         }
-        Expr::Id(_) => true,
-        Expr::Name(_) => true,
-        Expr::Qualified(_, _) => true,
-        Expr::DoublyQualified(_, _, _) => true,
-        Expr::InTable { lhs, .. } => can_pushdown_predicate(lhs),
         _ => false,
     }
 }

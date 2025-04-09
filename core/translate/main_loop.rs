@@ -308,7 +308,7 @@ pub fn open_loop(
                         });
                     }
                     Table::Virtual(ref vtab) => {
-                        // Virtual tables may be used either as VTab or TVF, distinguished by vtab.name.
+                        // Virtual tables may be used either as VTab or TVF
                         let (start_reg, count, maybe_idx_str, maybe_idx_int) = if vtab
                             .kind
                             .eq(&VTabKind::VirtualTable)
@@ -332,6 +332,7 @@ pub fn open_loop(
                                     as u32,
                                 desc: matches!(iter_dir, IterationDirection::Backwards),
                             }];
+                            // Call xBestIndex method on the underlying vtable.
                             let index_info = vtab.best_index(&constraints, &order_by);
 
                             // Determine the number of VFilter arguments (constraints with an argv_index).
@@ -342,12 +343,12 @@ pub fn open_loop(
                                 .count();
                             let start_reg = program.alloc_registers(args_needed);
 
-                            // For each constraint used by best_index, translate the literal side.
+                            // For each constraint used by best_index, translate the opposite side.
                             for (i, usage) in index_info.constraint_usages.iter().enumerate() {
                                 if let Some(argv_index) = usage.argv_index {
                                     if let Some((_, pred)) = converted_constraints.get(i) {
                                         if let ast::Expr::Binary(lhs, _, rhs) = &pred.expr {
-                                            let literal_expr = match (&**lhs, &**rhs) {
+                                            let expr = match (&**lhs, &**rhs) {
                                                 (ast::Expr::Column { .. }, lit) => lit,
                                                 (lit, ast::Expr::Column { .. }) => lit,
                                                 _ => continue,
@@ -357,7 +358,7 @@ pub fn open_loop(
                                             translate_expr(
                                                 program,
                                                 Some(tables),
-                                                literal_expr,
+                                                expr,
                                                 target_reg,
                                                 &t_ctx.resolver,
                                             )?;
@@ -379,7 +380,7 @@ pub fn open_loop(
                             };
 
                             // Record (in t_ctx) the indices of predicates that best_index tells us to omit.
-                            // Here we insert directly into t_ctx.omit_predicates (assumed to be a HashSet).
+                            // Here we insert directly into t_ctx.omit_predicates
                             for (j, usage) in index_info.constraint_usages.iter().enumerate() {
                                 if usage.argv_index.is_some() && usage.omit {
                                     if let Some(constraint) = constraints.get(j) {
@@ -394,7 +395,7 @@ pub fn open_loop(
                                 Some(index_info.idx_num),
                             )
                         } else {
-                            // For table-valued functions (TVFs): translate the table args.
+                            // For table-valued functions: translate the table args.
                             let args = match vtab.args.as_ref() {
                                 Some(args) => args,
                                 None => &vec![],
