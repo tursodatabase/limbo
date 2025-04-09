@@ -45,7 +45,7 @@ impl VTabModule for GenerateSeriesVTab {
         })
     }
 
-    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode {
+    fn filter(cursor: &mut Self::VCursor, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
         // args are the start, stop, and step
         if args.is_empty() || args.len() > 3 {
             return ResultCode::InvalidArgs;
@@ -240,7 +240,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        match GenerateSeriesVTab::filter(&mut cursor, &args) {
+        match GenerateSeriesVTab::filter(&mut cursor, &args, None) {
             ResultCode::OK => (),
             ResultCode::EOF => return Ok(vec![]),
             err => return Err(err),
@@ -293,7 +293,7 @@ mod tests {
             let expected_len = series_expected_length(&series);
             assert_eq!(
                 values.len(),
-                expected_len as usize,
+                expected_len,
                 "Series length mismatch for start={}, stop={}, step={}: expected {}, got {}, values: {:?}",
                 start,
                 stop,
@@ -546,7 +546,7 @@ mod tests {
         let start = series.start;
         let stop = series.stop;
         let step = series.step;
-        let tbl = GenerateSeriesVTab::default();
+        let tbl = GenerateSeriesVTab {};
         let mut cursor = tbl.open().unwrap();
 
         let args = vec![
@@ -556,7 +556,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        GenerateSeriesVTab::filter(&mut cursor, &args);
+        GenerateSeriesVTab::filter(&mut cursor, &args, None);
 
         let mut rowids = vec![];
         while !GenerateSeriesVTab::eof(&cursor) {

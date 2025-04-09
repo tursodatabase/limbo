@@ -90,6 +90,7 @@ pub struct TranslateCtx<'a> {
     // This vector holds the indexes of the result columns that we need to skip.
     pub result_columns_to_skip_in_orderby_sorter: Option<Vec<usize>>,
     pub resolver: Resolver<'a>,
+    pub omit_predicates: Vec<usize>,
 }
 
 /// Used to distinguish database operations
@@ -132,6 +133,7 @@ fn prologue<'a>(
         result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
         result_columns_to_skip_in_orderby_sorter: None,
         resolver: Resolver::new(syms),
+        omit_predicates: Vec::new(),
     };
 
     Ok((t_ctx, init_label, start_offset))

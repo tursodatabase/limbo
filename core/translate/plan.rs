@@ -1,4 +1,5 @@
 use core::fmt;
+use limbo_ext::{ConstraintInfo, ConstraintOp};
 use limbo_sqlite3_parser::ast;
 use std::{
     cmp::Ordering,
@@ -7,12 +8,15 @@ use std::{
     sync::Arc,
 };
 
-use crate::schema::{PseudoTable, Type};
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, Index, Table},
     vdbe::BranchOffset,
     VirtualTable,
+};
+use crate::{
+    schema::{PseudoTable, Type},
+    util::can_pushdown_predicate,
 };
 
 #[derive(Debug, Clone)]
@@ -72,6 +76,92 @@ impl WhereTerm {
     }
 }
 
+use crate::ast::{Expr, Operator};
+
+// This function takes an operator and returns the operator you would obtain if the operands were swapped.
+// e.g. "literal < column"
+// which is not the canonical order for constraint pushdown.
+// This function will return > so that the expression can be treated as if it were written "column > literal"
+fn reverse_operator(op: &Operator) -> Option<Operator> {
+    match op {
+        Operator::Equals => Some(Operator::Equals),
+        Operator::Less => Some(Operator::Greater),
+        Operator::LessEquals => Some(Operator::GreaterEquals),
+        Operator::Greater => Some(Operator::Less),
+        Operator::GreaterEquals => Some(Operator::LessEquals),
+        Operator::NotEquals => Some(Operator::NotEquals),
+        Operator::Is => Some(Operator::Is),
+        Operator::IsNot => Some(Operator::IsNot),
+        _ => None,
+    }
+}
+
+/// This function takes a WhereTerm for a select involving a VTab at index 'table_index'.
+/// It determines whether or not it involves the given table and whether or not it can
+/// be converted into a ConstraintInfo which can be passed to the vtab module's xBestIndex
+/// method, which will possibly calculate some information to improve the query plan, that we can send
+/// back to it as arguments for the VFilter operation.
+/// is going to be filtered against: e.g:
+/// 'SELECT key, value FROM vtab WHERE key = 'some_key';
+/// we need to send the OwnedValue('some_key') as an argument to VFilter, and possibly omit it from
+/// the filtration in the vdbe layer.
+pub fn try_convert_to_constraint_info(
+    term: &WhereTerm,
+    table_index: usize,
+    pred_idx: usize,
+) -> Option<ConstraintInfo> {
+    if term.from_outer_join {
+        return None;
+    }
+
+    let Expr::Binary(lhs, op, rhs) = &term.expr else {
+        return None;
+    };
+
+    let (col_expr, _, op) = match (&**lhs, &**rhs) {
+        (Expr::Column { table, .. }, rhs) if can_pushdown_predicate(rhs) => {
+            if table != &table_index {
+                return None;
+            }
+            (lhs, rhs, op)
+        }
+        (lhs, Expr::Column { table, .. }) if can_pushdown_predicate(lhs) => {
+            if table != &table_index {
+                return None;
+            }
+            // if the column is on the rhs, swap the operands and possibly
+            // the operator if it's a logical comparison.
+            (rhs, lhs, &reverse_operator(op).unwrap_or(*op))
+        }
+        _ => {
+            return None;
+        }
+    };
+
+    let Expr::Column { column, .. } = **col_expr else {
+        return None;
+    };
+
+    let column_index = column as u32;
+    let constraint_op = match op {
+        Operator::Equals => ConstraintOp::Eq,
+        Operator::Less => ConstraintOp::Lt,
+        Operator::LessEquals => ConstraintOp::Le,
+        Operator::Greater => ConstraintOp::Gt,
+        Operator::GreaterEquals => ConstraintOp::Ge,
+        Operator::NotEquals => ConstraintOp::Ne,
+        Operator::Is => ConstraintOp::Is,
+        Operator::IsNot => ConstraintOp::IsNot,
+        _ => return None,
+    };
+
+    Some(ConstraintInfo {
+        column_index,
+        op: constraint_op,
+        usable: true,
+        pred_idx,
+    })
+}
 /// The loop index where to evaluate the condition.
 /// For example, in `SELECT * FROM u JOIN p WHERE u.id = 5`, the condition can already be evaluated at the first loop (idx 0),
 /// because that is the rightmost table that it references.

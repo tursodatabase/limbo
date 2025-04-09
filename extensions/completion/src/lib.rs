@@ -91,8 +91,8 @@ impl VTabModule for CompletionVTab {
         cursor.eof()
     }
 
-    fn filter(cursor: &mut Self::VCursor, args: &[Value]) -> ResultCode {
-        if args.len() == 0 || args.len() > 2 {
+    fn filter(cursor: &mut Self::VCursor, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
+        if args.is_empty() || args.len() > 2 {
             return ResultCode::InvalidArgs;
         }
         cursor.reset();
