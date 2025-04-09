@@ -14,6 +14,7 @@ test-write = "cli_tests.write:main"
 test-shell = "cli_tests.cli_test_cases:main"
 test-extensions = "cli_tests.extensions:main"
 test-update = "cli_tests.update:main"
+test-memory = "cli_tests.memory:main"
 
 [tool.uv]
 package = true

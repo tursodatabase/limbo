@@ -98,8 +98,8 @@ test-json:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/json.test
 .PHONY: test-json
 
-test-memory:
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/memory.py
+test-memory: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-memory
 .PHONY: test-memory
 
 test-write: limbo uv-sync
