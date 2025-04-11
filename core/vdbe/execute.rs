@@ -39,7 +39,8 @@ use crate::{
 };
 
 use crate::{
-    info, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult, TransactionState, IO,
+    info, maybe_init_database_file, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult,
+    TransactionState, IO,
 };
 
 use super::{
@@ -4533,10 +4534,11 @@ pub fn op_open_ephemeral(
     let io = conn.pager.io.get_memory_io();
 
     let file = io.open_file("", OpenFlags::Create, true)?;
+    maybe_init_database_file(&file, &(io.clone() as Arc<dyn IO>))?;
     let db_file = Arc::new(FileMemoryStorage::new(file));
 
     let db_header = Pager::begin_open(db_file.clone())?;
-    let buffer_pool = Rc::new(BufferPool::new(512));
+    let buffer_pool = Rc::new(BufferPool::new(db_header.lock().page_size as usize));
     let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
 
     let pager = Rc::new(Pager::finish_open(
@@ -4562,8 +4564,11 @@ pub fn op_open_ephemeral(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+    let mut cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+    cursor.rewind()?; // Will never return io
+
     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
+
     // Table content is erased if the cursor already exists
     match cursor_type {
         CursorType::BTreeTable(_) => {
