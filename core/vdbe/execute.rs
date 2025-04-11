@@ -4533,15 +4533,15 @@ pub fn op_open_ephemeral(
     let io = conn.pager.io.get_memory_io();
 
     let file = io.open_file("", OpenFlags::Create, true)?;
-    let page_io = Arc::new(FileMemoryStorage::new(file));
+    let db_file = Arc::new(FileMemoryStorage::new(file));
 
-    let db_header = Pager::begin_open(page_io.clone())?;
+    let db_header = Pager::begin_open(db_file.clone())?;
     let buffer_pool = Rc::new(BufferPool::new(512));
     let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
 
     let pager = Rc::new(Pager::finish_open(
         db_header,
-        page_io,
+        db_file,
         None,
         io,
         page_cache,
