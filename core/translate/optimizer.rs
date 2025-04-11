@@ -471,6 +471,7 @@ pub trait Optimizable {
             .map_or(false, |c| c == ConstantPredicate::AlwaysFalse))
     }
     fn is_rowid_alias_of(&self, table_index: usize) -> bool;
+    fn is_nonnull(&self) -> bool;
 }
 
 impl Optimizable for ast::Expr {
@@ -482,6 +483,73 @@ impl Optimizable for ast::Expr {
                 ..
             } => *is_rowid_alias && *table == table_index,
             _ => false,
+        }
+    }
+    /// Returns true if the expressions is (verifiably) non-NULL.
+    /// It might still be non-NULL even if we return false; we just
+    /// weren't able to prove it.
+    /// This function is currently very conservative, and will return false
+    /// for any expression where we aren't sure and didn't bother to find out
+    /// by writing more complex code.
+    fn is_nonnull(&self) -> bool {
+        match self {
+            Expr::Between {
+                lhs, start, end, ..
+            } => lhs.is_nonnull() && start.is_nonnull() && end.is_nonnull(),
+            Expr::Binary(expr, _, expr1) => expr.is_nonnull() && expr1.is_nonnull(),
+            Expr::Case {
+                base,
+                when_then_pairs,
+                else_expr,
+                ..
+            } => {
+                base.as_ref().map_or(true, |base| base.is_nonnull())
+                    && when_then_pairs.iter().all(|(_, then)| then.is_nonnull())
+                    && else_expr
+                        .as_ref()
+                        .map_or(true, |else_expr| else_expr.is_nonnull())
+            }
+            Expr::Cast { expr, .. } => expr.is_nonnull(),
+            Expr::Collate(expr, _) => expr.is_nonnull(),
+            Expr::DoublyQualified(..) => {
+                panic!("Do not call is_nonnull before DoublyQualified has been rewritten as Column")
+            }
+            Expr::Exists(..) => false,
+            Expr::FunctionCall { .. } => false,
+            Expr::FunctionCallStar { .. } => false,
+            Expr::Id(..) => panic!("Do not call is_nonnull before Id has been rewritten as Column"),
+            Expr::Column { is_rowid_alias, .. } => *is_rowid_alias,
+            Expr::RowId { .. } => true,
+            Expr::InList { lhs, rhs, .. } => {
+                lhs.is_nonnull()
+                    && rhs
+                        .as_ref()
+                        .map_or(true, |rhs| rhs.iter().all(|rhs| rhs.is_nonnull()))
+            }
+            Expr::InSelect { .. } => false,
+            Expr::InTable { .. } => false,
+            Expr::IsNull(..) => true,
+            Expr::Like { lhs, rhs, .. } => lhs.is_nonnull() && rhs.is_nonnull(),
+            Expr::Literal(literal) => match literal {
+                ast::Literal::Numeric(_) => true,
+                ast::Literal::String(_) => true,
+                ast::Literal::Blob(_) => true,
+                ast::Literal::Keyword(_) => true,
+                ast::Literal::Null => false,
+                ast::Literal::CurrentDate => true,
+                ast::Literal::CurrentTime => true,
+                ast::Literal::CurrentTimestamp => true,
+            },
+            Expr::Name(..) => false,
+            Expr::NotNull(..) => true,
+            Expr::Parenthesized(exprs) => exprs.iter().all(|expr| expr.is_nonnull()),
+            Expr::Qualified(..) => {
+                panic!("Do not call is_nonnull before Qualified has been rewritten as Column")
+            }
+            Expr::Raise(..) => false,
+            Expr::Subquery(..) => false,
+            Expr::Unary(_, expr) => expr.is_nonnull(),
+            Expr::Variable(..) => false,
         }
     }
     fn check_constant(&self) -> Result<Option<ConstantPredicate>> {

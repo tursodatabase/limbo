@@ -15,6 +15,7 @@ use super::{
     emitter::{OperationMode, TranslateCtx},
     expr::{translate_condition_expr, translate_expr, ConditionMetadata},
     group_by::is_column_in_group_by,
+    optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
         IterationDirection, Operation, Search, SeekDef, SelectPlan, SelectQueryType,
@@ -902,13 +903,18 @@ fn emit_seek(
                 });
             }
         } else {
-            translate_expr(
-                program,
-                Some(tables),
-                &seek_def.key[i],
-                reg,
-                &t_ctx.resolver,
-            )?;
+            let expr = &seek_def.key[i];
+            translate_expr(program, Some(tables), &expr, reg, &t_ctx.resolver)?;
+            // If the seek key column is not verifiably non-NULL, we need check whether it is NULL,
+            // and if so, jump to the loop end.
+            // This is to avoid returning rows for e.g. SELECT * FROM t WHERE t.x > NULL,
+            // which would erroneously return all rows from t, as NULL is lower than any non-NULL value in index key comparisons.
+            if !expr.is_nonnull() {
+                program.emit_insn(Insn::IsNull {
+                    reg,
+                    target_pc: loop_end,
+                });
+            }
         }
     }
     let num_regs = if seek_def.null_pad_unset_cols() {
