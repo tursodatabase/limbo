@@ -4,11 +4,12 @@ use crate::{
         import::ImportFile,
         Command, CommandParser,
     },
+    config::Config,
     helper::LimboHelper,
     input::{get_io, get_writer, DbLocation, OutputMode, Settings},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
-use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
+use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -70,7 +71,8 @@ pub struct Limbo<'a> {
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
     opts: Settings,
-    pub rl: &'a mut Editor<LimboHelper, DefaultHistory>,
+    pub rl: &'a mut Editor<LimboHelper<'a>, DefaultHistory>,
+    config: &'a Config,
 }
 
 struct QueryStatistics {
@@ -103,10 +105,11 @@ macro_rules! query_internal {
     }};
 }
 
-static COLORS: &[Color] = &[Color::Green, Color::Black, Color::Grey];
-
 impl<'a> Limbo<'a> {
-    pub fn new(rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>) -> anyhow::Result<Self> {
+    pub fn new(
+        rl: &'a mut rustyline::Editor<LimboHelper<'a>, DefaultHistory>,
+        config: &'a Config,
+    ) -> anyhow::Result<Self> {
         let opts = Opts::parse();
         let db_file = opts
             .database
@@ -133,7 +136,7 @@ impl<'a> Limbo<'a> {
             )
         };
         let conn = db.connect()?;
-        let h = LimboHelper::new(conn.clone(), io.clone());
+        let h = LimboHelper::new(conn.clone(), io.clone(), &config.highlight);
         rl.set_helper(Some(h));
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
@@ -155,6 +158,7 @@ impl<'a> Limbo<'a> {
             input_buff: String::new(),
             opts: Settings::from(opts),
             rl,
+            config: &config,
         };
         app.first_run(sql, quiet)?;
         Ok(app)
@@ -716,9 +720,11 @@ impl<'a> Limbo<'a> {
                         let header = (0..rows.num_columns())
                             .map(|i| {
                                 let name = rows.get_column_name(i);
-                                Cell::new(name)
-                                    .add_attribute(Attribute::Bold)
-                                    .fg(Color::White)
+                                Cell::new(name).add_attribute(Attribute::Bold).fg(self
+                                    .config
+                                    .table
+                                    .header_color
+                                    .into_comfy_table_color())
                             })
                             .collect::<Vec<_>>();
                         table.set_header(header);
@@ -752,9 +758,12 @@ impl<'a> Limbo<'a> {
                                         }
                                     };
                                     row.add_cell(
-                                        Cell::new(content)
-                                            .set_alignment(alignment)
-                                            .fg(COLORS[idx % COLORS.len()]),
+                                        Cell::new(content).set_alignment(alignment).fg(self
+                                            .config
+                                            .table
+                                            .column_colors
+                                            [idx % self.config.table.column_colors.len()]
+                                        .into_comfy_table_color()),
                                     );
                                 }
                                 table.add_row(row);
