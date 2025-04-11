@@ -1114,19 +1114,38 @@ mod tests {
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         for table in tables.iter() {
-            let query = format!("CREATE TABLE {} ({})", table.name, table.columns.join(", "));
+            let columns_with_first_column_as_pk = {
+                let mut columns = vec![];
+                columns.push(format!("{} PRIMARY KEY", table.columns[0]));
+                columns.extend(table.columns[1..].iter().map(|c| c.to_string()));
+                columns.join(", ")
+            };
+            let query = format!(
+                "CREATE TABLE {} ({})",
+                table.name, columns_with_first_column_as_pk
+            );
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+
             assert_eq!(
-                limbo_exec_rows(&db, &limbo_conn, &query),
-                sqlite_exec_rows(&sqlite_conn, &query)
+                limbo, sqlite,
+                "query: {}, limbo: {:?}, sqlite: {:?}",
+                query, limbo, sqlite
             );
         }
 
         let (mut rng, seed) = rng_from_time();
         log::info!("seed: {}", seed);
 
-        for _ in 0..100 {
-            let (x, y, z) = (
-                g.generate(&mut rng, builders.number, 1),
+        let mut i = 0;
+        let mut primary_key_set = HashSet::with_capacity(100);
+        while i < 100 {
+            let x = g.generate(&mut rng, builders.number, 1);
+            if primary_key_set.contains(&x) {
+                continue;
+            }
+            primary_key_set.insert(x.clone());
+            let (y, z) = (
                 g.generate(&mut rng, builders.number, 1),
                 g.generate(&mut rng, builders.number, 1),
             );
@@ -1138,7 +1157,13 @@ mod tests {
                 "seed: {}",
                 seed,
             );
+            i += 1;
         }
+        // verify the same number of rows in both tables
+        let query = format!("SELECT COUNT(*) FROM t");
+        let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+        let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+        assert_eq!(limbo, sqlite, "seed: {}", seed);
 
         let sql = g
             .create()
@@ -1152,11 +1177,25 @@ mod tests {
             log::info!("query: {}", query);
             let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
-            assert_eq!(
-                limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
-                query, limbo, sqlite, seed
-            );
+
+            if limbo.len() != sqlite.len() {
+                panic!("MISMATCHING ROW COUNT (limbo: {}, sqlite: {}) for query: {}\n\n limbo: {:?}\n\n sqlite: {:?}", limbo.len(), sqlite.len(), query, limbo, sqlite);
+            }
+            // find first row where limbo and sqlite differ
+            let diff_rows = limbo
+                .iter()
+                .zip(sqlite.iter())
+                .filter(|(l, s)| l != s)
+                .collect::<Vec<_>>();
+            if !diff_rows.is_empty() {
+                // due to different choices in index usage (usually in these cases sqlite is smart enough to use an index and we aren't),
+                // sqlite might return rows in a different order
+                // check if all limbo rows are present in sqlite
+                let all_present = limbo.iter().all(|l| sqlite.iter().any(|s| l == s));
+                if !all_present {
+                    panic!("MISMATCHING ROWS (limbo: {}, sqlite: {}) for query: {}\n\n limbo: {:?}\n\n sqlite: {:?}\n\n differences: {:?}", limbo.len(), sqlite.len(), query, limbo, sqlite, diff_rows);
+                }
+            }
         }
     }
 }
