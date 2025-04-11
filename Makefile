@@ -62,16 +62,20 @@ limbo-wasm:
 	cargo build --package limbo-wasm --target wasm32-wasi
 .PHONY: limbo-wasm
 
-test: limbo test-compat test-vector test-sqlite3 test-shell test-extensions test-memory
+uv-sync:
+	uv sync --all-packages
+.PHONE: uv-sync
+
+test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update
 .PHONY: test
 
-test-extensions: limbo
+test-extensions: limbo uv-sync
 	cargo build --package limbo_regexp
-	./testing/cli_tests/extensions.py
+	uv run --project limbo_test test-extensions
 .PHONY: test-extensions
 
-test-shell: limbo 
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/cli_test_cases.py
+test-shell: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-shell
 .PHONY: test-shell
 
 test-compat:
@@ -94,9 +98,17 @@ test-json:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/json.test
 .PHONY: test-json
 
-test-memory:
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/cli_tests/memory.py
+test-memory: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-memory
 .PHONY: test-memory
+
+test-write: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-write
+.PHONY: test-write
+
+test-update: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-update
+.PHONY: test-update
 
 clickbench:
 	./perf/clickbench/benchmark.sh

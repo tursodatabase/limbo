@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests import console
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
 
@@ -96,15 +97,13 @@ def main():
     tests = memory_tests()
     # TODO see how to parallelize this loop with different subprocesses
     for test in tests:
-        limbo = TestLimboShell()
         try:
-            stub_memory_test(limbo, **test)
+            with TestLimboShell("") as limbo:
+                stub_memory_test(limbo, **test)
         except Exception as e:
-            print(f"Test FAILED: {e}")
-            limbo.quit()
+            console.error(f"Test FAILED: {e}")
             exit(1)
-        limbo.quit()  # remove this line when `with` statement is supported for TestLimboShell
-    print("All tests passed successfully.")
+    console.info("All tests passed successfully.")
 
 
 if __name__ == "__main__":
