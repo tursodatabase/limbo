@@ -4550,7 +4550,8 @@ pub fn op_open_ephemeral(
         buffer_pool,
     )?);
 
-    let root_page = pager.btree_create(*is_btree as usize);
+    let flag = if *is_btree { 1 } else { 0 };
+    let root_page = pager.btree_create(flag);
 
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mv_cursor = match state.mv_tx_id {
