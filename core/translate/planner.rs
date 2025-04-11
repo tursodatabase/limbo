@@ -570,7 +570,7 @@ pub fn parse_where(
   For expressions not referencing any tables (e.g. constants), this is before the main loop is
   opened, because they do not need any table data.
 */
-fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<EvalAt> {
+pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<EvalAt> {
     let mut eval_at: EvalAt = EvalAt::BeforeLoop;
     match predicate {
         ast::Expr::Binary(e1, _, e2) => {
