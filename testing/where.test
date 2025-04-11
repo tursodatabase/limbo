@@ -572,3 +572,8 @@ do_execsql_test where-constant-condition-no-tables {
 do_execsql_test where-constant-condition-no-tables-2 {
     select 1 where 1 IS NOT NULL;
 } {1}
+
+# We had a bug where Limbo tried to use an index when there was a WHERE term like 't.x = t.x'
+do_execsql_test where-self-referential-regression {
+  select count(1) from users where id = id;
+} {10000}
