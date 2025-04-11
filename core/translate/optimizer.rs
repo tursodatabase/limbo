@@ -10,9 +10,12 @@ use crate::{
     Result,
 };
 
-use super::plan::{
-    DeletePlan, Direction, GroupBy, IterationDirection, Operation, Plan, Search, SeekDef, SeekKey,
-    SelectPlan, TableReference, UpdatePlan, WhereTerm,
+use super::{
+    plan::{
+        DeletePlan, Direction, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search,
+        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
+    },
+    planner::determine_where_to_eval_expr,
 };
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
@@ -783,6 +786,18 @@ fn find_index_constraints(
                 continue;
             }
 
+            // If both lhs and rhs refer to columns from this table, we can't use this constraint
+            // because we can't use the index to satisfy the condition.
+            // Examples:
+            // - WHERE t.x > t.y
+            // - WHERE t.x + 1 > t.y - 5
+            // - WHERE t.x = (t.x)
+            if determine_where_to_eval_expr(&lhs)? == EvalAt::Loop(table_index)
+                && determine_where_to_eval_expr(&rhs)? == EvalAt::Loop(table_index)
+            {
+                continue;
+            }
+
             // Check if lhs is a column that is in the i'th position of the index
             if Some(position_in_index)
                 == get_column_position_in_index(lhs, table_index, table_reference, index)
@@ -1118,6 +1133,16 @@ pub fn try_extract_rowid_search_expression(
     }
     match &mut cond.expr {
         ast::Expr::Binary(lhs, operator, rhs) => {
+            // If both lhs and rhs refer to columns from this table, we can't perform a rowid seek
+            // Examples:
+            // - WHERE t.x > t.y
+            // - WHERE t.x + 1 > t.y - 5
+            // - WHERE t.x = (t.x)
+            if determine_where_to_eval_expr(lhs)? == EvalAt::Loop(table_index)
+                && determine_where_to_eval_expr(rhs)? == EvalAt::Loop(table_index)
+            {
+                return Ok(None);
+            }
             if lhs.is_rowid_alias_of(table_index) {
                 match operator {
                     ast::Operator::Equals => {
