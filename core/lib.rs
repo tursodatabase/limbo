@@ -634,6 +634,7 @@ pub struct VirtualTable {
     args: Option<Vec<ast::Expr>>,
     pub implementation: Rc<VTabModuleImpl>,
     columns: Vec<Column>,
+    kind: VTabKind,
 }
 
 impl VirtualTable {
@@ -675,6 +676,7 @@ impl VirtualTable {
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
+                kind,
             });
             return Ok(vtab);
         }
@@ -749,6 +751,19 @@ impl VirtualTable {
         match rc {
             ResultCode::OK => Ok(None),
             ResultCode::RowID => Ok(Some(newrowid)),
+            _ => Err(LimboError::ExtensionError(rc.to_string())),
+        }
+    }
+
+    pub fn destroy(&self) -> Result<()> {
+        let implementation = self.implementation.as_ref();
+        let rc = unsafe {
+            (self.implementation.destroy)(
+                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
+            )
+        };
+        match rc {
+            ResultCode::OK => Ok(()),
             _ => Err(LimboError::ExtensionError(rc.to_string())),
         }
     }

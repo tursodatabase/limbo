@@ -307,6 +307,14 @@ pub enum Insn {
         pc_if_next: BranchOffset,
     },
 
+    /// P4 is the name of a virtual table in database P1. Call the xDestroy method of that table.
+    VDestroy {
+        /// Name of a virtual table being destroyed
+        table_name: String,
+        ///  The database within which this virtual table needs to be destroyed (P1).
+        db: usize,
+    },
+
     /// Open a cursor for a pseudo-table that contains a single row.
     OpenPseudo {
         cursor_id: CursorID,
@@ -862,6 +870,8 @@ impl Insn {
             Insn::VColumn { .. } => execute::op_vcolumn,
             Insn::VUpdate { .. } => execute::op_vupdate,
             Insn::VNext { .. } => execute::op_vnext,
+            Insn::VDestroy { .. } => execute::op_vdestroy,
+
             Insn::OpenPseudo { .. } => execute::op_open_pseudo,
             Insn::RewindAsync { .. } => execute::op_rewind_async,
 
@@ -949,6 +959,7 @@ impl Insn {
             Insn::CreateBtree { .. } => execute::op_create_btree,
 
             Insn::Destroy { .. } => execute::op_destroy,
+
             Insn::DropTable { .. } => execute::op_drop_table,
             Insn::Close { .. } => execute::op_close,
 

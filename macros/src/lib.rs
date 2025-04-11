@@ -404,7 +404,11 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///  /// Delete the row with the provided rowid
 ///  fn delete(&mut self, rowid: i64) -> Result<(), Self::Error> {
 ///    Ok(())
-/// }
+///  }
+///  /// Destroy the virtual table. Any cleanup logic for when the table is deleted comes heres
+///  fn destroy(&mut self) -> Result<(), Self::Error> {
+///     Ok(())
+///  }
 ///
 ///  #[derive(Debug)]
 /// struct CsvCursor {
@@ -450,6 +454,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let eof_fn_name = format_ident!("eof_{}", struct_name);
     let update_fn_name = format_ident!("update_{}", struct_name);
     let rowid_fn_name = format_ident!("rowid_{}", struct_name);
+    let destroy_fn_name = format_ident!("destroy_{}", struct_name);
 
     let expanded = quote! {
         impl #struct_name {
@@ -593,6 +598,22 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
+            unsafe extern "C" fn #destroy_fn_name(
+                vtab: *const ::std::ffi::c_void,
+            ) -> ::limbo_ext::ResultCode {
+                if vtab.is_null() {
+                    return ::limbo_ext::ResultCode::Error;
+                }
+
+                let vtab = &mut *(vtab as *mut #struct_name);
+                if <#struct_name as VTabModule>::destroy(vtab).is_err() {
+                    return ::limbo_ext::ResultCode::Error;
+                }
+
+                return ::limbo_ext::ResultCode::OK;
+            }
+
+            #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
                 api: *const ::limbo_ext::ExtensionApi
             ) -> ::limbo_ext::ResultCode {
@@ -614,6 +635,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     eof: Self::#eof_fn_name,
                     update: Self::#update_fn_name,
                     rowid: Self::#rowid_fn_name,
+                    destroy: Self::#destroy_fn_name,
                 };
                 (api.register_vtab_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }

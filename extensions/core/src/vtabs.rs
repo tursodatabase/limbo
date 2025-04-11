@@ -21,6 +21,7 @@ pub struct VTabModuleImpl {
     pub eof: VtabFnEof,
     pub update: VtabFnUpdate,
     pub rowid: VtabRowIDFn,
+    pub destroy: VtabFnDestroy,
 }
 
 #[cfg(feature = "core_only")]
@@ -60,6 +61,8 @@ pub type VtabFnUpdate = unsafe extern "C" fn(
     p_out_rowid: *mut i64,
 ) -> ResultCode;
 
+pub type VtabFnDestroy = unsafe extern "C" fn(vtab: *const c_void) -> ResultCode;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VTabKind {
@@ -86,6 +89,9 @@ pub trait VTabModule: 'static {
         Ok(0)
     }
     fn delete(&mut self, _rowid: i64) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn destroy(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }

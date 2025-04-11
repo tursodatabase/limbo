@@ -449,6 +449,15 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::VDestroy { db, table_name } => (
+                "VDestroy",
+                *db as i32,
+                0,
+                0,
+                OwnedValue::build_text(table_name),
+                0,
+                "".to_string(),
+            ),
             Insn::OpenPseudo {
                 cursor_id,
                 content_reg,

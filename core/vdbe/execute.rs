@@ -1127,6 +1127,35 @@ pub fn op_vnext(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_vdestroy(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::VDestroy { db, table_name } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let Some(conn) = program.connection.upgrade() else {
+        return Err(crate::LimboError::ExtensionError(
+            "Failed to upgrade Connection".to_string(),
+        ));
+    };
+
+    {
+        let Some(vtab) = conn.syms.borrow_mut().vtabs.remove(table_name) else {
+            return Err(crate::LimboError::InternalError(
+                "Could not find Virtual Table to Destroy".to_string(),
+            ));
+        };
+        vtab.destroy()?;
+    }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_open_pseudo(
     program: &Program,
     state: &mut ProgramState,

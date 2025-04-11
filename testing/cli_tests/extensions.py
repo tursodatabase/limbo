@@ -526,6 +526,32 @@ def test_vfs():
     limbo.quit()
 
 
+def test_drop_virtual_table():
+    ext_path = "target/debug/liblimbo_ext_tests"
+    limbo = TestLimboShell()
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.debug_print(
+        "create virtual table t using kv_store;",
+    )
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE t" in res)
+    limbo.run_test_fn(
+        "insert into t values ('hello', 'world');",
+        null,
+        "can insert into kv_store vtable",
+    )
+    limbo.run_test_fn(
+        "DROP TABLE t;",
+        null,
+        "can drop kv_store vtable",
+    )
+    limbo.run_test_fn(
+        "DROP TABLE t;",
+        lambda res: "× Parse error: No such table: t" == res,
+        "should error when drop kv_store vtable",
+    )
+    limbo.quit()
+
+
 def test_sqlite_vfs_compat():
     sqlite = TestLimboShell(
         init_commands="",
@@ -573,6 +599,7 @@ if __name__ == "__main__":
         test_vfs()
         test_sqlite_vfs_compat()
         test_kv()
+        test_drop_virtual_table()
     except Exception as e:
         print(f"Test FAILED: {e}")
         cleanup()
