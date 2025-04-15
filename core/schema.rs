@@ -692,6 +692,7 @@ pub struct Index {
     pub root_page: usize,
     pub columns: Vec<IndexColumn>,
     pub unique: bool,
+    pub ephemeral: bool,
 }
 
 #[allow(dead_code)]
@@ -741,6 +742,7 @@ impl Index {
                     root_page,
                     columns: index_columns,
                     unique,
+                    ephemeral: false,
                 })
             }
             _ => todo!("Expected create index statement"),
@@ -783,6 +785,7 @@ impl Index {
             root_page,
             columns: index_columns,
             unique: true, // Primary key indexes are always unique
+            ephemeral: false,
         })
     }
 
