@@ -363,6 +363,12 @@ impl ProgramBuilder {
                 Insn::Next { pc_if_next, .. } => {
                     resolve(pc_if_next, "Next");
                 }
+                Insn::Once {
+                    target_pc_when_reentered,
+                    ..
+                } => {
+                    resolve(target_pc_when_reentered, "Once");
+                }
                 Insn::Prev { pc_if_prev, .. } => {
                     resolve(pc_if_prev, "Prev");
                 }
