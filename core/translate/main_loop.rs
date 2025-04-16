@@ -1,14 +1,16 @@
 use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast;
 
+use std::sync::Arc;
+
 use crate::{
-    schema::Table,
+    schema::{Index, Table},
     translate::result_row::emit_select_result,
     types::SeekOp,
     vdbe::{
         builder::ProgramBuilder,
-        insn::{CmpInsFlags, Insn},
-        BranchOffset,
+        insn::{CmpInsFlags, IdxInsertFlags, Insn},
+        BranchOffset, CursorID,
     },
     Result,
 };
@@ -156,23 +158,26 @@ pub fn init_loop(
                     index: Some(index), ..
                 } = search
                 {
-                    match mode {
-                        OperationMode::SELECT => {
-                            program.emit_insn(Insn::OpenRead {
-                                cursor_id: index_cursor_id
-                                    .expect("index cursor is always opened in Seek with index"),
-                                root_page: index.root_page,
-                            });
-                        }
-                        OperationMode::UPDATE | OperationMode::DELETE => {
-                            program.emit_insn(Insn::OpenWrite {
-                                cursor_id: index_cursor_id
-                                    .expect("index cursor is always opened in Seek with index"),
-                                root_page: index.root_page.into(),
-                            });
-                        }
-                        _ => {
-                            unimplemented!()
+                    // Ephemeral index cursor are opened ad-hoc when needed.
+                    if !index.ephemeral {
+                        match mode {
+                            OperationMode::SELECT => {
+                                program.emit_insn(Insn::OpenRead {
+                                    cursor_id: index_cursor_id
+                                        .expect("index cursor is always opened in Seek with index"),
+                                    root_page: index.root_page,
+                                });
+                            }
+                            OperationMode::UPDATE | OperationMode::DELETE => {
+                                program.emit_insn(Insn::OpenWrite {
+                                    cursor_id: index_cursor_id
+                                        .expect("index cursor is always opened in Seek with index"),
+                                    root_page: index.root_page.into(),
+                                });
+                            }
+                            _ => {
+                                unimplemented!()
+                            }
                         }
                     }
                 }
@@ -437,6 +442,32 @@ pub fn open_loop(
                     });
                 } else {
                     // Otherwise, it's an index/rowid scan, i.e. first a seek is performed and then a scan until the comparison expression is not satisfied anymore.
+                    if let Search::Seek {
+                        index: Some(index), ..
+                    } = search
+                    {
+                        if index.ephemeral {
+                            let table_has_rowid = if let Table::BTree(btree) = &table.table {
+                                btree.has_rowid
+                            } else {
+                                false
+                            };
+                            Some(emit_autoindex(
+                                program,
+                                &index,
+                                table_cursor_id
+                                    .expect("an ephemeral index must have a source table cursor"),
+                                index_cursor_id
+                                    .expect("an ephemeral index must have an index cursor"),
+                                table_has_rowid,
+                            )?)
+                        } else {
+                            index_cursor_id
+                        }
+                    } else {
+                        index_cursor_id
+                    };
+
                     let is_index = index_cursor_id.is_some();
                     let seek_cursor_id = index_cursor_id.unwrap_or_else(|| {
                         table_cursor_id.expect("Either index or table cursor must be opened")
@@ -1124,4 +1155,68 @@ fn emit_seek_termination(
     };
 
     Ok(())
+}
+
+/// Open an ephemeral index cursor and build an automatic index on a table.
+/// This is used as a last-resort to avoid a nested full table scan
+/// Returns the cursor id of the ephemeral index cursor.
+fn emit_autoindex(
+    program: &mut ProgramBuilder,
+    index: &Arc<Index>,
+    table_cursor_id: CursorID,
+    index_cursor_id: CursorID,
+    table_has_rowid: bool,
+) -> Result<CursorID> {
+    assert!(index.ephemeral, "Index {} is not ephemeral", index.name);
+    let label_ephemeral_build_end = program.allocate_label();
+    // Since this typically happens in an inner loop, we only build it once.
+    program.emit_insn(Insn::Once {
+        target_pc_when_reentered: label_ephemeral_build_end,
+    });
+    program.emit_insn(Insn::OpenAutoindex {
+        cursor_id: index_cursor_id,
+    });
+    // Rewind source table
+    program.emit_insn(Insn::Rewind {
+        cursor_id: table_cursor_id,
+        pc_if_empty: label_ephemeral_build_end,
+    });
+    let offset_ephemeral_build_loop_start = program.offset();
+    // Emit all columns from source table that are needed in the ephemeral index.
+    // Also reserve a register for the rowid if the source table has rowids.
+    let num_regs_to_reserve = index.columns.len() + table_has_rowid as usize;
+    let ephemeral_cols_start_reg = program.alloc_registers(num_regs_to_reserve);
+    for (i, col) in index.columns.iter().enumerate() {
+        let reg = ephemeral_cols_start_reg + i;
+        program.emit_insn(Insn::Column {
+            cursor_id: table_cursor_id,
+            column: col.pos_in_table,
+            dest: reg,
+        });
+    }
+    if table_has_rowid {
+        program.emit_insn(Insn::RowId {
+            cursor_id: table_cursor_id,
+            dest: ephemeral_cols_start_reg + index.columns.len(),
+        });
+    }
+    let record_reg = program.alloc_register();
+    program.emit_insn(Insn::MakeRecord {
+        start_reg: ephemeral_cols_start_reg,
+        count: num_regs_to_reserve,
+        dest_reg: record_reg,
+    });
+    program.emit_insn(Insn::IdxInsert {
+        cursor_id: index_cursor_id,
+        record_reg,
+        unpacked_start: Some(ephemeral_cols_start_reg),
+        unpacked_count: Some(num_regs_to_reserve as u16),
+        flags: IdxInsertFlags::new().use_seek(false),
+    });
+    program.emit_insn(Insn::Next {
+        cursor_id: table_cursor_id,
+        pc_if_next: offset_ephemeral_build_loop_start,
+    });
+    program.resolve_label(label_ephemeral_build_end, program.offset());
+    Ok(index_cursor_id)
 }

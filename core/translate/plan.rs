@@ -509,7 +509,10 @@ impl TableReference {
         match &self.table {
             Table::BTree(btree) => {
                 let use_covering_index = self.utilizes_covering_index();
-                let table_cursor_id = if use_covering_index && mode == OperationMode::SELECT {
+                let index_is_ephemeral = index.map_or(false, |index| index.ephemeral);
+                let table_not_required =
+                    OperationMode::SELECT == mode && use_covering_index && !index_is_ephemeral;
+                let table_cursor_id = if table_not_required {
                     None
                 } else {
                     Some(program.alloc_cursor_id(
