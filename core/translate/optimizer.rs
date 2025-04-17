@@ -11,6 +11,7 @@ use crate::{
 };
 
 use super::{
+    emitter::Resolver,
     plan::{
         DeletePlan, Direction, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search,
         SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
@@ -499,6 +500,7 @@ pub trait Optimizable {
             .check_always_true_or_false()?
             .map_or(false, |c| c == AlwaysTrueOrFalse::AlwaysFalse))
     }
+    fn is_constant(&self, resolver: &Resolver<'_>) -> bool;
     fn is_rowid_alias_of(&self, table_index: usize) -> bool;
     fn is_nonnull(&self) -> bool;
 }
@@ -579,6 +581,89 @@ impl Optimizable for ast::Expr {
             Expr::Subquery(..) => false,
             Expr::Unary(_, expr) => expr.is_nonnull(),
             Expr::Variable(..) => false,
+        }
+    }
+    /// Returns true if the expression is a constant i.e. does not depend on variables or columns etc.
+    fn is_constant(&self, resolver: &Resolver<'_>) -> bool {
+        match self {
+            Expr::Between {
+                lhs, start, end, ..
+            } => {
+                lhs.is_constant(resolver)
+                    && start.is_constant(resolver)
+                    && end.is_constant(resolver)
+            }
+            Expr::Binary(expr, _, expr1) => {
+                expr.is_constant(resolver) && expr1.is_constant(resolver)
+            }
+            Expr::Case {
+                base,
+                when_then_pairs,
+                else_expr,
+            } => {
+                base.as_ref()
+                    .map_or(true, |base| base.is_constant(resolver))
+                    && when_then_pairs.iter().all(|(when, then)| {
+                        when.is_constant(resolver) && then.is_constant(resolver)
+                    })
+                    && else_expr
+                        .as_ref()
+                        .map_or(true, |else_expr| else_expr.is_constant(resolver))
+            }
+            Expr::Cast { expr, .. } => expr.is_constant(resolver),
+            Expr::Collate(expr, _) => expr.is_constant(resolver),
+            Expr::DoublyQualified(_, _, _) => {
+                panic!("DoublyQualified should have been rewritten as Column")
+            }
+            Expr::Exists(_) => false,
+            Expr::FunctionCall { args, name, .. } => {
+                let Some(func) =
+                    resolver.resolve_function(&name.0, args.as_ref().map_or(0, |args| args.len()))
+                else {
+                    return false;
+                };
+                func.is_deterministic()
+                    && args.as_ref().map_or(true, |args| {
+                        args.iter().all(|arg| arg.is_constant(resolver))
+                    })
+            }
+            Expr::FunctionCallStar { .. } => false,
+            Expr::Id(_) => panic!("Id should have been rewritten as Column"),
+            Expr::Column { .. } => false,
+            Expr::RowId { .. } => false,
+            Expr::InList { lhs, rhs, .. } => {
+                lhs.is_constant(resolver)
+                    && rhs
+                        .as_ref()
+                        .map_or(true, |rhs| rhs.iter().all(|rhs| rhs.is_constant(resolver)))
+            }
+            Expr::InSelect { .. } => {
+                false // might be constant, too annoying to check subqueries etc. implement later
+            }
+            Expr::InTable { .. } => false,
+            Expr::IsNull(expr) => expr.is_constant(resolver),
+            Expr::Like {
+                lhs, rhs, escape, ..
+            } => {
+                lhs.is_constant(resolver)
+                    && rhs.is_constant(resolver)
+                    && escape
+                        .as_ref()
+                        .map_or(true, |escape| escape.is_constant(resolver))
+            }
+            Expr::Literal(_) => true,
+            Expr::Name(_) => false,
+            Expr::NotNull(expr) => expr.is_constant(resolver),
+            Expr::Parenthesized(exprs) => exprs.iter().all(|expr| expr.is_constant(resolver)),
+            Expr::Qualified(_, _) => {
+                panic!("Qualified should have been rewritten as Column")
+            }
+            Expr::Raise(_, expr) => expr
+                .as_ref()
+                .map_or(true, |expr| expr.is_constant(resolver)),
+            Expr::Subquery(_) => false,
+            Expr::Unary(_, expr) => expr.is_constant(resolver),
+            Expr::Variable(_) => false,
         }
     }
     /// Returns true if the expression is a constant expression that, when evaluated as a condition, is always true or false
