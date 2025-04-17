@@ -16,7 +16,9 @@ use crate::{
 use super::{
     aggregation::translate_aggregation_step,
     emitter::{OperationMode, TranslateCtx},
-    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
+    expr::{
+        translate_condition_expr, translate_expr, translate_expr_no_constant_opt, ConditionMetadata,
+    },
     group_by::is_column_in_group_by,
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
@@ -940,7 +942,7 @@ fn emit_seek(
             }
         } else {
             let expr = &seek_def.key[i].0;
-            translate_expr(program, Some(tables), &expr, reg, &t_ctx.resolver)?;
+            translate_expr_no_constant_opt(program, Some(tables), &expr, reg, &t_ctx.resolver)?;
             // If the seek key column is not verifiably non-NULL, we need check whether it is NULL,
             // and if so, jump to the loop end.
             // This is to avoid returning rows for e.g. SELECT * FROM t WHERE t.x > NULL,
@@ -1049,7 +1051,7 @@ fn emit_seek_termination(
         // if the seek key is shorter than the termination key, we need to translate the remaining suffix of the termination key.
         // if not, we just reuse what was emitted for the seek.
         } else if seek_len < termination.len {
-            translate_expr(
+            translate_expr_no_constant_opt(
                 program,
                 Some(tables),
                 &seek_def.key[i].0,
