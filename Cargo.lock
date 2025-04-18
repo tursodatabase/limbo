@@ -1771,10 +1771,12 @@ dependencies = [
  "rustix 1.0.7",
  "ryu",
  "strum",
+ "strum_macros",
  "tempfile",
  "test-log",
  "thiserror 1.0.69",
  "tracing",
+ "uncased",
 ]
 
 [[package]]
