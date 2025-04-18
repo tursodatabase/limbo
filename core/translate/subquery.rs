@@ -1,5 +1,5 @@
 use crate::{
-    vdbe::{builder::ProgramBuilder, insn::Insn},
+    vdbe::{builder::ProgramBuilder, insn::Insn, JumpTarget},
     Result,
 };
 
@@ -52,7 +52,12 @@ pub fn emit_subquery<'a>(
     t_ctx: &mut TranslateCtx<'a>,
 ) -> Result<usize> {
     let yield_reg = program.alloc_register();
-    let coroutine_implementation_start_offset = program.offset().add(1u32);
+    let coroutine_implementation_start_offset = program.allocate_label();
+    program.resolve_label(
+        coroutine_implementation_start_offset,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     match &mut plan.query_type {
         SelectQueryType::Subquery {
             yield_reg: y,
@@ -101,8 +106,12 @@ pub fn emit_subquery<'a>(
         });
     }
     let result_column_start_reg = emit_query(program, plan, &mut metadata)?;
-    program.resolve_label(end_coroutine_label, program.offset());
+    program.resolve_label(end_coroutine_label, program.offset(), JumpTarget::NextInsn);
+    program.resolve_label(
+        subquery_body_end_label,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::EndCoroutine { yield_reg });
-    program.resolve_label(subquery_body_end_label, program.offset());
     Ok(result_column_start_reg)
 }

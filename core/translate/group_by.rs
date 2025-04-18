@@ -10,7 +10,7 @@ use crate::{
     vdbe::{
         builder::{CursorType, ProgramBuilder},
         insn::Insn,
-        BranchOffset,
+        BranchOffset, JumpTarget,
     },
     Result,
 };
@@ -241,7 +241,11 @@ pub fn emit_group_by<'a>(
         pc_if_empty: label_grouping_loop_end,
     });
 
-    program.resolve_label(label_grouping_loop_start, program.offset());
+    program.resolve_label(
+        label_grouping_loop_start,
+        program.offset(),
+        JumpTarget::NextInsn,
+    );
     // Read a row from the sorted data in the sorter into the pseudo cursor
     program.emit_insn(Insn::SorterData {
         cursor_id: sort_cursor,
@@ -275,15 +279,21 @@ pub fn emit_group_by<'a>(
         "start new group if comparison is not equal",
     );
     // If we are at a new group, continue. If we are at the same group, jump to the aggregation step (i.e. accumulate more values into the aggregations)
+    let label_jump_after_comparison = program.allocate_label();
     program.emit_insn(Insn::Jump {
-        target_pc_lt: program.offset().add(1u32),
+        target_pc_lt: label_jump_after_comparison,
         target_pc_eq: agg_step_label,
-        target_pc_gt: program.offset().add(1u32),
+        target_pc_gt: label_jump_after_comparison,
     });
 
     program.add_comment(
         program.offset(),
         "check if ended group had data, and output if so",
+    );
+    program.resolve_label(
+        label_jump_after_comparison,
+        program.offset(),
+        JumpTarget::NextInsn,
     );
     program.emit_insn(Insn::Gosub {
         target_pc: label_subrtn_acc_output,
@@ -311,7 +321,7 @@ pub fn emit_group_by<'a>(
     });
 
     // Process each aggregate function for the current row
-    program.resolve_label(agg_step_label, program.offset());
+    program.resolve_label(agg_step_label, program.offset(), JumpTarget::NextInsn);
     let start_reg = t_ctx.reg_agg_start.unwrap();
     let mut cursor_index = group_by_count + non_group_by_non_agg_column_count; // Skipping all columns in sorter that not an aggregation arguments
     for (i, agg) in plan.aggregates.iter().enumerate() {
@@ -352,7 +362,11 @@ pub fn emit_group_by<'a>(
     }
 
     // Mark that we've stored data for this group
-    program.resolve_label(label_acc_indicator_set_flag_true, program.offset());
+    program.resolve_label(
+        label_acc_indicator_set_flag_true,
+        program.offset(),
+        JumpTarget::NextInsn,
+    );
     program.add_comment(program.offset(), "indicate data in accumulator");
     program.emit_insn(Insn::Integer {
         value: 1,
@@ -360,12 +374,15 @@ pub fn emit_group_by<'a>(
     });
 
     // Continue to the next row in the sorter
+    program.resolve_label(
+        label_grouping_loop_end,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::SorterNext {
         cursor_id: sort_cursor,
         pc_if_next: label_grouping_loop_start,
     });
-
-    program.resolve_label(label_grouping_loop_end, program.offset());
 
     program.add_comment(program.offset(), "emit row for final group");
     program.emit_insn(Insn::Gosub {
@@ -385,7 +402,11 @@ pub fn emit_group_by<'a>(
         return_reg: reg_subrtn_acc_output_return_offset,
     });
 
-    program.resolve_label(label_subrtn_acc_output, program.offset());
+    program.resolve_label(
+        label_subrtn_acc_output,
+        program.offset(),
+        JumpTarget::NextInsn,
+    );
 
     // Only output a row if there's data in the accumulator
     program.add_comment(program.offset(), "output group by row subroutine start");
@@ -397,7 +418,11 @@ pub fn emit_group_by<'a>(
 
     // If no data, return without outputting a row
     let group_by_end_without_emitting_row_label = program.allocate_label();
-    program.resolve_label(group_by_end_without_emitting_row_label, program.offset());
+    program.resolve_label(
+        group_by_end_without_emitting_row_label,
+        program.offset(),
+        JumpTarget::NextInsn,
+    );
     program.emit_insn(Insn::Return {
         return_reg: reg_subrtn_acc_output_return_offset,
     });
@@ -405,7 +430,7 @@ pub fn emit_group_by<'a>(
     // Finalize aggregate values for output
     let agg_start_reg = t_ctx.reg_agg_start.unwrap();
     // Resolve the label for the start of the group by output row subroutine
-    program.resolve_label(label_agg_final, program.offset());
+    program.resolve_label(label_agg_final, program.offset(), JumpTarget::NextInsn);
     for (i, agg) in plan.aggregates.iter().enumerate() {
         let agg_result_reg = agg_start_reg + i;
         program.emit_insn(Insn::AggFinal {
@@ -486,7 +511,11 @@ pub fn emit_group_by<'a>(
 
     // Subroutine to clear accumulators for a new group
     program.add_comment(program.offset(), "clear accumulator subroutine start");
-    program.resolve_label(label_subrtn_acc_clear, program.offset());
+    program.resolve_label(
+        label_subrtn_acc_clear,
+        program.offset(),
+        JumpTarget::NextInsn,
+    );
     let start_reg = reg_non_aggregate_exprs_acc;
 
     // Reset all accumulator registers to NULL
@@ -502,11 +531,14 @@ pub fn emit_group_by<'a>(
         value: 0,
         dest: reg_data_in_acc_flag,
     });
+    program.resolve_label(
+        label_group_by_end,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::Return {
         return_reg: reg_subrtn_acc_clear_return_offset,
     });
-
-    program.resolve_label(label_group_by_end, program.offset());
 
     Ok(())
 }

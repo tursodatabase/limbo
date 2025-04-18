@@ -60,6 +60,26 @@ use std::{
     sync::Arc,
 };
 
+/// We use labels to indicate that we want to jump to whatever the instruction offset
+/// will be at runtime, because the offset cannot always be determined when the jump
+/// instruction is created.
+///
+/// In some cases, we want to jump to EXACTLY a specific instruction.
+/// - Example: a condition is not met, so we want to jump to wherever Halt is.
+/// In other cases, we don't care what the exact instruction is, but we know that we
+/// want to jump to whatever comes AFTER a certain instruction.
+/// - Example: a Next instruction will want to jump to "whatever the start of the loop is",
+/// but it doesn't care what instruction that is.
+///
+/// The reason this distinction is important is that we might reorder instructions that are
+/// constant at compile time, and when we do that, we need to change the offsets of any impacted
+/// jump instructions, so the instruction that comes immediately after "next Insn" might have changed during the reordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum JumpTarget {
+    NextInsn,
+    AfterNextInsn,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Represents a target for a jump instruction.
 /// Stores 32-bit ints to keep the enum word-sized.
@@ -95,15 +115,6 @@ impl BranchOffset {
         }
     }
 
-    /// Returns the label value. Panics if the branch offset is an offset or placeholder.
-    pub fn to_label_value(&self) -> u32 {
-        match self {
-            BranchOffset::Label(v) => *v,
-            BranchOffset::Offset(_) => unreachable!("Offset cannot be converted to label value"),
-            BranchOffset::Placeholder => unreachable!("Unresolved placeholder"),
-        }
-    }
-
     /// Returns the branch offset as a signed integer.
     /// Used in explain output, where we don't want to panic in case we have an unresolved
     /// label or placeholder.
@@ -120,6 +131,10 @@ impl BranchOffset {
     /// Panics if the branch offset is a label or placeholder.
     pub fn add<N: Into<u32>>(self, n: N) -> BranchOffset {
         BranchOffset::Offset(self.to_offset_int() + n.into())
+    }
+
+    pub fn sub<N: Into<u32>>(self, n: N) -> BranchOffset {
+        BranchOffset::Offset(self.to_offset_int() - n.into())
     }
 }
 

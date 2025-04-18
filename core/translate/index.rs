@@ -8,6 +8,7 @@ use crate::{
     vdbe::{
         builder::{CursorType, ProgramBuilder, QueryMode},
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
+        JumpTarget,
     },
     OwnedValue,
 };
@@ -144,12 +145,15 @@ pub fn translate_create_index(
 
     let loop_start_label = program.allocate_label();
     let loop_end_label = program.allocate_label();
+    program.resolve_label(
+        loop_start_label,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::Rewind {
         cursor_id: table_cursor_id,
         pc_if_empty: loop_end_label,
     });
-
-    program.resolve_label(loop_start_label, program.offset());
 
     // Loop start:
     // Collect index values into start_reg..rowid_reg
@@ -180,11 +184,11 @@ pub fn translate_create_index(
         record_reg,
     });
 
+    program.resolve_label(loop_end_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_insn(Insn::Next {
         cursor_id: table_cursor_id,
         pc_if_next: loop_start_label,
     });
-    program.resolve_label(loop_end_label, program.offset());
 
     // Open the index btree we created for writing to insert the
     // newly sorted index records.
@@ -197,11 +201,15 @@ pub fn translate_create_index(
     let sorted_loop_end = program.allocate_label();
 
     // Sort the index records in the sorter
+    program.resolve_label(
+        sorted_loop_start,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::SorterSort {
         cursor_id: sorter_cursor_id,
         pc_if_empty: sorted_loop_end,
     });
-    program.resolve_label(sorted_loop_start, program.offset());
     let sorted_record_reg = program.alloc_register();
     program.emit_insn(Insn::SorterData {
         pseudo_cursor: pseudo_cursor_id,
@@ -221,11 +229,11 @@ pub fn translate_create_index(
         unpacked_count: None,
         flags: IdxInsertFlags::new().use_seek(false),
     });
+    program.resolve_label(sorted_loop_end, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_insn(Insn::SorterNext {
         cursor_id: sorter_cursor_id,
         pc_if_next: sorted_loop_start,
     });
-    program.resolve_label(sorted_loop_end, program.offset());
 
     // End of the outer loop
     //
@@ -246,8 +254,8 @@ pub fn translate_create_index(
     });
 
     // Epilogue:
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_transaction(true);
     program.emit_constant_insns();
     program.emit_goto(start_offset);

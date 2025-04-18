@@ -13,7 +13,7 @@ use crate::storage::wal::CheckpointMode;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::vdbe::BranchOffset;
+use crate::vdbe::{BranchOffset, JumpTarget};
 use crate::{bail_parse_error, Pager};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -28,8 +28,8 @@ fn list_pragmas(
         program.emit_result_row(register, 1);
     }
 
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_constant_insns();
     program.emit_goto(start_offset);
 }
@@ -103,8 +103,8 @@ pub fn translate_pragma(
             }
         },
     };
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_transaction(write);
     program.emit_constant_insns();
     program.emit_goto(start_offset);

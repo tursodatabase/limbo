@@ -1,5 +1,6 @@
 use crate::translate::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::Insn;
+use crate::vdbe::JumpTarget;
 use crate::{QueryMode, Result};
 use limbo_sqlite3_parser::ast::{Name, TransactionType};
 
@@ -32,8 +33,8 @@ pub fn translate_tx_begin(
             });
         }
     }
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_goto(start_offset);
     Ok(program)
 }
@@ -51,8 +52,8 @@ pub fn translate_tx_commit(_tx_name: Option<Name>) -> Result<ProgramBuilder> {
         auto_commit: true,
         rollback: false,
     });
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_goto(start_offset);
     Ok(program)
 }

@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    cmp::Ordering,
     collections::HashMap,
     rc::{Rc, Weak},
     sync::Arc,
@@ -16,20 +17,20 @@ use crate::{
     Connection, VirtualTable,
 };
 
-use super::{BranchOffset, CursorID, Insn, InsnFunction, InsnReference, Program};
+use super::{BranchOffset, CursorID, Insn, InsnFunction, InsnReference, JumpTarget, Program};
 #[allow(dead_code)]
 pub struct ProgramBuilder {
     next_free_register: usize,
     next_free_cursor_id: usize,
-    insns: Vec<(Insn, InsnFunction)>,
-    // for temporarily storing instructions that will be put after Transaction opcode
-    constant_insns: Vec<(Insn, InsnFunction)>,
+    /// Instruction, the function to execute it with, and its original index in the vector.
+    insns: Vec<(Insn, InsnFunction, usize)>,
+    pub constant_spans: Vec<(usize, usize)>,
     // Vector of labels which must be assigned to next emitted instruction
     next_insn_labels: Vec<BranchOffset>,
     // Cursors that are referenced by the program. Indexed by CursorID.
     pub cursor_ref: Vec<(Option<String>, CursorType)>,
     /// A vector where index=label number, value=resolved offset. Resolved in build().
-    label_to_resolved_offset: Vec<Option<InsnReference>>,
+    label_to_resolved_offset: Vec<Option<(InsnReference, JumpTarget)>>,
     // Bitmask of cursors that have emitted a SeekRowid instruction.
     seekrowid_emitted_bitmask: u64,
     // map of instruction index to manual comment (used in EXPLAIN only)
@@ -84,7 +85,7 @@ impl ProgramBuilder {
             insns: Vec::with_capacity(opts.approx_num_insns),
             next_insn_labels: Vec::with_capacity(2),
             cursor_ref: Vec::with_capacity(opts.num_cursors),
-            constant_insns: Vec::new(),
+            constant_spans: Vec::new(),
             label_to_resolved_offset: Vec::with_capacity(opts.approx_num_labels),
             seekrowid_emitted_bitmask: 0,
             comments: if opts.query_mode == QueryMode::Explain {
@@ -96,6 +97,42 @@ impl ProgramBuilder {
             result_columns: Vec::new(),
             table_references: Vec::new(),
         }
+    }
+
+    pub fn constant_span_start(&mut self) -> usize {
+        let span = self.constant_spans.len();
+        let start = self.insns.len();
+        self.constant_spans.push((start, usize::MAX));
+        span
+    }
+
+    pub fn constant_span_end(&mut self, span_idx: usize) {
+        let span = &mut self.constant_spans[span_idx];
+        if span.1 == usize::MAX {
+            span.1 = self.insns.len().saturating_sub(1);
+        }
+    }
+
+    pub fn constant_span_end_all(&mut self) {
+        for span in self.constant_spans.iter_mut() {
+            if span.1 == usize::MAX {
+                span.1 = self.insns.len().saturating_sub(1);
+            }
+        }
+    }
+
+    pub fn constant_span_is_open(&self) -> bool {
+        self.constant_spans
+            .last()
+            .map_or(false, |(_, end)| *end == usize::MAX)
+    }
+
+    pub fn constant_spans_next_idx(&self) -> usize {
+        self.constant_spans.len()
+    }
+
+    pub fn constant_spans_invalidate_after(&mut self, idx: usize) {
+        self.constant_spans.truncate(idx);
     }
 
     pub fn alloc_register(&mut self) -> usize {
@@ -123,12 +160,8 @@ impl ProgramBuilder {
     }
 
     pub fn emit_insn(&mut self, insn: Insn) {
-        for label in self.next_insn_labels.drain(..) {
-            self.label_to_resolved_offset[label.to_label_value() as usize] =
-                Some(self.insns.len() as InsnReference);
-        }
         let function = insn.to_function();
-        self.insns.push((insn, function));
+        self.insns.push((insn, function, self.insns.len()));
     }
 
     pub fn close_cursors(&mut self, cursors: &[CursorID]) {
@@ -204,16 +237,53 @@ impl ProgramBuilder {
         }
     }
 
-    // Emit an instruction that will be put at the end of the program (after Transaction statement).
-    // This is useful for instructions that otherwise will be unnecessarily repeated in a loop.
-    // Example: In `SELECT * from users where name='John'`, it is unnecessary to set r[1]='John' as we SCAN users table.
-    // We could simply set it once before the SCAN started.
     pub fn mark_last_insn_constant(&mut self) {
-        self.constant_insns.push(self.insns.pop().unwrap());
+        if self.constant_span_is_open() {
+            // no need to mark this insn as constant as the surrounding parent expression is already constant
+            return;
+        }
+
+        let prev = self.insns.len().saturating_sub(1);
+        self.constant_spans.push((prev, prev));
     }
 
     pub fn emit_constant_insns(&mut self) {
-        self.insns.append(&mut self.constant_insns);
+        // move compile-time constant instructions to the end of the program, where they are executed once after Init jumps to it.
+        // any label_to_resolved_offset that points to an instruction within any moved constant span should be updated to point to the new location.
+
+        // the instruction reordering can be done by sorting the insns, so that the ordering is:
+        // 1. if insn not in any constant span, it stays where it is
+        // 2. if insn is in a constant span, it is after other insns, except those that are in a later constant span
+        // 3. within a single constant span the order is preserver
+        self.insns.sort_by(|(_, _, index_a), (_, _, index_b)| {
+            let a_span = self
+                .constant_spans
+                .iter()
+                .find(|span| span.0 <= *index_a && span.1 >= *index_a);
+            let b_span = self
+                .constant_spans
+                .iter()
+                .find(|span| span.0 <= *index_b && span.1 >= *index_b);
+            if a_span.is_some() && b_span.is_some() {
+                a_span.unwrap().0.cmp(&b_span.unwrap().0)
+            } else if a_span.is_some() {
+                Ordering::Greater
+            } else if b_span.is_some() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        });
+        for resolved_offset in self.label_to_resolved_offset.iter_mut() {
+            if let Some((old_offset, target)) = resolved_offset {
+                let new_offset = self
+                    .insns
+                    .iter()
+                    .position(|(_, _, index)| *old_offset == *index as u32)
+                    .unwrap() as u32;
+                *resolved_offset = Some((new_offset, *target));
+            }
+        }
     }
 
     pub fn offset(&self) -> BranchOffset {
@@ -226,18 +296,19 @@ impl ProgramBuilder {
         BranchOffset::Label(label_n as u32)
     }
 
-    // Effectively a GOTO <next insn> without the need to emit an explicit GOTO instruction.
-    // Useful when you know you need to jump to "the next part", but the exact offset is unknowable
-    // at the time of emitting the instruction.
-    pub fn preassign_label_to_next_insn(&mut self, label: BranchOffset) {
-        self.next_insn_labels.push(label);
-    }
-
-    pub fn resolve_label(&mut self, label: BranchOffset, to_offset: BranchOffset) {
+    pub fn resolve_label(
+        &mut self,
+        label: BranchOffset,
+        to_offset: BranchOffset,
+        target: JumpTarget,
+    ) {
         assert!(matches!(label, BranchOffset::Label(_)));
         assert!(matches!(to_offset, BranchOffset::Offset(_)));
-        self.label_to_resolved_offset[label.to_label_value() as usize] =
-            Some(to_offset.to_offset_int());
+        let BranchOffset::Label(label_number) = label else {
+            unreachable!("Label is not a label");
+        };
+        self.label_to_resolved_offset[label_number as usize] =
+            Some((to_offset.to_offset_int(), target));
     }
 
     /// Resolve unresolved labels to a specific offset in the instruction list.
@@ -248,19 +319,25 @@ impl ProgramBuilder {
     pub fn resolve_labels(&mut self) {
         let resolve = |pc: &mut BranchOffset, insn_name: &str| {
             if let BranchOffset::Label(label) = pc {
-                let to_offset = self
-                    .label_to_resolved_offset
-                    .get(*label as usize)
-                    .unwrap_or_else(|| {
-                        panic!("Reference to undefined label in {}: {}", insn_name, label)
-                    });
+                let Some(Some((to_offset, target))) =
+                    self.label_to_resolved_offset.get(*label as usize)
+                else {
+                    panic!(
+                        "Reference to undefined or unresolved label in {}: {}",
+                        insn_name, label
+                    );
+                };
                 *pc = BranchOffset::Offset(
                     to_offset
-                        .unwrap_or_else(|| panic!("Unresolved label in {}: {}", insn_name, label)),
+                        + if *target == JumpTarget::NextInsn {
+                            0
+                        } else {
+                            1
+                        },
                 );
             }
         };
-        for (insn, _) in self.insns.iter_mut() {
+        for (insn, _, _) in self.insns.iter_mut() {
             match insn {
                 Insn::Init { target_pc } => {
                     resolve(target_pc, "Init");
@@ -369,9 +446,10 @@ impl ProgramBuilder {
                 Insn::InitCoroutine {
                     yield_reg: _,
                     jump_on_definition,
-                    start_offset: _,
+                    start_offset,
                 } => {
                     resolve(jump_on_definition, "InitCoroutine");
+                    resolve(start_offset, "InitCoroutine");
                 }
                 Insn::NotExists {
                     cursor: _,
@@ -461,18 +539,18 @@ impl ProgramBuilder {
         change_cnt_on: bool,
     ) -> Program {
         self.resolve_labels();
-        assert!(
-            self.constant_insns.is_empty(),
-            "constant_insns is not empty when build() is called, did you forget to call emit_constant_insns()?"
-        );
 
         self.parameters.list.dedup();
         Program {
             max_registers: self.next_free_register,
-            insns: self.insns,
+            insns: self
+                .insns
+                .into_iter()
+                .map(|(insn, function, _)| (insn, function))
+                .collect(),
             cursor_ref: self.cursor_ref,
             database_header,
-            comments: self.comments,
+            comments: None,
             connection,
             parameters: self.parameters,
             n_change: Cell::new(0),

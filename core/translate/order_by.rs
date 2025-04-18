@@ -9,6 +9,7 @@ use crate::{
     vdbe::{
         builder::{CursorType, ProgramBuilder},
         insn::Insn,
+        JumpTarget,
     },
     Result,
 };
@@ -120,12 +121,16 @@ pub fn emit_order_by(
         num_fields: num_columns_in_sorter,
     });
 
+    program.resolve_label(
+        sort_loop_start_label,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::SorterSort {
         cursor_id: sort_cursor,
         pc_if_empty: sort_loop_end_label,
     });
 
-    program.resolve_label(sort_loop_start_label, program.offset());
     emit_offset(program, t_ctx, plan, sort_loop_next_label)?;
 
     program.emit_insn(Insn::SorterData {
@@ -149,13 +154,16 @@ pub fn emit_order_by(
 
     emit_result_row_and_limit(program, t_ctx, plan, start_reg, Some(sort_loop_end_label))?;
 
-    program.resolve_label(sort_loop_next_label, program.offset());
+    program.resolve_label(sort_loop_next_label, program.offset(), JumpTarget::NextInsn);
+    program.resolve_label(
+        sort_loop_end_label,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::SorterNext {
         cursor_id: sort_cursor,
         pc_if_next: sort_loop_start_label,
     });
-
-    program.resolve_label(sort_loop_end_label, program.offset());
 
     Ok(())
 }
