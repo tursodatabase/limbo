@@ -8,7 +8,7 @@ use crate::{
     vdbe::{
         builder::ProgramBuilder,
         insn::{CmpInsFlags, Insn},
-        BranchOffset,
+        BranchOffset, JumpTarget,
     },
     Result,
 };
@@ -16,7 +16,10 @@ use crate::{
 use super::{
     aggregation::translate_aggregation_step,
     emitter::{OperationMode, TranslateCtx},
-    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
+    expr::{
+        translate_condition_expr, translate_expr, translate_expr_no_constant_opt,
+        ConditionMetadata, NoConstantOptReason,
+    },
     group_by::is_column_in_group_by,
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
@@ -228,12 +231,12 @@ pub fn open_loop(
                     _ => unreachable!("Subquery operator with non-subquery query type"),
                 };
                 // In case the subquery is an inner loop, it needs to be reinitialized on each iteration of the outer loop.
+                program.resolve_label(loop_start, program.offset(), JumpTarget::AfterNextInsn);
                 program.emit_insn(Insn::InitCoroutine {
                     yield_reg,
                     jump_on_definition: BranchOffset::Offset(0),
                     start_offset: coroutine_implementation_start,
                 });
-                program.resolve_label(loop_start, program.offset());
                 // A subquery within the main loop of a parent query has no cursor, so instead of advancing the cursor,
                 // it emits a Yield which jumps back to the main loop of the subquery itself to retrieve the next row.
                 // When the subquery coroutine completes, this instruction jumps to the label at the top of the termination_label_stack,
@@ -260,7 +263,11 @@ pub fn open_loop(
                         condition_metadata,
                         &t_ctx.resolver,
                     )?;
-                    program.resolve_label(jump_target_when_true, program.offset());
+                    program.resolve_label(
+                        jump_target_when_true,
+                        program.offset().sub(1u32),
+                        JumpTarget::AfterNextInsn,
+                    );
                 }
             }
             Operation::Scan { iter_dir, .. } => {
@@ -268,6 +275,7 @@ pub fn open_loop(
                     table_cursor_id.expect("Either index or table cursor must be opened")
                 });
                 if !matches!(&table.table, Table::Virtual(_)) {
+                    program.resolve_label(loop_start, program.offset(), JumpTarget::AfterNextInsn);
                     if *iter_dir == IterationDirection::Backwards {
                         program.emit_insn(Insn::Last {
                             cursor_id: iteration_cursor_id,
@@ -377,6 +385,7 @@ pub fn open_loop(
                     };
 
                     // Emit VFilter with the computed arguments.
+                    program.resolve_label(loop_start, program.offset(), JumpTarget::AfterNextInsn);
                     program.emit_insn(Insn::VFilter {
                         cursor_id: table_cursor_id
                             .expect("Virtual tables do not support covering indexes"),
@@ -387,7 +396,6 @@ pub fn open_loop(
                         pc_if_empty: loop_end,
                     });
                 }
-                program.resolve_label(loop_start, program.offset());
 
                 if let Some(table_cursor_id) = table_cursor_id {
                     if let Some(index_cursor_id) = index_cursor_id {
@@ -414,7 +422,11 @@ pub fn open_loop(
                         condition_metadata,
                         &t_ctx.resolver,
                     )?;
-                    program.resolve_label(jump_target_when_true, program.offset());
+                    program.resolve_label(
+                        jump_target_when_true,
+                        program.offset().sub(1u32),
+                        JumpTarget::AfterNextInsn,
+                    );
                 }
             }
             Operation::Search(search) => {
@@ -496,7 +508,11 @@ pub fn open_loop(
                         condition_metadata,
                         &t_ctx.resolver,
                     )?;
-                    program.resolve_label(jump_target_when_true, program.offset());
+                    program.resolve_label(
+                        jump_target_when_true,
+                        program.offset().sub(1u32),
+                        JumpTarget::AfterNextInsn,
+                    );
                 }
             }
         }
@@ -508,7 +524,11 @@ pub fn open_loop(
         if let Some(join_info) = table.join_info.as_ref() {
             if join_info.outer {
                 let lj_meta = t_ctx.meta_left_joins[table_index].as_ref().unwrap();
-                program.resolve_label(lj_meta.label_match_flag_set_true, program.offset());
+                program.resolve_label(
+                    lj_meta.label_match_flag_set_true,
+                    program.offset(),
+                    JumpTarget::NextInsn,
+                );
                 program.emit_insn(Insn::Integer {
                     value: 1,
                     dest: lj_meta.reg_match_flag,
@@ -720,7 +740,7 @@ fn emit_loop_source(
                 )?;
             }
             if let Some(label) = label_emit_nonagg_only_once {
-                program.resolve_label(label, program.offset());
+                program.resolve_label(label, program.offset(), JumpTarget::NextInsn);
                 let flag = t_ctx.reg_nonagg_emit_once_flag.unwrap();
                 program.emit_int(1, flag);
             }
@@ -777,7 +797,12 @@ pub fn close_loop(
 
         match &table.op {
             Operation::Subquery { .. } => {
-                program.resolve_label(loop_labels.next, program.offset());
+                program.resolve_label(loop_labels.next, program.offset(), JumpTarget::NextInsn);
+                program.resolve_label(
+                    loop_labels.loop_end,
+                    program.offset(),
+                    JumpTarget::AfterNextInsn,
+                );
                 // A subquery has no cursor to call Next on, so it just emits a Goto
                 // to the Yield instruction, which in turn jumps back to the main loop of the subquery,
                 // so that the next row from the subquery can be read.
@@ -786,7 +811,12 @@ pub fn close_loop(
                 });
             }
             Operation::Scan { iter_dir, .. } => {
-                program.resolve_label(loop_labels.next, program.offset());
+                program.resolve_label(loop_labels.next, program.offset(), JumpTarget::NextInsn);
+                program.resolve_label(
+                    loop_labels.loop_end,
+                    program.offset(),
+                    JumpTarget::AfterNextInsn,
+                );
                 let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
                     table_cursor_id.expect("Either index or table cursor must be opened")
                 });
@@ -815,7 +845,12 @@ pub fn close_loop(
                 }
             }
             Operation::Search(search) => {
-                program.resolve_label(loop_labels.next, program.offset());
+                program.resolve_label(loop_labels.next, program.offset(), JumpTarget::NextInsn);
+                program.resolve_label(
+                    loop_labels.loop_end,
+                    program.offset(),
+                    JumpTarget::AfterNextInsn,
+                );
                 let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
                     table_cursor_id.expect("Either index or table cursor must be opened")
                 });
@@ -841,8 +876,6 @@ pub fn close_loop(
             }
         }
 
-        program.resolve_label(loop_labels.loop_end, program.offset());
-
         // Handle OUTER JOIN logic. The reason this comes after the "loop end" mark is that we may need to still jump back
         // and emit a row with NULLs for the right table, and then jump back to the next row of the left table.
         if let Some(join_info) = table.join_info.as_ref() {
@@ -852,11 +885,15 @@ pub fn close_loop(
                 // (e.g. SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a).
                 // If the left join match flag has been set to 1, we jump to the next row on the outer table,
                 // i.e. continue to the next row of t1 in our example.
-                program.resolve_label(lj_meta.label_match_flag_check_value, program.offset());
-                let jump_offset = program.offset().add(3u32);
+                program.resolve_label(
+                    lj_meta.label_match_flag_check_value,
+                    program.offset(),
+                    JumpTarget::NextInsn,
+                );
+                let jump_label = program.allocate_label();
                 program.emit_insn(Insn::IfPos {
                     reg: lj_meta.reg_match_flag,
-                    target_pc: jump_offset,
+                    target_pc: jump_label,
                     decrement_by: 0,
                 });
                 // If the left join match flag is still 0, it means there was no match on the right table,
@@ -881,7 +918,11 @@ pub fn close_loop(
                     target_pc: lj_meta.label_match_flag_set_true,
                 });
 
-                assert_eq!(program.offset(), jump_offset);
+                program.resolve_label(
+                    jump_label,
+                    program.offset().sub(1u32),
+                    JumpTarget::AfterNextInsn,
+                );
             }
         }
     }
@@ -940,7 +981,14 @@ fn emit_seek(
             }
         } else {
             let expr = &seek_def.key[i].0;
-            translate_expr(program, Some(tables), &expr, reg, &t_ctx.resolver)?;
+            translate_expr_no_constant_opt(
+                program,
+                Some(tables),
+                &expr,
+                reg,
+                &t_ctx.resolver,
+                NoConstantOptReason::RegisterReuse,
+            )?;
             // If the seek key column is not verifiably non-NULL, we need check whether it is NULL,
             // and if so, jump to the loop end.
             // This is to avoid returning rows for e.g. SELECT * FROM t WHERE t.x > NULL,
@@ -1014,7 +1062,11 @@ fn emit_seek_termination(
     is_index: bool,
 ) -> Result<()> {
     let Some(termination) = seek_def.termination.as_ref() else {
-        program.resolve_label(loop_start, program.offset());
+        program.resolve_label(
+            loop_start,
+            program.offset().sub(1u32),
+            JumpTarget::AfterNextInsn,
+        );
         return Ok(());
     };
 
@@ -1049,16 +1101,21 @@ fn emit_seek_termination(
         // if the seek key is shorter than the termination key, we need to translate the remaining suffix of the termination key.
         // if not, we just reuse what was emitted for the seek.
         } else if seek_len < termination.len {
-            translate_expr(
+            translate_expr_no_constant_opt(
                 program,
                 Some(tables),
                 &seek_def.key[i].0,
                 reg,
                 &t_ctx.resolver,
+                NoConstantOptReason::RegisterReuse,
             )?;
         }
     }
-    program.resolve_label(loop_start, program.offset());
+    program.resolve_label(
+        loop_start,
+        program.offset().sub(1u32),
+        JumpTarget::AfterNextInsn,
+    );
     let mut rowid_reg = None;
     if !is_index {
         rowid_reg = Some(program.alloc_register());

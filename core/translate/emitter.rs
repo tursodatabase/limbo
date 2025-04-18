@@ -9,6 +9,7 @@ use crate::function::Func;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::ProgramBuilder;
+use crate::vdbe::JumpTarget;
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -155,12 +156,11 @@ fn epilogue(
     start_offset: BranchOffset,
     txn_mode: TransactionMode,
 ) -> Result<()> {
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_insn(Insn::Halt {
         err_code: 0,
         description: String::new(),
     });
-
-    program.resolve_label(init_label, program.offset());
 
     match txn_mode {
         TransactionMode::Read => program.emit_insn(Insn::Transaction { write: false }),
@@ -297,7 +297,11 @@ pub fn emit_query<'a>(
             condition_metadata,
             &t_ctx.resolver,
         )?;
-        program.resolve_label(jump_target_when_true, program.offset());
+        program.resolve_label(
+            jump_target_when_true,
+            program.offset().sub(1u32),
+            JumpTarget::AfterNextInsn,
+        );
     }
 
     // Set up main query execution loop
@@ -309,7 +313,11 @@ pub fn emit_query<'a>(
     // Clean up and close the main execution loop
     close_loop(program, t_ctx, &plan.table_references)?;
 
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.resolve_label(
+        after_main_loop_label,
+        program.offset().sub(1u32),
+        JumpTarget::AfterNextInsn,
+    );
 
     let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
     let order_by = plan.order_by.as_ref();
@@ -380,7 +388,11 @@ fn emit_program_for_delete(
     // Clean up and close the main execution loop
     close_loop(program, &mut t_ctx, &plan.table_references)?;
 
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.resolve_label(
+        after_main_loop_label,
+        program.offset().sub(1u32),
+        JumpTarget::AfterNextInsn,
+    );
 
     // Finalize program
     epilogue(program, init_label, start_offset, TransactionMode::Write)?;
@@ -517,7 +529,11 @@ fn emit_program_for_update(
     emit_update_insns(&plan, &t_ctx, program)?;
     close_loop(program, &mut t_ctx, &plan.table_references)?;
 
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.resolve_label(
+        after_main_loop_label,
+        program.offset().sub(1u32),
+        JumpTarget::AfterNextInsn,
+    );
 
     // Finalize program
     epilogue(program, init_label, start_offset, TransactionMode::Write)?;
@@ -570,7 +586,11 @@ fn emit_update_insns(
             meta,
             &t_ctx.resolver,
         )?;
-        program.resolve_label(jump_target, program.offset());
+        program.resolve_label(
+            jump_target,
+            program.offset().sub(1u32),
+            JumpTarget::AfterNextInsn,
+        );
     }
     let beg = program.alloc_registers(
         table_ref.table.columns().len()

@@ -10,6 +10,7 @@ use crate::translate::QueryMode;
 use crate::util::PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX;
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::{CmpInsFlags, Insn};
+use crate::vdbe::JumpTarget;
 use crate::LimboError;
 use crate::{bail_parse_error, Result};
 
@@ -36,8 +37,8 @@ pub fn translate_create_table(
         if if_not_exists {
             let init_label = program.emit_init();
             let start_offset = program.offset();
+            program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
             program.emit_halt();
-            program.resolve_label(init_label, program.offset());
             program.emit_transaction(true);
             program.emit_constant_insns();
             program.emit_goto(start_offset);
@@ -136,7 +137,7 @@ pub fn translate_create_table(
         );
     }
 
-    program.resolve_label(parse_schema_label, program.offset());
+    program.resolve_label(parse_schema_label, program.offset(), JumpTarget::NextInsn);
     // TODO: SetCookie
     //
     // TODO: remove format, it sucks for performance but is convenient
@@ -147,8 +148,8 @@ pub fn translate_create_table(
     });
 
     // TODO: SqlExec
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_transaction(true);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
@@ -447,8 +448,8 @@ pub fn translate_create_virtual_table(
             approx_num_labels: 1,
         });
         let init_label = program.emit_init();
+        program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
         program.emit_halt();
-        program.resolve_label(init_label, program.offset());
         program.emit_transaction(true);
         program.emit_constant_insns();
         return Ok(program);
@@ -518,8 +519,8 @@ pub fn translate_create_virtual_table(
         where_clause: parse_schema_where_clause,
     });
 
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_transaction(true);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
@@ -544,8 +545,8 @@ pub fn translate_drop_table(
         if if_exists {
             let init_label = program.emit_init();
             let start_offset = program.offset();
+            program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
             program.emit_halt();
-            program.resolve_label(init_label, program.offset());
             program.emit_transaction(true);
             program.emit_constant_insns();
             program.emit_goto(start_offset);
@@ -583,14 +584,14 @@ pub fn translate_drop_table(
     //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
     //  loop to beginning of schema table
     let end_metadata_label = program.allocate_label();
+    let metadata_loop = program.allocate_label();
+    program.resolve_label(metadata_loop, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_insn(Insn::Rewind {
         cursor_id: sqlite_schema_cursor_id,
         pc_if_empty: end_metadata_label,
     });
 
     //  start loop on schema table
-    let metadata_loop = program.allocate_label();
-    program.resolve_label(metadata_loop, program.offset());
     program.emit_insn(Insn::Column {
         cursor_id: sqlite_schema_cursor_id,
         column: 2,
@@ -622,12 +623,16 @@ pub fn translate_drop_table(
         cursor_id: sqlite_schema_cursor_id,
     });
 
-    program.resolve_label(next_label, program.offset());
+    program.resolve_label(next_label, program.offset(), JumpTarget::NextInsn);
+    program.resolve_label(
+        end_metadata_label,
+        program.offset(),
+        JumpTarget::AfterNextInsn,
+    );
     program.emit_insn(Insn::Next {
         cursor_id: sqlite_schema_cursor_id,
         pc_if_next: metadata_loop,
     });
-    program.resolve_label(end_metadata_label, program.offset());
     //  end of loop on schema table
 
     //  2. Destroy the indices within a loop
@@ -695,8 +700,8 @@ pub fn translate_drop_table(
     });
 
     //  end of the program
+    program.resolve_label(init_label, program.offset(), JumpTarget::AfterNextInsn);
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
     program.emit_transaction(true);
     program.emit_constant_insns();
 
