@@ -598,6 +598,37 @@ impl PageContent {
             usable_size,
         )
     }
+
+    /// Read the rowid of a table interior cell.
+    #[inline(always)]
+    pub fn cell_table_interior_read_rowid(&self, idx: usize) -> Result<u64> {
+        assert!(self.page_type() == PageType::TableInterior);
+        let buf = self.as_ptr();
+        const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
+        let cell_pointer_array_start = INTERIOR_PAGE_HEADER_SIZE_BYTES;
+        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        const LEFT_CHILD_PAGE_SIZE_BYTES: usize = 4;
+        let (rowid, _) = read_varint(&buf[cell_pointer + LEFT_CHILD_PAGE_SIZE_BYTES..])?;
+        Ok(rowid)
+    }
+
+    /// Read the rowid of a table leaf cell.
+    #[inline(always)]
+    pub fn cell_table_leaf_read_rowid(&self, idx: usize) -> Result<u64> {
+        assert!(self.page_type() == PageType::TableLeaf);
+        let buf = self.as_ptr();
+        const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
+        let cell_pointer_array_start = LEAF_PAGE_HEADER_SIZE_BYTES;
+        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        let mut pos = cell_pointer;
+        let (_, nr) = read_varint(&buf[pos..])?;
+        pos += nr;
+        let (rowid, _) = read_varint(&buf[pos..])?;
+        Ok(rowid)
+    }
+
     /// The cell pointer array of a b-tree page immediately follows the b-tree page header.
     /// Let K be the number of cells on the btree.
     /// The cell pointer array consists of K 2-byte integer offsets to the cell contents.

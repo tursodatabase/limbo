@@ -1250,62 +1250,42 @@ impl BTreeCursor {
                 }
                 let cur_cell_idx = (min + max) / 2;
                 self.stack.set_cell_index(cur_cell_idx as i32);
-                let cur_cell = contents.cell_get(
-                    cur_cell_idx as usize,
-                    payload_overflow_threshold_max(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    payload_overflow_threshold_min(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    self.usable_space(),
-                )?;
-
-                match &cur_cell {
-                    BTreeCell::TableInteriorCell(TableInteriorCell {
-                        _left_child_page,
-                        _rowid: cell_rowid,
-                    }) => {
-                        // in sqlite btrees left child pages have <= keys.
-                        // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
-                        // and we find an interior cell with rowid=10, we need to move to the left page since (due to the <= rule of sqlite btrees)
-                        // the left page may have a rowid=10.
-                        // Logic table for determining if target leaf page is in left subtree
-                        //
-                        // Forwards iteration (looking for first match in tree):
-                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
-                        // GT  | >                          | go left  | First > key is in left subtree
-                        // GT  | = or <                     | go right | First > key is in right subtree
-                        // GE  | > or =                     | go left  | First >= key is in left subtree
-                        // GE  | <                          | go right | First >= key is in right subtree
-                        //
-                        // Backwards iteration (looking for last match in tree):
-                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
-                        // LE  | > or =                     | go left  | Last <= key is in left subtree
-                        // LE  | <                          | go right | Last <= key is in right subtree
-                        // LT  | > or =                     | go left  | Last < key is in left subtree
-                        // LT  | <                          | go right?| Last < key is in right subtree, except if cell rowid is exactly 1 less
-                        //
-                        // No iteration (point query):
-                        // EQ  | > or =                     | go left  | Last = key is in left subtree
-                        // EQ  | <                          | go right | Last = key is in right subtree
-                        let is_on_left = match seek_op {
-                            SeekOp::GT => *cell_rowid > rowid,
-                            SeekOp::GE => *cell_rowid >= rowid,
-                            SeekOp::LE => *cell_rowid >= rowid,
-                            SeekOp::LT => *cell_rowid + 1 >= rowid,
-                            SeekOp::EQ => *cell_rowid >= rowid,
-                        };
-                        if is_on_left {
-                            leftmost_matching_cell = Some(cur_cell_idx as usize);
-                            max = cur_cell_idx - 1;
-                        } else {
-                            min = cur_cell_idx + 1;
-                        }
-                    }
-                    _ => unreachable!("unexpected cell type: {:?}", cur_cell),
+                let cell_rowid = contents.cell_table_interior_read_rowid(cur_cell_idx as usize)?;
+                // in sqlite btrees left child pages have <= keys.
+                // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
+                // and we find an interior cell with rowid=10, we need to move to the left page since (due to the <= rule of sqlite btrees)
+                // the left page may have a rowid=10.
+                // Logic table for determining if target leaf page is in left subtree
+                //
+                // Forwards iteration (looking for first match in tree):
+                // OP  | Current Cell vs Seek Key   | Action?  | Explanation
+                // GT  | >                          | go left  | First > key is in left subtree
+                // GT  | = or <                     | go right | First > key is in right subtree
+                // GE  | > or =                     | go left  | First >= key is in left subtree
+                // GE  | <                          | go right | First >= key is in right subtree
+                //
+                // Backwards iteration (looking for last match in tree):
+                // OP  | Current Cell vs Seek Key   | Action?  | Explanation
+                // LE  | > or =                     | go left  | Last <= key is in left subtree
+                // LE  | <                          | go right | Last <= key is in right subtree
+                // LT  | > or =                     | go left  | Last < key is in left subtree
+                // LT  | <                          | go right?| Last < key is in right subtree, except if cell rowid is exactly 1 less
+                //
+                // No iteration (point query):
+                // EQ  | > or =                     | go left  | Last = key is in left subtree
+                // EQ  | <                          | go right | Last = key is in right subtree
+                let is_on_left = match seek_op {
+                    SeekOp::GT => cell_rowid > rowid,
+                    SeekOp::GE => cell_rowid >= rowid,
+                    SeekOp::LE => cell_rowid >= rowid,
+                    SeekOp::LT => cell_rowid + 1 >= rowid,
+                    SeekOp::EQ => cell_rowid >= rowid,
+                };
+                if is_on_left {
+                    leftmost_matching_cell = Some(cur_cell_idx as usize);
+                    max = cur_cell_idx - 1;
+                } else {
+                    min = cur_cell_idx + 1;
                 }
             }
         }
@@ -1508,23 +1488,7 @@ impl BTreeCursor {
 
             let cur_cell_idx = (min + max) / 2;
             self.stack.set_cell_index(cur_cell_idx as i32);
-            let cur_cell = contents.cell_get(
-                cur_cell_idx as usize,
-                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
-                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
-                self.usable_space(),
-            )?;
-
-            let BTreeCell::TableLeafCell(TableLeafCell {
-                _rowid: cell_rowid,
-                _payload,
-                first_overflow_page,
-                payload_size,
-                ..
-            }) = cur_cell
-            else {
-                unreachable!("unexpected cell type: {:?}", cur_cell);
-            };
+            let cell_rowid = contents.cell_table_leaf_read_rowid(cur_cell_idx as usize)?;
 
             let cmp = cell_rowid.cmp(&rowid);
 
@@ -1538,6 +1502,28 @@ impl BTreeCursor {
 
             // rowids are unique, so we can return the rowid immediately
             if found && SeekOp::EQ == seek_op {
+                let cur_cell = contents.cell_get(
+                    cur_cell_idx as usize,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                )?;
+                let BTreeCell::TableLeafCell(TableLeafCell {
+                    _rowid: _,
+                    _payload,
+                    first_overflow_page,
+                    payload_size,
+                    ..
+                }) = cur_cell
+                else {
+                    unreachable!("unexpected cell type: {:?}", cur_cell);
+                };
                 return_if_io!(self.read_record_w_possible_overflow(
                     _payload,
                     first_overflow_page,
