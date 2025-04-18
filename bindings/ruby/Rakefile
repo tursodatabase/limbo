@@ -1,0 +1,25 @@
+# frozen_string_literal: true
+
+require "bundler/gem_tasks"
+require "minitest/test_task"
+
+Minitest::TestTask.create
+
+require "standard/rake"
+
+require "rb_sys/extensiontask"
+
+task build: :compile
+
+GEMSPEC = Gem::Specification.load("limbo.gemspec")
+
+ENV["RB_SYS_CARGO_MANIFEST_DIR"] = File.expand_path(".", __dir__)
+ENV["RB_SYS_CARGO_TARGET_DIR"] = File.expand_path("tmp/target", __dir__)
+RbSys::ExtensionTask.new("limbo", GEMSPEC) do |ext|
+  def ext.extconf = "./ext/limbo/extconf.rb"
+
+  # If you want to use `rb-sys-dock` for cross-compilation:
+  ext.cross_compile = true
+end
+
+task default: %i[compile test standard]
