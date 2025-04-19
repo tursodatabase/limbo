@@ -3766,7 +3766,6 @@ pub fn op_idx_insert(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    dbg!("op_idx_insert_");
     if let Insn::IdxInsert {
         cursor_id,
         record_reg,
@@ -3807,7 +3806,6 @@ pub fn op_idx_insert(
                 }
             };
 
-            dbg!(moved_before);
             // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
             // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to the following opcode
             // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
