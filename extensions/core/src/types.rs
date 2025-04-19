@@ -23,6 +23,10 @@ pub enum ResultCode {
     EOF = 15,
     ReadOnly = 16,
     RowID = 17,
+    Interrupt = 18,
+    Busy = 19,
+    IO = 20,
+    Row = 21,
 }
 
 impl ResultCode {
@@ -60,6 +64,32 @@ impl Display for ResultCode {
             ResultCode::EOF => write!(f, "EOF"),
             ResultCode::ReadOnly => write!(f, "Read Only"),
             ResultCode::RowID => write!(f, "RowID"),
+            ResultCode::Interrupt => write!(f, "Interrupt"),
+            ResultCode::Busy => write!(f, "Busy"),
+            ResultCode::IO => write!(f, "IO"),
+            ResultCode::Row => write!(f, "Row"),
+        }
+    }
+}
+
+#[derive(Copy, Debug, Clone, PartialEq)]
+pub enum StepResult {
+    Error,
+    Row,
+    Done,
+    Interrupt,
+    Busy,
+}
+
+impl From<ResultCode> for StepResult {
+    fn from(code: ResultCode) -> Self {
+        match code {
+            ResultCode::Error => StepResult::Error,
+            ResultCode::Row => StepResult::Row,
+            ResultCode::EOF => StepResult::Done,
+            ResultCode::Interrupt => StepResult::Interrupt,
+            ResultCode::Busy => StepResult::Busy,
+            _ => StepResult::Error,
         }
     }
 }
