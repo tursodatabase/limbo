@@ -581,7 +581,7 @@ pub fn determine_where_to_eval_term(
             join_order
                 .iter()
                 .position(|t| t.table_no == table_no)
-                .unwrap(),
+                .unwrap_or(usize::MAX),
         ));
     }
 
@@ -602,7 +602,7 @@ pub fn determine_where_to_eval_expr<'a>(
             let join_idx = join_order
                 .iter()
                 .position(|t| t.table_no == *table)
-                .unwrap();
+                .unwrap_or(usize::MAX);
             eval_at = eval_at.max(EvalAt::Loop(join_idx));
         }
         ast::Expr::Id(_) => {
