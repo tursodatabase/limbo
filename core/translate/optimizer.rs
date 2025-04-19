@@ -277,9 +277,10 @@ fn use_indexes(
     order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: &Option<GroupBy>,
 ) -> Result<()> {
-    // Try to use indexes for eliminating ORDER BY clauses
-    let did_eliminate_orderby =
-        eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
+    // // Try to use indexes for eliminating ORDER BY clauses
+    // let did_eliminate_orderby =
+    //     eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
+    let did_eliminate_orderby = false;
 
     let join_order = table_references
         .iter()
@@ -307,14 +308,22 @@ fn use_indexes(
                         .filter(|i| i.name == index.name)
                         .cloned()
                         .collect::<Vec<_>>();
-                    if let Some(search) = try_extract_index_search_from_where_clause(
+                    if let Some(best_index) = try_extract_index_search_from_where_clause(
                         where_clause,
                         table_index,
                         table_reference,
                         &available_indexes,
                         &join_order,
                     )? {
-                        table_reference.op = Operation::Search(search);
+                        for constraint in best_index.constraints.iter() {
+                            where_clause.remove(constraint.position_in_where_clause.0);
+                        }
+                        table_reference.op = Operation::Search(Search::Seek {
+                            index: best_index.index,
+                            seek_def: best_index
+                                .seek_def
+                                .expect("best_index should have a SeekDef"),
+                        });
                     }
                 }
                 None => {
@@ -347,14 +356,22 @@ fn use_indexes(
                     if let Some(indexes) = available_indexes.get(table_name) {
                         usable_indexes_ref = indexes;
                     }
-                    if let Some(search) = try_extract_index_search_from_where_clause(
+                    if let Some(best_index) = try_extract_index_search_from_where_clause(
                         where_clause,
                         table_index,
                         table_reference,
                         usable_indexes_ref,
                         &join_order,
                     )? {
-                        table_reference.op = Operation::Search(search);
+                        for constraint in best_index.constraints.iter() {
+                            where_clause.remove(constraint.position_in_where_clause.0);
+                        }
+                        table_reference.op = Operation::Search(Search::Seek {
+                            index: best_index.index,
+                            seek_def: best_index
+                                .seek_def
+                                .expect("best_index should have a SeekDef"),
+                        });
                     }
                 }
             }
@@ -805,8 +822,9 @@ fn opposite_cmp_op(op: ast::Operator) -> ast::Operator {
 /// Struct used for scoring index scans
 /// Currently we just estimate cost in a really dumb way,
 /// i.e. no statistics are used.
-struct IndexScore {
+pub struct IndexScore {
     index: Option<Arc<Index>>,
+    seek_def: Option<SeekDef>,
     cost: f64,
     constraints: Vec<IndexConstraint>,
 }
@@ -885,7 +903,7 @@ pub fn try_extract_index_search_from_where_clause(
     table_reference: &TableReference,
     table_indexes: &[Arc<Index>],
     join_order: &[JoinOrderMember],
-) -> Result<Option<Search>> {
+) -> Result<Option<IndexScore>> {
     // If there are no WHERE terms, we can't extract a search
     if where_clause.is_empty() {
         return Ok(None);
@@ -908,6 +926,7 @@ pub fn try_extract_index_search_from_where_clause(
     let mut constraints_cur = vec![];
     let mut best_index = IndexScore {
         index: None,
+        seek_def: None,
         cost: cost_of_full_table_scan,
         constraints: vec![],
     };
@@ -975,14 +994,9 @@ pub fn try_extract_index_search_from_where_clause(
             .cmp(&a.position_in_where_clause.0)
     });
 
-    for constraint in best_index.constraints.iter() {
-        where_clause.remove(constraint.position_in_where_clause.0);
-    }
+    best_index.seek_def = Some(seek_def);
 
-    return Ok(Some(Search::Seek {
-        index: best_index.index,
-        seek_def,
-    }));
+    return Ok(Some(best_index));
 }
 
 fn ephemeral_index_estimate_cost(
@@ -1327,8 +1341,7 @@ pub fn build_seek_def_from_index_constraints(
         // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
         let (idx, side) = constraint.position_in_where_clause;
         let where_term = &mut where_clause[idx];
-        let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.take_ownership())?
-        else {
+        let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.clone())? else {
             crate::bail_parse_error!("expected binary expression");
         };
         let cmp_expr = if side == BinaryExprSide::Lhs {
@@ -1798,7 +1811,7 @@ pub fn try_extract_rowid_search_expression(
             if lhs.is_rowid_alias_of(table_index) {
                 match operator {
                     ast::Operator::Equals => {
-                        let rhs_owned = rhs.take_ownership();
+                        let rhs_owned = rhs.as_ref().clone();
                         return Ok(Some(Search::RowidEq {
                             cmp_expr: WhereTerm {
                                 expr: rhs_owned,
@@ -1810,7 +1823,7 @@ pub fn try_extract_rowid_search_expression(
                     | ast::Operator::GreaterEquals
                     | ast::Operator::Less
                     | ast::Operator::LessEquals => {
-                        let rhs_owned = rhs.take_ownership();
+                        let rhs_owned = rhs.as_ref().clone();
                         let seek_def =
                             build_seek_def(*operator, iter_dir, vec![(rhs_owned, SortOrder::Asc)])?;
                         return Ok(Some(Search::Seek {
@@ -1825,7 +1838,7 @@ pub fn try_extract_rowid_search_expression(
             if rhs.is_rowid_alias_of(table_index) {
                 match operator {
                     ast::Operator::Equals => {
-                        let lhs_owned = lhs.take_ownership();
+                        let lhs_owned = lhs.as_ref().clone();
                         return Ok(Some(Search::RowidEq {
                             cmp_expr: WhereTerm {
                                 expr: lhs_owned,
@@ -1837,7 +1850,7 @@ pub fn try_extract_rowid_search_expression(
                     | ast::Operator::GreaterEquals
                     | ast::Operator::Less
                     | ast::Operator::LessEquals => {
-                        let lhs_owned = lhs.take_ownership();
+                        let lhs_owned = lhs.as_ref().clone();
                         let op = opposite_cmp_op(*operator);
                         let seek_def =
                             build_seek_def(op, iter_dir, vec![(lhs_owned, SortOrder::Asc)])?;
