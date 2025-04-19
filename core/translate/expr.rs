@@ -16,6 +16,8 @@ use crate::vdbe::{
 };
 use crate::{Result, Value};
 
+use super::collate::CollationSeq;
+
 #[derive(Debug, Clone, Copy)]
 pub struct ConditionMetadata {
     pub jump_if_condition_is_true: bool,
@@ -53,6 +55,7 @@ macro_rules! emit_cmp_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_true,
                 flags: CmpInsFlags::default(),
+                collation: CollationSeq::default(),
             });
         } else {
             $program.emit_insn(Insn::$op_false {
@@ -60,6 +63,7 @@ macro_rules! emit_cmp_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_false,
                 flags: CmpInsFlags::default().jump_if_null(),
+                collation: CollationSeq::default(),
             });
         }
     }};
@@ -80,6 +84,7 @@ macro_rules! emit_cmp_null_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_true,
                 flags: CmpInsFlags::default().null_eq(),
+                collation: CollationSeq::default(),
             });
         } else {
             $program.emit_insn(Insn::$op_false {
@@ -87,6 +92,7 @@ macro_rules! emit_cmp_null_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_false,
                 flags: CmpInsFlags::default().null_eq(),
+                collation: CollationSeq::default(),
             });
         }
     }};
@@ -370,6 +376,7 @@ pub fn translate_condition_expr(
                             rhs: rhs_reg,
                             target_pc: jump_target_when_true,
                             flags: CmpInsFlags::default(),
+                            collation: CollationSeq::default(),
                         });
                     } else {
                         // If this is the last condition, we need to jump to the 'jump_target_when_false' label if there is no match.
@@ -378,6 +385,7 @@ pub fn translate_condition_expr(
                             rhs: rhs_reg,
                             target_pc: condition_metadata.jump_target_when_false,
                             flags: CmpInsFlags::default().jump_if_null(),
+                            collation: CollationSeq::default(),
                         });
                     }
                 }
@@ -399,6 +407,7 @@ pub fn translate_condition_expr(
                         rhs: rhs_reg,
                         target_pc: condition_metadata.jump_target_when_false,
                         flags: CmpInsFlags::default().jump_if_null(),
+                        collation: CollationSeq::default(),
                     });
                 }
                 // If we got here, then none of the conditions were a match, so we jump to the 'jump_target_when_true' label if 'jump_if_condition_is_true'.
@@ -609,6 +618,7 @@ pub fn translate_expr(
                         target_pc: next_case_label,
                         // A NULL result is considered untrue when evaluating WHEN terms.
                         flags: CmpInsFlags::default().jump_if_null(),
+                        collation: CollationSeq::default(),
                     }),
                     // CASE WHEN 0 THEN 0 ELSE 1 becomes ifnot 0 branch to next clause
                     None => program.emit_insn(Insn::IfNot {
@@ -2216,6 +2226,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2232,6 +2243,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2248,6 +2260,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2264,6 +2277,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2280,6 +2294,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2296,6 +2311,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2389,6 +2405,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default().null_eq(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,
@@ -2403,6 +2420,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default().null_eq(),
+                    collation: CollationSeq::default(),
                 },
                 target_register,
                 if_true_label,

@@ -17,6 +17,7 @@ use crate::{
 
 use super::{
     aggregation::translate_aggregation_step,
+    collate::CollationSeq,
     emitter::{OperationMode, TranslateCtx},
     expr::{
         translate_condition_expr, translate_expr, translate_expr_no_constant_opt,
@@ -1151,24 +1152,28 @@ fn emit_seek_termination(
             rhs: start_reg,
             target_pc: loop_end,
             flags: CmpInsFlags::default(),
+            collation: CollationSeq::default(),
         }),
         (false, SeekOp::GT) => program.emit_insn(Insn::Gt {
             lhs: rowid_reg.unwrap(),
             rhs: start_reg,
             target_pc: loop_end,
             flags: CmpInsFlags::default(),
+            collation: CollationSeq::default(),
         }),
         (false, SeekOp::LE) => program.emit_insn(Insn::Le {
             lhs: rowid_reg.unwrap(),
             rhs: start_reg,
             target_pc: loop_end,
             flags: CmpInsFlags::default(),
+            collation: CollationSeq::default(),
         }),
         (false, SeekOp::LT) => program.emit_insn(Insn::Lt {
             lhs: rowid_reg.unwrap(),
             rhs: start_reg,
             target_pc: loop_end,
             flags: CmpInsFlags::default(),
+            collation: CollationSeq::default(),
         }),
         (_, SeekOp::EQ) => {
             panic!("An index termination condition is never EQ")

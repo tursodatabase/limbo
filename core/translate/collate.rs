@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use tracing::Level;
+
 // TODO: in the future allow user to define collation sequences
 // Will have to meddle with ffi for this
 #[derive(Debug, Eq, PartialEq, strum_macros::Display, Default)]
@@ -18,7 +20,8 @@ pub enum CollationSeq {
 }
 
 impl CollationSeq {
-    fn compare_strings(&self, lhs: &str, rhs: &str) -> Ordering {
+    pub fn compare_strings(&self, lhs: &str, rhs: &str) -> Ordering {
+        tracing::event!(Level::DEBUG, collate = %self, lhs, rhs);
         match self {
             CollationSeq::Binary => Self::binary_cmp(lhs, rhs),
             CollationSeq::NoCase => Self::nocase_cmp(lhs, rhs),
