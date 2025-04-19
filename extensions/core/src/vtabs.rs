@@ -324,8 +324,9 @@ pub type CloseStmtFn = unsafe extern "C" fn(ctx: *mut Stmt);
 
 /// core database connection
 // public fields for core only
+#[repr(C)]
 pub struct Conn {
-    // Rc::into_raw from core::Connection
+    // Rc::Weak from core::Connection
     pub _ctx: *mut c_void,
     pub _prepare_stmt: PrepareStmtFn,
     pub _close: CloseConnectionFn,
@@ -352,7 +353,9 @@ impl Conn {
     }
 
     pub fn prepare_stmt(&self, sql: &str) -> *const Stmt {
-        let sql = CString::new(sql).unwrap();
+        let Ok(sql) = CString::new(sql) else {
+            return std::ptr::null();
+        };
         unsafe { (self._prepare_stmt)(self as *const Conn as *mut Conn, sql.as_ptr()) }
     }
 }
@@ -503,13 +506,7 @@ impl Stmt {
 
     /// Execute the statement to attempt to retrieve the next result row.
     fn step(&self) -> StepResult {
-        match unsafe { (self._step)(self.to_ptr() as *mut Stmt) } {
-            ResultCode::Row => StepResult::Row,
-            ResultCode::EOF => StepResult::Done,
-            ResultCode::Busy => StepResult::Busy,
-            ResultCode::Interrupt => StepResult::Interrupt,
-            _ => StepResult::Error,
-        }
+        unsafe { (self._step)(self.to_ptr() as *mut Stmt) }.into()
     }
 
     /// Free the memory for the values obtained from the `get_row` method.
@@ -517,10 +514,7 @@ impl Stmt {
     /// This fn is unsafe because it derefs a raw pointer after null and
     /// length checks. This fn should only be called with the pointer returned from get_row.
     pub unsafe fn free_current_row(&mut self) {
-        if self.current_row.is_null() {
-            return;
-        }
-        if self.current_row_len <= 0 {
+        if self.current_row.is_null() || self.current_row_len <= 0 {
             return;
         }
         // free from the core side so we don't have to expose `__free_internal_type`
@@ -533,10 +527,7 @@ impl Stmt {
     /// be called after the step() method returns `StepResult::Row`
     pub fn get_row(&self) -> &[Value] {
         unsafe { (self._get_row_values)(self.to_ptr() as *mut Stmt) };
-        if self.current_row.is_null() {
-            return &[];
-        }
-        if self.current_row_len < 1 {
+        if self.current_row.is_null() || self.current_row_len < 1 {
             return &[];
         }
         let col_count = self.current_row_len;

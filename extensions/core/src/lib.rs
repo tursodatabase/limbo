@@ -16,7 +16,7 @@ pub use types::{ResultCode, StepResult, Value, ValueType};
 pub use vfs_modules::{RegisterVfsFn, VfsExtension, VfsFile, VfsFileImpl, VfsImpl, VfsInterface};
 pub use vtabs::{
     Conn, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtIndexInfo, IndexInfo,
-    OrderByInfo, Stmt, VTabCursor, VTabKind, VTabModule, VTabModuleImpl,
+    OrderByInfo, Statement, Stmt, VTabCursor, VTabKind, VTabModule, VTabModuleImpl,
 };
 use vtabs::{ConnectFn, RegisterModuleFn};
 
