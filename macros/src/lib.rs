@@ -473,13 +473,13 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void) -> *const ::std::ffi::c_void {
-                if ctx.is_null() {
+            unsafe extern "C" fn #open_fn_name(ctx: *const ::std::ffi::c_void, conn: *mut ::limbo_ext::Conn) -> *const ::std::ffi::c_void {
+                if ctx.is_null() || conn.is_null() {
                     return ::std::ptr::null();
                 }
-                let ctx  = ctx as *const #struct_name;
-                let ctx: &#struct_name = &*ctx;
-                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx) {
+                let ctx: &#struct_name = unsafe {&*(ctx as *const #struct_name)};
+                let conn = ::std::rc::Rc::new(::limbo_ext::Connection::new(conn));
+                if let Ok(cursor) = <#struct_name as ::limbo_ext::VTabModule>::open(ctx, Some(conn)) {
                     return ::std::boxed::Box::into_raw(::std::boxed::Box::new(cursor)) as *const ::std::ffi::c_void;
                 } else {
                     return ::std::ptr::null();
@@ -635,17 +635,21 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
 
             #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
-                api: *const ::limbo_ext::ExtensionApi
+                api: *mut ::limbo_ext::ExtensionApi
             ) -> ::limbo_ext::ResultCode {
                 if api.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
-                let api = &*api;
+                let api = &mut *api;
+                // establish connection on vtab module registration
+                let connection = unsafe { (api.connect)(api.ctx) };
+                api.conn = connection;
                 let name = <#struct_name as ::limbo_ext::VTabModule>::NAME;
                 let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
                 let table_instance = ::std::boxed::Box::into_raw(::std::boxed::Box::new(#struct_name::default()));
                 let module = ::limbo_ext::VTabModuleImpl {
                     ctx: table_instance as *const ::std::ffi::c_void,
+                    conn: api.conn,
                     name: name_c,
                     create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
@@ -1013,9 +1017,10 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
                 #(#aggregate_calls)*
 
-                #(#vtab_calls)*
-
                 #(#vfs_calls)*
+
+                let api = unsafe { &*api as *const ::limbo_ext::ExtensionApi } as *mut ::limbo_ext::ExtensionApi;
+                #(#vtab_calls)*
 
                 ::limbo_ext::ResultCode::OK
             }

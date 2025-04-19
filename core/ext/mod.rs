@@ -1,5 +1,6 @@
 #[cfg(feature = "fs")]
 mod dynamic;
+mod vtab_connect;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
@@ -155,9 +156,11 @@ impl Connection {
     pub fn build_limbo_ext(&self) -> ExtensionApi {
         ExtensionApi {
             ctx: self as *const _ as *mut c_void,
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
             register_vtab_module,
+            connect: vtab_connect::connect,
             #[cfg(feature = "fs")]
             vfs_interface: limbo_ext::VfsInterface {
                 register_vfs: dynamic::register_vfs,

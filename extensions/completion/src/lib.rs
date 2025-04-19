@@ -3,8 +3,12 @@
 
 mod keywords;
 
+use std::rc::Rc;
+
 use keywords::KEYWORDS;
-use limbo_ext::{register_extension, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value};
+use limbo_ext::{
+    register_extension, Connection, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, Value,
+};
 
 register_extension! {
     vtabs: { CompletionVTab }
@@ -75,7 +79,7 @@ impl VTabModule for CompletionVTab {
         .to_string()
     }
 
-    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
         Ok(CompletionCursor::default())
     }
 

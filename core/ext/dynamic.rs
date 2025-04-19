@@ -100,9 +100,11 @@ pub fn add_builtin_vfs_extensions(
     let mut api = match api {
         None => ExtensionApi {
             ctx: std::ptr::null_mut(),
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
             register_vtab_module,
+            connect: super::vtab_connect::connect,
             vfs_interface: VfsInterface {
                 register_vfs,
                 builtin_vfs: vfslist.as_mut_ptr(),

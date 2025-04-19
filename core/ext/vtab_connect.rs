@@ -109,12 +109,12 @@ pub unsafe extern "C" fn stmt_get_row(ctx: *mut Stmt) {
     let stmt_ctx: &mut Statement = unsafe { &mut *(stmt._ctx as *mut Statement) };
     if let Some(row) = stmt_ctx.row() {
         let values = row.get_values();
-        let mut owned_values = Vec::with_capacity(values.len());
+        let mut owned_values = Vec::with_capacity(row.len());
         for value in values {
             owned_values.push(OwnedValue::to_ffi(value));
         }
         stmt.current_row = Box::into_raw(owned_values.into_boxed_slice()) as *mut Value;
-        stmt.current_row_len = values.len() as i32;
+        stmt.current_row_len = row.len() as i32;
     } else {
         stmt.current_row_len = 0;
     }
