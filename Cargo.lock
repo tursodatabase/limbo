@@ -1540,9 +1540,9 @@ dependencies = [
 
 [[package]]
 name = "julian_day_converter"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa5652b85ab018289638c6b924db618da9edd2ddfff7fa0ec38a8b51a9192d3"
+checksum = "f2987f71b89b85c812c8484cbf0c5d7912589e77bfdc66fd3e52f760e7859f16"
 dependencies = [
  "chrono",
 ]

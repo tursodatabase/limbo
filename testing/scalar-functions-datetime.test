@@ -597,6 +597,10 @@ foreach i $FMT {
   do_execsql_test strftime-invalid-$i "SELECT strftime('$i','2025-01-23T13:14:30.567');" {}
 }
 
+do_execsql_test strftime-julianday {
+  SELECT strftime('%Y-%m-%d %H:%M:%fZ', 2459717.08070103);
+} {"2022-05-17 13:56:12.569Z"}
+
 
 # Tests for the TIMEDIFF function
 
