@@ -11,7 +11,7 @@ use functions::{RegisterAggFn, RegisterScalarFn};
 pub use limbo_macros::VfsDerive;
 pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 use std::os::raw::c_void;
-pub use types::{ResultCode, Value, ValueType};
+pub use types::{ResultCode, StepResult, Value, ValueType};
 #[cfg(feature = "vfs")]
 pub use vfs_modules::{RegisterVfsFn, VfsExtension, VfsFile, VfsFileImpl, VfsImpl, VfsInterface};
 pub use vtabs::{
