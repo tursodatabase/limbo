@@ -355,15 +355,18 @@ fn use_indexes(
                         // but we just don't do that yet.
                         continue;
                     }
+                    let placeholder = vec![];
+                    let mut usable_indexes_ref = &placeholder;
                     if let Some(indexes) = available_indexes.get(table_name) {
-                        if let Some(search) = try_extract_index_search_from_where_clause(
-                            where_clause,
-                            table_index,
-                            table_reference,
-                            indexes,
-                        )? {
-                            table_reference.op = Operation::Search(search);
-                        }
+                        usable_indexes_ref = indexes;
+                    }
+                    if let Some(search) = try_extract_index_search_from_where_clause(
+                        where_clause,
+                        table_index,
+                        table_reference,
+                        usable_indexes_ref,
+                    )? {
+                        table_reference.op = Operation::Search(search);
                     }
                 }
             }
@@ -728,10 +731,6 @@ pub fn try_extract_index_search_from_where_clause(
 ) -> Result<Option<Search>> {
     // If there are no WHERE terms, we can't extract a search
     if where_clause.is_empty() {
-        return Ok(None);
-    }
-    // If there are no indexes, we can't extract a search
-    if table_indexes.is_empty() {
         return Ok(None);
     }
 
