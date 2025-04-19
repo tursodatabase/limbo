@@ -853,24 +853,26 @@ pub fn close_loop(
                 // If the left join match flag has been set to 1, we jump to the next row on the outer table,
                 // i.e. continue to the next row of t1 in our example.
                 program.resolve_label(lj_meta.label_match_flag_check_value, program.offset());
-                let jump_offset = program.offset().add(3u32);
+                let label_when_right_table_notnull = program.allocate_label();
                 program.emit_insn(Insn::IfPos {
                     reg: lj_meta.reg_match_flag,
-                    target_pc: jump_offset,
+                    target_pc: label_when_right_table_notnull,
                     decrement_by: 0,
                 });
                 // If the left join match flag is still 0, it means there was no match on the right table,
                 // but since it's a LEFT JOIN, we still need to emit a row with NULLs for the right table.
                 // In that case, we now enter the routine that does exactly that.
-                // First we set the right table cursor's "pseudo null bit" on, which means any Insn::Column will return NULL
-                let right_cursor_id = match &table.op {
-                    Operation::Scan { .. } => program.resolve_cursor_id(&table.identifier),
-                    Operation::Search { .. } => program.resolve_cursor_id(&table.identifier),
-                    _ => unreachable!(),
-                };
-                program.emit_insn(Insn::NullRow {
-                    cursor_id: right_cursor_id,
-                });
+                // First we set the right table cursor's "pseudo null bit" on, which means any Insn::Column will return NULL.
+                // This needs to be set for both the table and the index cursor, if present,
+                // since even if the iteration cursor is the index cursor, it might fetch values from the table cursor.
+                [table_cursor_id, index_cursor_id]
+                    .iter()
+                    .filter_map(|maybe_cursor_id| maybe_cursor_id.as_ref())
+                    .for_each(|cursor_id| {
+                        program.emit_insn(Insn::NullRow {
+                            cursor_id: *cursor_id,
+                        });
+                    });
                 // Then we jump to setting the left join match flag to 1 again,
                 // but this time the right table cursor will set everything to null.
                 // This leads to emitting a row with cols from the left + nulls from the right,
@@ -880,8 +882,7 @@ pub fn close_loop(
                 program.emit_insn(Insn::Goto {
                     target_pc: lj_meta.label_match_flag_set_true,
                 });
-
-                assert_eq!(program.offset(), jump_offset);
+                program.resolve_label(label_when_right_table_notnull, program.offset());
             }
         }
     }

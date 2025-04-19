@@ -273,3 +273,13 @@ do_execsql_test natural-join-and-using-join {
 } {"1|1|1
 1|1204|1
 1|1261|1"}
+
+# regression test for a backwards iteration left join case,
+# where the null flag of the right table was not cleared after a previous unmatched row.
+do_execsql_test left-join-backwards-iteration {
+    select users.id, users.first_name as user_name, products.name as product_name 
+    from users left join products on users.id = products.id 
+    where users.id < 13 order by users.id desc limit 3;
+} {12|Alan|
+11|Travis|accessories
+10|Daniel|coat}
