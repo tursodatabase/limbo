@@ -1,9 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 
 use crate::{
-    schema::{Index, Schema},
+    schema::{Index, IndexColumn, Schema},
     translate::plan::TerminationKey,
     types::SeekOp,
     util::exprs_are_equivalent,
@@ -355,15 +355,18 @@ fn use_indexes(
                         // but we just don't do that yet.
                         continue;
                     }
+                    let placeholder = vec![];
+                    let mut usable_indexes_ref = &placeholder;
                     if let Some(indexes) = available_indexes.get(table_name) {
-                        if let Some(search) = try_extract_index_search_from_where_clause(
-                            where_clause,
-                            table_index,
-                            table_reference,
-                            indexes,
-                        )? {
-                            table_reference.op = Operation::Search(search);
-                        }
+                        usable_indexes_ref = indexes;
+                    }
+                    if let Some(search) = try_extract_index_search_from_where_clause(
+                        where_clause,
+                        table_index,
+                        table_reference,
+                        usable_indexes_ref,
+                    )? {
+                        table_reference.op = Operation::Search(search);
                     }
                 }
             }
@@ -710,12 +713,78 @@ fn opposite_cmp_op(op: ast::Operator) -> ast::Operator {
 }
 
 /// Struct used for scoring index scans
-/// Currently we just score by the number of index columns that can be utilized
-/// in the scan, i.e. no statistics are used.
+/// Currently we just estimate cost in a really dumb way,
+/// i.e. no statistics are used.
 struct IndexScore {
     index: Option<Arc<Index>>,
-    score: usize,
+    cost: f64,
     constraints: Vec<IndexConstraint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IndexInfo {
+    unique: bool,
+    column_count: usize,
+}
+
+const ESTIMATED_HARDCODED_ROWS_PER_TABLE: f64 = 1000.0;
+
+/// Unbelievably dumb cost estimate for rows scanned by an index scan.
+fn dumb_cost_estimator(
+    index_info: Option<IndexInfo>,
+    constraints: &[IndexConstraint],
+    is_inner_loop: bool,
+    is_ephemeral: bool,
+) -> f64 {
+    // assume that the outer table always does a full table scan :)
+    // this discourages building ephemeral indexes on the outer table
+    // (since a scan reads TABLE_ROWS rows, so an ephemeral index on the outer table would both read TABLE_ROWS rows to build the index and then seek the index)
+    // but encourages building it on the inner table because it's only built once but the inner loop is run as many times as the outer loop has iterations.
+    let loop_multiplier = if is_inner_loop {
+        ESTIMATED_HARDCODED_ROWS_PER_TABLE
+    } else {
+        1.0
+    };
+
+    // If we are building an ephemeral index, we assume we will scan the entire source table to build it.
+    // Non-ephemeral indexes don't need to be built.
+    let cost_to_build_index = is_ephemeral as usize as f64 * ESTIMATED_HARDCODED_ROWS_PER_TABLE;
+
+    let Some(index_info) = index_info else {
+        return cost_to_build_index + ESTIMATED_HARDCODED_ROWS_PER_TABLE * loop_multiplier;
+    };
+
+    let final_constraint_is_range = constraints
+        .last()
+        .map_or(false, |c| c.operator != ast::Operator::Equals);
+    let equalities_count = constraints
+        .iter()
+        .take(if final_constraint_is_range {
+            constraints.len() - 1
+        } else {
+            constraints.len()
+        })
+        .count() as f64;
+
+    let selectivity = match (
+        index_info.unique,
+        index_info.column_count as f64,
+        equalities_count,
+    ) {
+        // no equalities: let's assume range query selectivity is 0.4. if final constraint is not range and there are no equalities, it means full table scan incoming
+        (_, _, 0.0) => {
+            if final_constraint_is_range {
+                0.4
+            } else {
+                1.0
+            }
+        }
+        // on an unique index if we have equalities across all index columns, assume very high selectivity
+        (true, index_cols, eq_count) if eq_count == index_cols => 0.01 * eq_count,
+        // some equalities: let's assume each equality has a selectivity of 0.1 and range query selectivity is 0.4
+        (_, _, eq_count) => (eq_count * 0.1) * if final_constraint_is_range { 0.4 } else { 1.0 },
+    };
+    cost_to_build_index + selectivity * ESTIMATED_HARDCODED_ROWS_PER_TABLE * loop_multiplier
 }
 
 /// Try to extract an index search from the WHERE clause
@@ -728,10 +797,6 @@ pub fn try_extract_index_search_from_where_clause(
 ) -> Result<Option<Search>> {
     // If there are no WHERE terms, we can't extract a search
     if where_clause.is_empty() {
-        return Ok(None);
-    }
-    // If there are no indexes, we can't extract a search
-    if table_indexes.is_empty() {
         return Ok(None);
     }
 
@@ -748,10 +813,11 @@ pub fn try_extract_index_search_from_where_clause(
     // 3. constrain the index columns in the order that they appear in the index
     //    - e.g. if the index is on (a,b,c) then we can use all of "a = 1 AND b = 2 AND c = 3" to constrain the index scan,
     //    - but if the where clause is "a = 1 and c = 3" then we can only use "a = 1".
+    let cost_of_full_table_scan = dumb_cost_estimator(None, &[], table_index != 0, false);
     let mut constraints_cur = vec![];
     let mut best_index = IndexScore {
         index: None,
-        score: 0,
+        cost: cost_of_full_table_scan,
         constraints: vec![],
     };
 
@@ -760,12 +826,39 @@ pub fn try_extract_index_search_from_where_clause(
         find_index_constraints(where_clause, table_index, index, &mut constraints_cur)?;
         // naive scoring since we don't have statistics: prefer the index where we can use the most columns
         // e.g. if we can use all columns of an index on (a,b), it's better than an index of (c,d,e) where we can only use c.
-        let score = constraints_cur.len();
-        if score > best_index.score {
+        let cost = dumb_cost_estimator(
+            Some(IndexInfo {
+                unique: index.unique,
+                column_count: index.columns.len(),
+            }),
+            &constraints_cur,
+            table_index != 0,
+            false,
+        );
+        if cost < best_index.cost {
             best_index.index = Some(Arc::clone(index));
-            best_index.score = score;
+            best_index.cost = cost;
             best_index.constraints.clear();
             best_index.constraints.append(&mut constraints_cur);
+        }
+    }
+
+    // We haven't found a persistent btree index that is any better than a full table scan;
+    // let's see if building an ephemeral index would be better.
+    if best_index.index.is_none() {
+        let (ephemeral_cost, constraints_with_col_idx, mut constraints_without_col_idx) =
+            ephemeral_index_estimate_cost(where_clause, table_reference, table_index);
+        if ephemeral_cost < best_index.cost {
+            // ephemeral index makes sense, so let's build it now.
+            // ephemeral columns are: columns from the table_reference, constraints first, then the rest
+            let ephemeral_index =
+                ephemeral_index_build(table_reference, table_index, &constraints_with_col_idx);
+            best_index.index = Some(Arc::new(ephemeral_index));
+            best_index.cost = ephemeral_cost;
+            best_index.constraints.clear();
+            best_index
+                .constraints
+                .append(&mut constraints_without_col_idx);
         }
     }
 
@@ -793,6 +886,140 @@ pub fn try_extract_index_search_from_where_clause(
         index: best_index.index,
         seek_def,
     }));
+}
+
+fn ephemeral_index_estimate_cost(
+    where_clause: &mut Vec<WhereTerm>,
+    table_reference: &TableReference,
+    table_index: usize,
+) -> (f64, Vec<(usize, IndexConstraint)>, Vec<IndexConstraint>) {
+    let mut constraints_with_col_idx: Vec<(usize, IndexConstraint)> = where_clause
+        .iter()
+        .enumerate()
+        .filter(|(_, term)| is_potential_index_constraint(term, table_index))
+        .filter_map(|(i, term)| {
+            let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
+                panic!("expected binary expression");
+            };
+            if let ast::Expr::Column { table, column, .. } = lhs.as_ref() {
+                if *table == table_index {
+                    return Some((
+                        *column,
+                        IndexConstraint {
+                            position_in_where_clause: (i, BinaryExprSide::Rhs),
+                            operator: *operator,
+                            index_column_sort_order: SortOrder::Asc,
+                        },
+                    ));
+                }
+            }
+            if let ast::Expr::Column { table, column, .. } = rhs.as_ref() {
+                if *table == table_index {
+                    return Some((
+                        *column,
+                        IndexConstraint {
+                            position_in_where_clause: (i, BinaryExprSide::Lhs),
+                            operator: opposite_cmp_op(*operator),
+                            index_column_sort_order: SortOrder::Asc,
+                        },
+                    ));
+                }
+            }
+            None
+        })
+        .collect();
+    // sort equalities first
+    constraints_with_col_idx.sort_by(|a, _| {
+        if a.1.operator == ast::Operator::Equals {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
+    });
+    // drop everything after the first inequality
+    constraints_with_col_idx.truncate(
+        constraints_with_col_idx
+            .iter()
+            .position(|c| c.1.operator != ast::Operator::Equals)
+            .unwrap_or(constraints_with_col_idx.len()),
+    );
+
+    let ephemeral_column_count = table_reference
+        .columns()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| table_reference.column_is_used(*i))
+        .count();
+
+    let constraints_without_col_idx = constraints_with_col_idx
+        .iter()
+        .cloned()
+        .map(|(_, c)| c)
+        .collect::<Vec<_>>();
+    let ephemeral_cost = dumb_cost_estimator(
+        Some(IndexInfo {
+            unique: false,
+            column_count: ephemeral_column_count,
+        }),
+        &constraints_without_col_idx,
+        table_index != 0,
+        true,
+    );
+    (
+        ephemeral_cost,
+        constraints_with_col_idx,
+        constraints_without_col_idx,
+    )
+}
+
+fn ephemeral_index_build(
+    table_reference: &TableReference,
+    table_index: usize,
+    index_constraints: &[(usize, IndexConstraint)],
+) -> Index {
+    let mut ephemeral_columns: Vec<IndexColumn> = table_reference
+        .columns()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| IndexColumn {
+            name: c.name.clone().unwrap(),
+            order: SortOrder::Asc,
+            pos_in_table: i,
+        })
+        // only include columns that are used in the query
+        .filter(|c| table_reference.column_is_used(c.pos_in_table))
+        .collect();
+    // sort so that constraints first, then rest in whatever order they were in in the table
+    ephemeral_columns.sort_by(|a, b| {
+        let a_constraint = index_constraints
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.0 == a.pos_in_table);
+        let b_constraint = index_constraints
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.0 == b.pos_in_table);
+        match (a_constraint, b_constraint) {
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some((a_idx, _)), Some((b_idx, _))) => a_idx.cmp(&b_idx),
+            (None, None) => Ordering::Equal,
+        }
+    });
+    let ephemeral_index = Index {
+        name: format!(
+            "ephemeral_{}_{}",
+            table_reference.table.get_name(),
+            table_index
+        ),
+        columns: ephemeral_columns,
+        unique: false,
+        ephemeral: true,
+        table_name: table_reference.table.get_name().to_string(),
+        root_page: 0,
+    };
+
+    ephemeral_index
 }
 
 #[derive(Debug, Clone)]
@@ -874,6 +1101,45 @@ fn get_column_position_in_index(
     Ok(index.column_table_pos_to_index_pos(*column))
 }
 
+fn is_potential_index_constraint(term: &WhereTerm, table_index: usize) -> bool {
+    // Skip terms that cannot be evaluated at this table's loop level
+    if !term.should_eval_at_loop(table_index) {
+        return false;
+    }
+    // Skip terms that are not binary comparisons
+    let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
+        return false;
+    };
+    // Only consider index scans for binary ops that are comparisons
+    if !matches!(
+        *operator,
+        ast::Operator::Equals
+            | ast::Operator::Greater
+            | ast::Operator::GreaterEquals
+            | ast::Operator::Less
+            | ast::Operator::LessEquals
+    ) {
+        return false;
+    }
+
+    // If both lhs and rhs refer to columns from this table, we can't use this constraint
+    // because we can't use the index to satisfy the condition.
+    // Examples:
+    // - WHERE t.x > t.y
+    // - WHERE t.x + 1 > t.y - 5
+    // - WHERE t.x = (t.x)
+    let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs) else {
+        return false;
+    };
+    let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs) else {
+        return false;
+    };
+    if eval_at_left == EvalAt::Loop(table_index) && eval_at_right == EvalAt::Loop(table_index) {
+        return false;
+    }
+    true
+}
+
 /// Find all [IndexConstraint]s for a given WHERE clause
 /// Constraints are appended as long as they constrain the index in column order.
 /// E.g. for index (a,b,c) to be fully used, there must be a [WhereTerm] for each of a, b, and c.
@@ -887,37 +1153,13 @@ fn find_index_constraints(
     for position_in_index in 0..index.columns.len() {
         let mut found = false;
         for (position_in_where_clause, term) in where_clause.iter().enumerate() {
-            // Skip terms that cannot be evaluated at this table's loop level
-            if !term.should_eval_at_loop(table_index) {
-                continue;
-            }
-            // Skip terms that are not binary comparisons
-            let ast::Expr::Binary(lhs, operator, rhs) = unwrap_parens(&term.expr)? else {
-                continue;
-            };
-            // Only consider index scans for binary ops that are comparisons
-            if !matches!(
-                *operator,
-                ast::Operator::Equals
-                    | ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals
-            ) {
+            if !is_potential_index_constraint(term, table_index) {
                 continue;
             }
 
-            // If both lhs and rhs refer to columns from this table, we can't use this constraint
-            // because we can't use the index to satisfy the condition.
-            // Examples:
-            // - WHERE t.x > t.y
-            // - WHERE t.x + 1 > t.y - 5
-            // - WHERE t.x = (t.x)
-            if determine_where_to_eval_expr(&lhs)? == EvalAt::Loop(table_index)
-                && determine_where_to_eval_expr(&rhs)? == EvalAt::Loop(table_index)
-            {
-                continue;
-            }
+            let ast::Expr::Binary(lhs, operator, rhs) = unwrap_parens(&term.expr)? else {
+                panic!("expected binary expression");
+            };
 
             // Check if lhs is a column that is in the i'th position of the index
             if Some(position_in_index) == get_column_position_in_index(lhs, table_index, index)? {

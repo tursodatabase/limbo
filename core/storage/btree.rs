@@ -3416,6 +3416,10 @@ impl BTreeCursor {
 
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<bool>> {
         assert!(self.mv_cursor.is_none());
+        // We need to clear the null flag for the table cursor before seeking,
+        // because it might have been set to false by an unmatched left-join row during the previous iteration
+        // on the outer loop.
+        self.set_null_flag(false);
         let rowid = return_if_io!(self.do_seek(key, op));
         self.rowid.replace(rowid);
         self.empty_record.replace(rowid.is_none());
@@ -3789,10 +3793,15 @@ impl BTreeCursor {
         }
     }
 
+    /// In outer joins, whenever the right-side table has no matching row, the query must still return a row
+    /// for each left-side row. In order to achieve this, we set the null flag on the right-side table cursor
+    /// so that it returns NULL for all columns until cleared.
+    #[inline(always)]
     pub fn set_null_flag(&mut self, flag: bool) {
         self.null_flag = flag;
     }
 
+    #[inline(always)]
     pub fn get_null_flag(&self) -> bool {
         self.null_flag
     }

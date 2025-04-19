@@ -62,6 +62,7 @@ pub fn translate_create_index(
             })
             .collect(),
         unique: unique_if_not_exists.0,
+        ephemeral: false,
     });
 
     // Allocate the necessary cursors:
