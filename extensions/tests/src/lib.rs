@@ -322,7 +322,7 @@ impl VTabModule for TableStats {
     type Error = String;
 
     fn create_schema(_args: &[Value]) -> String {
-        // Two columns, no hidden columns; rowid provided implicitly.
+        // table name, total rows
         "CREATE TABLE x(name TEXT, rows INT);".to_string()
     }
 
@@ -349,27 +349,39 @@ impl VTabModule for TableStats {
         // discover application tables
         let mut master = conn
             .prepare(
-                "SELECT name FROM sqlite_schema \
-                      WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
+                "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
             )
             .map_err(|_| ResultCode::Error)
             .unwrap();
 
-        while master.step() == StepResult::Row {
-            let tbl_name = master.get_row()[0]
-                .to_text()
-                .unwrap_or("<invalid>")
-                .to_string();
-
-            // count rows for each table; ignore errors to keep demo simple
-            if let Ok(mut count_stmt) =
-                conn.prepare(&format!("SELECT COUNT(*) FROM \"{}\";", tbl_name))
-            {
+        let mut tables = Vec::new();
+        while let StepResult::Row = master.step() {
+            let row = master.get_row();
+            let tbl = if let Some(val) = row.first() {
+                val.to_text().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            };
+            if tbl.is_empty() {
+                continue;
+            };
+            if row.get(1).is_some_and(|v| {
+                v.to_text()
+                    .unwrap()
+                    .contains(&format!("USING {}", Self::NAME))
+            }) {
+                continue;
+            }
+            tables.push(tbl);
+        }
+        for tbl in tables {
+            // count rows for each table
+            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {};", tbl)) {
                 let count = match count_stmt.step() {
                     StepResult::Row => count_stmt.get_row()[0].to_integer().unwrap_or(0),
                     _ => 0,
                 };
-                cursor.rows.push((tbl_name, count));
+                cursor.rows.push((tbl, count));
             }
         }
         ResultCode::OK
