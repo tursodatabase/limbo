@@ -319,6 +319,9 @@ pub fn open_loop(
                         // For each constraint used by best_index, translate the opposite side.
                         for (i, usage) in index_info.constraint_usages.iter().enumerate() {
                             if let Some(argv_index) = usage.argv_index {
+                                if argv_index == 0 {
+                                    continue;
+                                }
                                 if let Some(cinfo) = converted_constraints.get(i) {
                                     let (pred_idx, is_rhs) = cinfo.unpack_plan_info();
                                     if let ast::Expr::Binary(lhs, _, rhs) =
