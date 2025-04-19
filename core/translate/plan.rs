@@ -590,6 +590,10 @@ impl TableReference {
         };
         self.index_is_covering(index.as_ref())
     }
+
+    pub fn column_is_used(&self, index: usize) -> bool {
+        self.col_used_mask.get(index)
+    }
 }
 
 /// A definition of a rowid/index search.
