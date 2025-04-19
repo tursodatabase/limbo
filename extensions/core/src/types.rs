@@ -72,6 +72,12 @@ impl Display for ResultCode {
     }
 }
 
+impl Default for Value {
+    fn default() -> Self {
+        Self::null()
+    }
+}
+
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub enum StepResult {
     Error,
