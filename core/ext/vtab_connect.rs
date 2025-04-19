@@ -5,21 +5,28 @@ use std::{
     ffi::{c_char, c_void, CStr, CString},
     num::NonZeroUsize,
     ptr,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 pub unsafe extern "C" fn connect(ctx: *mut c_void) -> *mut ExtConn {
     if ctx.is_null() {
         return ptr::null_mut();
     }
-    Rc::increment_strong_count(ctx as *const Connection);
-    let ext_conn = ExtConn::new(ctx, prepare_stmt, close);
-    Box::into_raw(Box::new(ext_conn))
+    let rc_conn = Rc::from_raw(ctx as *const Connection); // temporarily own
+    let weak_box = Box::new(Rc::downgrade(&rc_conn)); // get weak reference
+    let weak_ptr = Box::into_raw(weak_box) as *mut c_void;
+    let _ = Rc::into_raw(rc_conn); // restore original count / return ownership
+    Box::into_raw(Box::new(ExtConn::new(weak_ptr, prepare_stmt, close)))
 }
 
 pub unsafe extern "C" fn close(ctx: *mut c_void) {
-    let conn = Rc::from_raw(ctx as *const Connection);
-    let _ = conn.close();
+    if ctx.is_null() {
+        return;
+    }
+    let weak_box: Box<Weak<Connection>> = Box::from_raw(ctx as *mut Weak<Connection>);
+    if let Some(conn) = weak_box.upgrade() {
+        let _ = conn.close();
+    }
 }
 
 pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> *const Stmt {
@@ -34,14 +41,17 @@ pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> 
     let Ok(extcon) = ExtConn::from_ptr(ctx) else {
         return ptr::null_mut();
     };
-    Rc::increment_strong_count(extcon._ctx as *const Connection);
-    let conn: Rc<Connection> = Rc::from_raw(extcon._ctx as *const Connection);
+    let weak_ptr = extcon._ctx as *const Weak<Connection>;
+    let weak = &*weak_ptr;
+    let Some(conn) = weak.upgrade() else {
+        return ptr::null_mut();
+    };
     match conn.prepare(&sql_str) {
         Ok(stmt) => {
-            let stmt = Box::new(stmt);
+            let raw_stmt = Box::into_raw(Box::new(stmt)) as *mut c_void;
             Box::into_raw(Box::new(Stmt::new(
-                Rc::into_raw(conn.clone()) as *mut c_void,
-                Box::into_raw(stmt) as *mut c_void,
+                extcon._ctx,
+                raw_stmt,
                 stmt_bind_args_fn,
                 stmt_step,
                 stmt_get_row,
@@ -82,21 +92,19 @@ pub unsafe extern "C" fn stmt_step(stmt: *mut Stmt) -> ResultCode {
     }
     let conn: &Connection = unsafe { &*(stmt._conn as *const Connection) };
     let stmt_ctx: &mut Statement = unsafe { &mut *(stmt._ctx as *mut Statement) };
-    loop {
-        match stmt_ctx.step() {
-            Ok(StepResult::Row) => return ResultCode::Row,
-            Ok(StepResult::Done) => return ResultCode::EOF,
-            Ok(StepResult::IO) => {
+    while let Ok(res) = stmt_ctx.step() {
+        match res {
+            StepResult::Row => return ResultCode::Row,
+            StepResult::Done => return ResultCode::EOF,
+            StepResult::IO => {
                 let _ = conn.pager.io.run_once();
                 continue;
             }
-            Ok(StepResult::Interrupt) => return ResultCode::Interrupt,
-            Ok(StepResult::Busy) => return ResultCode::Busy,
-            _ => {
-                return ResultCode::Error;
-            }
+            StepResult::Interrupt => return ResultCode::Interrupt,
+            StepResult::Busy => return ResultCode::Busy,
         }
     }
+    ResultCode::Error
 }
 
 pub unsafe extern "C" fn stmt_get_row(ctx: *mut Stmt) {
@@ -169,6 +177,9 @@ pub unsafe extern "C" fn stmt_close(ctx: *mut Stmt) {
         stmt.free_current_row();
     }
     // take ownership of internal statement
-    let mut stmt: Box<Statement> = Box::from_raw(stmt._ctx as *mut Statement);
-    stmt.reset()
+    let wrapper = Box::from_raw(stmt as *mut Stmt);
+    if !wrapper._ctx.is_null() {
+        let mut _stmt: Box<Statement> = Box::from_raw(wrapper._ctx as *mut Statement);
+        _stmt.reset()
+    }
 }

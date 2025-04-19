@@ -153,9 +153,10 @@ impl Connection {
         ResultCode::OK
     }
 
-    pub fn build_limbo_ext(&self) -> ExtensionApi {
+    pub fn build_limbo_ext(self: &Rc<Connection>) -> ExtensionApi {
+        let cloned = self.clone();
         ExtensionApi {
-            ctx: self as *const _ as *mut c_void,
+            ctx: Rc::into_raw(cloned) as *const _ as *mut c_void,
             conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
@@ -170,7 +171,7 @@ impl Connection {
         }
     }
 
-    pub fn register_builtins(&self) -> Result<(), String> {
+    pub fn register_builtins(self: &Rc<Connection>) -> Result<(), String> {
         #[allow(unused_variables)]
         let mut ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]
