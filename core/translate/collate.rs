@@ -4,7 +4,9 @@ use tracing::Level;
 
 // TODO: in the future allow user to define collation sequences
 // Will have to meddle with ffi for this
-#[derive(Debug, Eq, PartialEq, strum_macros::Display, Default)]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, strum_macros::Display, strum_macros::EnumString, Default,
+)]
 #[strum(ascii_case_insensitive)]
 /// **Pre defined collation sequences**\
 /// Collating functions only matter when comparing string values.

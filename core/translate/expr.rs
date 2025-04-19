@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 
 use super::emitter::Resolver;
@@ -55,7 +57,7 @@ macro_rules! emit_cmp_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_true,
                 flags: CmpInsFlags::default(),
-                collation: CollationSeq::default(),
+                collation: $program.curr_collation(),
             });
         } else {
             $program.emit_insn(Insn::$op_false {
@@ -63,7 +65,7 @@ macro_rules! emit_cmp_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_false,
                 flags: CmpInsFlags::default().jump_if_null(),
-                collation: CollationSeq::default(),
+                collation: $program.curr_collation(),
             });
         }
     }};
@@ -84,7 +86,7 @@ macro_rules! emit_cmp_null_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_true,
                 flags: CmpInsFlags::default().null_eq(),
-                collation: CollationSeq::default(),
+                collation: $program.curr_collation(),
             });
         } else {
             $program.emit_insn(Insn::$op_false {
@@ -92,7 +94,7 @@ macro_rules! emit_cmp_null_insn {
                 rhs: $rhs,
                 target_pc: $cond.jump_target_when_false,
                 flags: CmpInsFlags::default().null_eq(),
-                collation: CollationSeq::default(),
+                collation: $program.curr_collation(),
             });
         }
     }};
@@ -376,7 +378,7 @@ pub fn translate_condition_expr(
                             rhs: rhs_reg,
                             target_pc: jump_target_when_true,
                             flags: CmpInsFlags::default(),
-                            collation: CollationSeq::default(),
+                            collation: program.curr_collation(),
                         });
                     } else {
                         // If this is the last condition, we need to jump to the 'jump_target_when_false' label if there is no match.
@@ -385,7 +387,7 @@ pub fn translate_condition_expr(
                             rhs: rhs_reg,
                             target_pc: condition_metadata.jump_target_when_false,
                             flags: CmpInsFlags::default().jump_if_null(),
-                            collation: CollationSeq::default(),
+                            collation: program.curr_collation(),
                         });
                     }
                 }
@@ -407,7 +409,7 @@ pub fn translate_condition_expr(
                         rhs: rhs_reg,
                         target_pc: condition_metadata.jump_target_when_false,
                         flags: CmpInsFlags::default().jump_if_null(),
-                        collation: CollationSeq::default(),
+                        collation: program.curr_collation(),
                     });
                 }
                 // If we got here, then none of the conditions were a match, so we jump to the 'jump_target_when_true' label if 'jump_if_condition_is_true'.
@@ -561,15 +563,31 @@ pub fn translate_expr(
                 translate_expr(program, referenced_tables, e1, shared_reg, resolver)?;
 
                 emit_binary_insn(program, op, shared_reg, shared_reg, target_register)?;
+                program.reset_collation();
                 Ok(target_register)
             } else {
                 let e1_reg = program.alloc_registers(2);
                 let e2_reg = e1_reg + 1;
 
                 translate_expr(program, referenced_tables, e1, e1_reg, resolver)?;
+                let left_collation = program.curr_collation();
+                program.reset_collation();
+
                 translate_expr(program, referenced_tables, e2, e2_reg, resolver)?;
+                let right_collation = program.curr_collation();
+                program.reset_collation();
+
+                let collation = {
+                    match (left_collation, right_collation) {
+                        (Some(left), _) => Some(left),
+                        (None, Some(right)) => Some(right),
+                        _ => None,
+                    }
+                };
+                program.set_collation(collation);
 
                 emit_binary_insn(program, op, e1_reg, e2_reg, target_register)?;
+                program.reset_collation();
                 Ok(target_register)
             }
         }
@@ -618,7 +636,7 @@ pub fn translate_expr(
                         target_pc: next_case_label,
                         // A NULL result is considered untrue when evaluating WHEN terms.
                         flags: CmpInsFlags::default().jump_if_null(),
-                        collation: CollationSeq::default(),
+                        collation: program.curr_collation(),
                     }),
                     // CASE WHEN 0 THEN 0 ELSE 1 becomes ifnot 0 branch to next clause
                     None => program.emit_insn(Insn::IfNot {
@@ -689,7 +707,16 @@ pub fn translate_expr(
             });
             Ok(target_register)
         }
-        ast::Expr::Collate(_, _) => todo!(),
+        ast::Expr::Collate(expr, collation) => {
+            // First translate inner expr, then set the curr collation. If we set curr collation before,
+            // it may be overwritten later by inner translate.
+            translate_expr(program, referenced_tables, expr, target_register, resolver)?;
+            let collation = CollationSeq::from_str(collation).map_err(|_| {
+                crate::LimboError::ParseError(format!("no such collation sequence: {}", collation))
+            })?;
+            program.set_collation(Some(collation));
+            Ok(target_register)
+        }
         ast::Expr::DoublyQualified(_, _, _) => todo!(),
         ast::Expr::Exists(_) => todo!(),
         ast::Expr::FunctionCall {
@@ -2226,7 +2253,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2243,7 +2270,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2260,7 +2287,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2277,7 +2304,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2294,7 +2321,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2311,7 +2338,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2405,7 +2432,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default().null_eq(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,
@@ -2420,7 +2447,7 @@ fn emit_binary_insn(
                     rhs,
                     target_pc: if_true_label,
                     flags: CmpInsFlags::default().null_eq(),
-                    collation: CollationSeq::default(),
+                    collation: program.curr_collation(),
                 },
                 target_register,
                 if_true_label,

@@ -1,0 +1,30 @@
+#!/usr/bin/env tclsh
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
+# SIMPLE SMOKE TESTS THAT DO NOT DEPEND ON SPECIFIC DATABASE ROWS
+
+do_execsql_test collate-nocase {
+    SELECT 'hat' == 'hAt' COLLATE NOCASE;
+} {1}
+
+do_execsql_test collate-binary-1 {
+    SELECT 'hat' == 'hAt' COLLATE BINARY;
+} {0}
+
+do_execsql_test collate-binary-2 {
+    SELECT 'hat' == 'hat' COLLATE BINARY;
+} {1}
+
+do_execsql_test collate-rtrim-1 {
+    SELECT 'hat' == ' hAt ' COLLATE RTRIM;
+} {0}
+
+do_execsql_test collate-rtrim-2 {
+    SELECT 'hat' == ' hat ' COLLATE RTRIM;
+} {1}
+
+do_execsql_test collate-2 {
+    SELECT 'hat' == 'hat' COLLATE NOCASE;
+} {1}

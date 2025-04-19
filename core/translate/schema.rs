@@ -21,8 +21,6 @@ use crate::{bail_parse_error, Result};
 use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
-use super::collate::CollationSeq;
-
 #[derive(Debug, Clone, Copy)]
 pub enum ParseSchema {
     None,
@@ -692,7 +690,7 @@ pub fn translate_drop_table(
         rhs: table_reg,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
-        collation: CollationSeq::default(),
+        collation: program.curr_collation(),
     });
     program.emit_insn(Insn::Column {
         cursor_id: sqlite_schema_cursor_id,
@@ -704,7 +702,7 @@ pub fn translate_drop_table(
         rhs: table_type,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
-        collation: CollationSeq::default(),
+        collation: program.curr_collation(),
     });
     program.emit_insn(Insn::RowId {
         cursor_id: sqlite_schema_cursor_id,

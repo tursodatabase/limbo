@@ -537,6 +537,7 @@ pub fn op_eq(
     let cond = *state.registers[lhs].get_owned_value() == *state.registers[rhs].get_owned_value();
     let nulleq = flags.has_nulleq();
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -548,7 +549,7 @@ pub fn op_eq(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_eq() {
                 state.pc = target_pc.to_offset_int();
@@ -591,6 +592,7 @@ pub fn op_ne(
     let cond = *state.registers[lhs].get_owned_value() != *state.registers[rhs].get_owned_value();
     let nulleq = flags.has_nulleq();
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -602,7 +604,7 @@ pub fn op_ne(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_ne() {
                 state.pc = target_pc.to_offset_int();
@@ -643,6 +645,7 @@ pub fn op_lt(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -654,7 +657,7 @@ pub fn op_lt(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_lt() {
                 state.pc = target_pc.to_offset_int();
@@ -695,6 +698,7 @@ pub fn op_le(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -706,7 +710,7 @@ pub fn op_le(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_le() {
                 state.pc = target_pc.to_offset_int();
@@ -747,6 +751,7 @@ pub fn op_gt(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -758,7 +763,7 @@ pub fn op_gt(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_gt() {
                 state.pc = target_pc.to_offset_int();
@@ -799,6 +804,7 @@ pub fn op_ge(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
         state.registers[lhs].get_owned_value(),
         state.registers[rhs].get_owned_value(),
@@ -810,7 +816,7 @@ pub fn op_ge(
                 state.pc += 1;
             }
         }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+        (Value::Text(lhs), Value::Text(rhs)) => {
             let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
             if order.is_ge() {
                 state.pc = target_pc.to_offset_int();

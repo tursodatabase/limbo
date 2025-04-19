@@ -916,6 +916,7 @@ fn emit_update_insns(
             rhs: idx_rowid_reg,
             target_pc: constraint_check,
             flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
+            collation: program.curr_collation(),
         });
 
         program.emit_insn(Insn::Halt {
@@ -945,6 +946,7 @@ fn emit_update_insns(
                 rhs: beg,
                 target_pc: record_label,
                 flags: CmpInsFlags::default(),
+                collation: program.curr_collation(),
             });
 
             program.emit_insn(Insn::NotExists {
