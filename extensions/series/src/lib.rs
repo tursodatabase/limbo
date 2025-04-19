@@ -233,7 +233,7 @@ mod tests {
     // Helper function to collect all values from a cursor, returns Result with error code
     fn collect_series(series: Series) -> Result<Vec<i64>, ResultCode> {
         let tbl = GenerateSeriesVTab;
-        let mut cursor = tbl.open()?;
+        let mut cursor = tbl.open(None)?;
 
         // Create args array for filter
         let args = vec![
@@ -550,7 +550,7 @@ mod tests {
         let stop = series.stop;
         let step = series.step;
         let tbl = GenerateSeriesVTab {};
-        let mut cursor = tbl.open().unwrap();
+        let mut cursor = tbl.open(None).unwrap();
 
         let args = vec![
             Value::from_integer(start),
