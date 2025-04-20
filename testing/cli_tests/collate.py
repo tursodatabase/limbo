@@ -67,17 +67,23 @@ class CollateTest(BaseModel):
             "SELECT x FROM t1 WHERE a = d ORDER BY x;",
             "\n".join(map(lambda x: str(x), [1, 4])),
         )
-        
+
         limbo.run_test(
             "Text comparison 'abc'=c is performed using the RTRIM collating sequence.",
             "SELECT x FROM t1 WHERE 'abc' = c ORDER BY x;",
             "\n".join(map(lambda x: str(x), [1, 2, 3])),
         )
-        
+
         limbo.run_test(
             "Text comparison c='abc' is performed using the RTRIM collating sequence.",
             "SELECT x FROM t1 WHERE c = 'abc' ORDER BY x;",
             "\n".join(map(lambda x: str(x), [1, 2, 3])),
+        )
+
+        limbo.run_test(
+            " Grouping is performed using the NOCASE collating sequence (Values 'abc', 'ABC', and 'Abc' are placed in the same group).",
+            "SELECT count(*) FROM t1 GROUP BY d ORDER BY 1;",
+            "\n".join(map(lambda x: str(x), [4])),
         )
 
 

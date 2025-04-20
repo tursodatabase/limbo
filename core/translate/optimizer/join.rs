@@ -1205,6 +1205,7 @@ mod tests {
             notnull: false,
             default: None,
             unique: false,
+            collation: None,
         }
     }
     fn _create_column_of_type(name: &str, ty: Type) -> Column {

@@ -141,12 +141,13 @@ pub fn insn_to_str(
                 start_reg_a,
                 start_reg_b,
                 count,
+                collation,
             } => (
                 "Compare",
                 *start_reg_a as i32,
                 *start_reg_b as i32,
                 *count as i32,
-                Value::build_text(""),
+                Value::build_text(&format!("k({count}, {})", collation.unwrap_or_default())),
                 0,
                 format!(
                     "r[{}..{}]==r[{}..{}]",

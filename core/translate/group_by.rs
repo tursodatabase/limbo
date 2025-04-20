@@ -462,6 +462,7 @@ pub fn group_by_process_single_group(
         start_reg_a: registers.reg_group_exprs_cmp,
         start_reg_b: groups_start_reg,
         count: group_by.exprs.len(),
+        collation: program.curr_collation(),
     });
 
     program.add_comment(

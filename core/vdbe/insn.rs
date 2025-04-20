@@ -153,6 +153,7 @@ pub enum Insn {
         start_reg_a: usize,
         start_reg_b: usize,
         count: usize,
+        collation: Option<CollationSeq>,
     },
     /// Place the result of rhs bitwise AND lhs in third register.
     BitAnd {
