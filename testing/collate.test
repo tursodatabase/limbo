@@ -25,6 +25,10 @@ do_execsql_test collate-rtrim-2 {
     SELECT 'hat' == ' hat ' COLLATE RTRIM;
 } {1}
 
-do_execsql_test collate-2 {
-    SELECT 'hat' == 'hat' COLLATE NOCASE;
+do_execsql_test collate-left-precedence {
+    SELECT 'hat' COLLATE BINARY == 'hAt' COLLATE NOCASE;
+} {0}
+
+do_execsql_test collate-left-precedence-2 {
+    SELECT 'hat' COLLATE NOCASE == 'hAt' COLLATE BINARY;
 } {1}

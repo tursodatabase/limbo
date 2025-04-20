@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 
 use super::emitter::Resolver;
@@ -711,9 +709,7 @@ pub fn translate_expr(
             // First translate inner expr, then set the curr collation. If we set curr collation before,
             // it may be overwritten later by inner translate.
             translate_expr(program, referenced_tables, expr, target_register, resolver)?;
-            let collation = CollationSeq::from_str(collation).map_err(|_| {
-                crate::LimboError::ParseError(format!("no such collation sequence: {}", collation))
-            })?;
+            let collation = CollationSeq::new(collation)?;
             program.set_collation(Some(collation));
             Ok(target_register)
         }
@@ -1876,6 +1872,11 @@ pub fn translate_expr(
             let table_reference = referenced_tables.as_ref().unwrap().get(*table).unwrap();
             let index = table_reference.op.index();
             let use_covering_index = table_reference.utilizes_covering_index();
+
+            let Some(table_column) = table_reference.table.get_column_at(*column) else {
+                crate::bail_parse_error!("column index out of bounds");
+            };
+            program.set_collation(table_column.collation);
             match table_reference.op {
                 // If we are reading a column from a table, we find the cursor that corresponds to
                 // the table and read the column from the cursor.
@@ -1926,10 +1927,7 @@ pub fn translate_expr(
                                     dest: target_register,
                                 });
                             }
-                            let Some(column) = table_reference.table.get_column_at(*column) else {
-                                crate::bail_parse_error!("column index out of bounds");
-                            };
-                            maybe_apply_affinity(column.ty, target_register, program);
+                            maybe_apply_affinity(table_column.ty, target_register, program);
                             Ok(target_register)
                         }
                         Table::Virtual(_) => {

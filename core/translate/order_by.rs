@@ -73,6 +73,7 @@ pub fn emit_order_by(
             notnull: false,
             default: None,
             unique: false,
+            collation: None,
         });
     }
     for i in 0..result_columns.len() {
@@ -92,6 +93,7 @@ pub fn emit_order_by(
             notnull: false,
             default: None,
             unique: false,
+            collation: None,
         });
     }
 

@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, str::FromStr as _};
 
 use tracing::Level;
 
@@ -22,6 +22,12 @@ pub enum CollationSeq {
 }
 
 impl CollationSeq {
+    pub fn new(collation: &str) -> crate::Result<Self> {
+        CollationSeq::from_str(collation).map_err(|_| {
+            crate::LimboError::ParseError(format!("no such collation sequence: {}", collation))
+        })
+    }
+
     pub fn compare_strings(&self, lhs: &str, rhs: &str) -> Ordering {
         tracing::event!(Level::DEBUG, collate = %self, lhs, rhs);
         match self {
