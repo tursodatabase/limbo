@@ -18,12 +18,20 @@ do_execsql_test collate-binary-2 {
 } {1}
 
 do_execsql_test collate-rtrim-1 {
-    SELECT 'hat' == ' hAt ' COLLATE RTRIM;
+    SELECT 'hat' == 'hAt ' COLLATE RTRIM;
 } {0}
 
 do_execsql_test collate-rtrim-2 {
-    SELECT 'hat' == ' hat ' COLLATE RTRIM;
+    SELECT 'hat' == 'hat ' COLLATE RTRIM;
 } {1}
+
+do_execsql_test collate-rtrim-3 {
+    SELECT 'hat' == ' hAt ' COLLATE RTRIM;
+} {0}
+
+do_execsql_test collate-rtrim-4 {
+    SELECT 'hat' == ' hat ' COLLATE RTRIM;
+} {0}
 
 do_execsql_test collate-left-precedence {
     SELECT 'hat' COLLATE BINARY == 'hAt' COLLATE NOCASE;

@@ -48,6 +48,6 @@ impl CollationSeq {
     }
 
     fn rtrim_cmp(lhs: &str, rhs: &str) -> Ordering {
-        lhs.trim().cmp(rhs.trim())
+        lhs.trim_end().cmp(rhs.trim_end())
     }
 }
