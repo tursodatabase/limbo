@@ -41,8 +41,8 @@ pub struct ProgramBuilder {
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
-    /// Stack of collation definitions encountered
-    collation: Option<CollationSeq>,
+    /// Curr collation sequence. Bool indicates whether it was set by a COLLATE expr
+    collation: Option<(CollationSeq, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -595,12 +595,16 @@ impl ProgramBuilder {
             .unwrap_or_else(|| panic!("Cursor not found: {}", table_identifier))
     }
 
-    pub fn set_collation(&mut self, c: Option<CollationSeq>) {
-        self.collation = c;
+    pub fn set_collation(&mut self, c: Option<(CollationSeq, bool)>) {
+        self.collation = c
+    }
+
+    pub fn curr_collation_ctx(&self) -> Option<(CollationSeq, bool)> {
+        self.collation
     }
 
     pub fn curr_collation(&self) -> Option<CollationSeq> {
-        self.collation
+        self.collation.map(|c| c.0)
     }
 
     pub fn reset_collation(&mut self) {

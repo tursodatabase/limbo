@@ -40,63 +40,6 @@ fn emit_cond_jump(program: &mut ProgramBuilder, cond_meta: ConditionMetadata, re
         });
     }
 }
-macro_rules! emit_cmp_insn {
-    (
-        $program:expr,
-        $cond:expr,
-        $op_true:ident,
-        $op_false:ident,
-        $lhs:expr,
-        $rhs:expr
-    ) => {{
-        if $cond.jump_if_condition_is_true {
-            $program.emit_insn(Insn::$op_true {
-                lhs: $lhs,
-                rhs: $rhs,
-                target_pc: $cond.jump_target_when_true,
-                flags: CmpInsFlags::default(),
-                collation: $program.curr_collation(),
-            });
-        } else {
-            $program.emit_insn(Insn::$op_false {
-                lhs: $lhs,
-                rhs: $rhs,
-                target_pc: $cond.jump_target_when_false,
-                flags: CmpInsFlags::default().jump_if_null(),
-                collation: $program.curr_collation(),
-            });
-        }
-    }};
-}
-
-macro_rules! emit_cmp_null_insn {
-    (
-        $program:expr,
-        $cond:expr,
-        $op_true:ident,
-        $op_false:ident,
-        $lhs:expr,
-        $rhs:expr
-    ) => {{
-        if $cond.jump_if_condition_is_true {
-            $program.emit_insn(Insn::$op_true {
-                lhs: $lhs,
-                rhs: $rhs,
-                target_pc: $cond.jump_target_when_true,
-                flags: CmpInsFlags::default().null_eq(),
-                collation: $program.curr_collation(),
-            });
-        } else {
-            $program.emit_insn(Insn::$op_false {
-                lhs: $lhs,
-                rhs: $rhs,
-                target_pc: $cond.jump_target_when_false,
-                flags: CmpInsFlags::default().null_eq(),
-                collation: $program.curr_collation(),
-            });
-        }
-    }};
-}
 
 macro_rules! expect_arguments_exact {
     (
@@ -245,51 +188,6 @@ pub fn translate_condition_expr(
                 condition_metadata,
                 resolver,
             )?;
-        }
-        ast::Expr::Binary(lhs, op, rhs)
-            if matches!(
-                op,
-                ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals
-                    | ast::Operator::Equals
-                    | ast::Operator::NotEquals
-                    | ast::Operator::Is
-                    | ast::Operator::IsNot
-            ) =>
-        {
-            let lhs_reg = program.alloc_register();
-            let rhs_reg = program.alloc_register();
-            translate_expr(program, Some(referenced_tables), lhs, lhs_reg, resolver)?;
-            translate_expr(program, Some(referenced_tables), rhs, rhs_reg, resolver)?;
-            match op {
-                ast::Operator::Greater => {
-                    emit_cmp_insn!(program, condition_metadata, Gt, Le, lhs_reg, rhs_reg)
-                }
-                ast::Operator::GreaterEquals => {
-                    emit_cmp_insn!(program, condition_metadata, Ge, Lt, lhs_reg, rhs_reg)
-                }
-                ast::Operator::Less => {
-                    emit_cmp_insn!(program, condition_metadata, Lt, Ge, lhs_reg, rhs_reg)
-                }
-                ast::Operator::LessEquals => {
-                    emit_cmp_insn!(program, condition_metadata, Le, Gt, lhs_reg, rhs_reg)
-                }
-                ast::Operator::Equals => {
-                    emit_cmp_insn!(program, condition_metadata, Eq, Ne, lhs_reg, rhs_reg)
-                }
-                ast::Operator::NotEquals => {
-                    emit_cmp_insn!(program, condition_metadata, Ne, Eq, lhs_reg, rhs_reg)
-                }
-                ast::Operator::Is => {
-                    emit_cmp_null_insn!(program, condition_metadata, Eq, Ne, lhs_reg, rhs_reg)
-                }
-                ast::Operator::IsNot => {
-                    emit_cmp_null_insn!(program, condition_metadata, Ne, Eq, lhs_reg, rhs_reg)
-                }
-                _ => unreachable!(),
-            }
         }
         ast::Expr::Binary(_, _, _) => {
             let result_reg = program.alloc_register();
@@ -568,21 +466,41 @@ pub fn translate_expr(
                 let e2_reg = e1_reg + 1;
 
                 translate_expr(program, referenced_tables, e1, e1_reg, resolver)?;
-                let left_collation = program.curr_collation();
+                let left_collation = program.curr_collation_ctx();
                 program.reset_collation();
 
                 translate_expr(program, referenced_tables, e2, e2_reg, resolver)?;
-                let right_collation = program.curr_collation();
+                let right_collation = program.curr_collation_ctx();
                 program.reset_collation();
 
-                let collation = {
+                /*
+                 * The rules for determining which collating function to use for a binary comparison
+                 * operator (=, <, >, <=, >=, !=, IS, and IS NOT) are as follows:
+                 *
+                 * 1. If either operand has an explicit collating function assignment using the postfix COLLATE operator,
+                 * then the explicit collating function is used for comparison,
+                 * with precedence to the collating function of the left operand.
+                 *
+                 * 2. If either operand is a column, then the collating function of that column is used
+                 * with precedence to the left operand. For the purposes of the previous sentence,
+                 * a column name preceded by one or more unary "+" operators and/or CAST operators is still considered a column name.
+                 *
+                 * 3. Otherwise, the BINARY collating function is used for comparison.
+                 */
+                let collation_ctx = {
                     match (left_collation, right_collation) {
-                        (Some(left), _) => Some(left),
-                        (None, Some(right)) => Some(right),
+                        (Some((c_left, true)), _) => Some((c_left, true)),
+                        (Some((c_left, from_collate_left)), Some((_, false))) => {
+                            Some((c_left, from_collate_left))
+                        }
+                        (Some((_, false)), Some((c_right, true))) => Some((c_right, true)),
+                        (None, Some((c_right, from_collate_right))) => {
+                            Some((c_right, from_collate_right))
+                        }
                         _ => None,
                     }
                 };
-                program.set_collation(collation);
+                program.set_collation(collation_ctx);
 
                 emit_binary_insn(program, op, e1_reg, e2_reg, target_register)?;
                 program.reset_collation();
@@ -710,7 +628,7 @@ pub fn translate_expr(
             // it may be overwritten later by inner translate.
             translate_expr(program, referenced_tables, expr, target_register, resolver)?;
             let collation = CollationSeq::new(collation)?;
-            program.set_collation(Some(collation));
+            program.set_collation(Some((collation, true)));
             Ok(target_register)
         }
         ast::Expr::DoublyQualified(_, _, _) => todo!(),
@@ -1876,7 +1794,8 @@ pub fn translate_expr(
             let Some(table_column) = table_reference.table.get_column_at(*column) else {
                 crate::bail_parse_error!("column index out of bounds");
             };
-            program.set_collation(table_column.collation);
+            // Counter intuitive but a column always needs to have a collation
+            program.set_collation(Some((table_column.collation.unwrap_or_default(), false)));
             match table_reference.op {
                 // If we are reading a column from a table, we find the cursor that corresponds to
                 // the table and read the column from the cursor.
