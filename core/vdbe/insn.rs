@@ -608,6 +608,7 @@ pub enum Insn {
         cursor_id: CursorID,   // P1
         columns: usize,        // P2
         order: Vec<SortOrder>, // P4.
+        collation: Option<CollationSeq>,
     },
 
     /// Insert a row into the sorter.

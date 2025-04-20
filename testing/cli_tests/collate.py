@@ -81,9 +81,21 @@ class CollateTest(BaseModel):
         )
 
         limbo.run_test(
-            " Grouping is performed using the NOCASE collating sequence (Values 'abc', 'ABC', and 'Abc' are placed in the same group).",
+            "Grouping is performed using the NOCASE collating sequence (Values 'abc', 'ABC', and 'Abc' are placed in the same group).",
             "SELECT count(*) FROM t1 GROUP BY d ORDER BY 1;",
             "\n".join(map(lambda x: str(x), [4])),
+        )
+
+        limbo.run_test(
+            "Grouping is performed using the BINARY collating sequence. 'abc' and 'ABC' and 'Abc' form different groups",
+            "SELECT count(*) FROM t1 GROUP BY (d || '') ORDER BY 1;",
+            "\n".join(map(lambda x: str(x), [1, 1, 2])),
+        )
+        
+        limbo.run_test(
+            "Sorting or column c is performed using the RTRIM collating sequence.",
+            "SELECT x FROM t1 ORDER BY c, x;",
+            "\n".join(map(lambda x: str(x), [4, 1, 2, 3])),
         )
 
 

@@ -5,6 +5,7 @@ use limbo_sqlite3_parser::ast;
 use crate::{
     function::AggFunc,
     schema::{Column, PseudoTable},
+    translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
@@ -117,10 +118,41 @@ pub fn init_group_by(
     let row_source = if let Some(sort_order) = group_by.sort_order.as_ref() {
         let sort_cursor = program.alloc_cursor_id(None, CursorType::Sorter);
         let sorter_column_count = plan.group_by_sorter_column_count();
+        // Should work the same way as Order By
+        /*
+         * Terms of the ORDER BY clause that is part of a SELECT statement may be assigned a collating sequence using the COLLATE operator,
+         * in which case the specified collating function is used for sorting.
+         * Otherwise, if the expression sorted by an ORDER BY clause is a column,
+         * then the collating sequence of the column is used to determine sort order.
+         * If the expression is not a column and has no COLLATE clause, then the BINARY collating sequence is used.
+         */
+        let mut collation = None;
+        for expr in group_by.exprs.iter() {
+            match expr {
+                ast::Expr::Collate(_, collation_name) => {
+                    collation = Some(CollationSeq::new(collation_name)?);
+                    break;
+                }
+                ast::Expr::Column { table, column, .. } => {
+                    let table_reference = plan.table_references.get(*table).unwrap();
+
+                    let Some(table_column) = table_reference.table.get_column_at(*column) else {
+                        crate::bail_parse_error!("column index out of bounds");
+                    };
+
+                    if table_column.collation.is_some() {
+                        collation = table_column.collation;
+                        break;
+                    }
+                }
+                _ => {}
+            };
+        }
         program.emit_insn(Insn::SorterOpen {
             cursor_id: sort_cursor,
             columns: sorter_column_count,
             order: sort_order.clone(),
+            collation,
         });
         let pseudo_cursor = group_by_create_pseudo_table(program, sorter_column_count);
         GroupByRowSource::Sorter {

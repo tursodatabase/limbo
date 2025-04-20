@@ -886,14 +886,21 @@ pub fn insn_to_str(
                 cursor_id,
                 columns,
                 order,
+                collation,
             } => {
                 let _p4 = String::new();
-                // TODO: to_print should also print the Collation Sequence
                 let to_print: Vec<String> = order
                     .iter()
-                    .map(|v| match v {
-                        SortOrder::Asc => "B".to_string(),
-                        SortOrder::Desc => "-B".to_string(),
+                    .enumerate()
+                    .map(|(idx, v)| {
+                        if idx == 0 {
+                            collation.unwrap_or_default().to_string()
+                        } else {
+                            match v {
+                                SortOrder::Asc => "B".to_string(),
+                                SortOrder::Desc => "-B".to_string(),
+                            }
+                        }
                     })
                     .collect();
                 (

@@ -2765,11 +2765,12 @@ pub fn op_sorter_open(
         cursor_id,
         columns: _,
         order,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let cursor = Sorter::new(order);
+    let cursor = Sorter::new(order, collation.unwrap_or_default());
     let mut cursors = state.cursors.borrow_mut();
     cursors
         .get_mut(*cursor_id)

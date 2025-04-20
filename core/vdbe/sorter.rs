@@ -1,21 +1,26 @@
 use limbo_sqlite3_parser::ast::SortOrder;
 
-use crate::types::{compare_immutable, ImmutableRecord, IndexKeySortOrder};
+use crate::{
+    translate::collate::CollationSeq,
+    types::{compare_immutable, ImmutableRecord, IndexKeySortOrder},
+};
 
 pub struct Sorter {
     records: Vec<ImmutableRecord>,
     current: Option<ImmutableRecord>,
     order: IndexKeySortOrder,
     key_len: usize,
+    collation: CollationSeq,
 }
 
 impl Sorter {
-    pub fn new(order: &[SortOrder]) -> Self {
+    pub fn new(order: &[SortOrder], collation: CollationSeq) -> Self {
         Self {
             records: Vec::new(),
             current: None,
             key_len: order.len(),
             order: IndexKeySortOrder::from_list(order),
+            collation,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -33,6 +38,7 @@ impl Sorter {
                 &a.values[..self.key_len],
                 &b.values[..self.key_len],
                 self.order,
+                self.collation,
             )
         });
         self.records.reverse();
