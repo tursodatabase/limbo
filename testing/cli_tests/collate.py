@@ -91,11 +91,23 @@ class CollateTest(BaseModel):
             "SELECT count(*) FROM t1 GROUP BY (d || '') ORDER BY 1;",
             "\n".join(map(lambda x: str(x), [1, 1, 2])),
         )
-        
+
         limbo.run_test(
             "Sorting or column c is performed using the RTRIM collating sequence.",
             "SELECT x FROM t1 ORDER BY c, x;",
             "\n".join(map(lambda x: str(x), [4, 1, 2, 3])),
+        )
+
+        limbo.run_test(
+            "Sorting of (c||'') is performed using the BINARY collating sequence.",
+            "SELECT x FROM t1 ORDER BY (c||''), x;",
+            "\n".join(map(lambda x: str(x), [4, 2, 3, 1])),
+        )
+
+        limbo.run_test(
+            "Sorting of column c is performed using the NOCASE collating sequence.",
+            "SELECT x FROM t1 ORDER BY c COLLATE NOCASE, x;",
+            "\n".join(map(lambda x: str(x), [2, 4, 3, 1])),
         )
 
 
