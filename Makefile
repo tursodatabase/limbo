@@ -66,7 +66,7 @@ uv-sync:
 	uv sync --all-packages
 .PHONE: uv-sync
 
-test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update
+test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update test-collate
 .PHONY: test
 
 test-extensions: limbo uv-sync
@@ -109,6 +109,10 @@ test-write: limbo uv-sync
 test-update: limbo uv-sync
 	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-update
 .PHONY: test-update
+
+test-collate: limbo uv-sync
+	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-collate
+.PHONY: test-collate
 
 clickbench:
 	./perf/clickbench/benchmark.sh

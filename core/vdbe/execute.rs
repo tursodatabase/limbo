@@ -347,6 +347,7 @@ pub fn op_compare(
         start_reg_a,
         start_reg_b,
         count,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -354,6 +355,7 @@ pub fn op_compare(
     let start_reg_a = *start_reg_a;
     let start_reg_b = *start_reg_b;
     let count = *count;
+    let collation = collation.unwrap_or_default();
 
     if start_reg_a + count > start_reg_b {
         return Err(LimboError::InternalError(
@@ -365,7 +367,12 @@ pub fn op_compare(
     for i in 0..count {
         let a = state.registers[start_reg_a + i].get_owned_value();
         let b = state.registers[start_reg_b + i].get_owned_value();
-        cmp = Some(a.cmp(b));
+        cmp = match (a, b) {
+            (OwnedValue::Text(left), OwnedValue::Text(right)) => {
+                Some(collation.compare_strings(left.as_str(), right.as_str()))
+            }
+            _ => Some(a.cmp(b)),
+        };
         if cmp != Some(std::cmp::Ordering::Equal) {
             break;
         }
@@ -508,6 +515,7 @@ pub fn op_eq(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -519,9 +527,10 @@ pub fn op_eq(
     let cond = *state.registers[lhs].get_owned_value() == *state.registers[rhs].get_owned_value();
     let nulleq = flags.has_nulleq();
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if (nulleq && cond) || (!nulleq && jump_if_null) {
@@ -530,8 +539,16 @@ pub fn op_eq(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() == *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_eq() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs == *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -553,6 +570,7 @@ pub fn op_ne(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -564,9 +582,10 @@ pub fn op_ne(
     let cond = *state.registers[lhs].get_owned_value() != *state.registers[rhs].get_owned_value();
     let nulleq = flags.has_nulleq();
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if (nulleq && cond) || (!nulleq && jump_if_null) {
@@ -575,8 +594,16 @@ pub fn op_ne(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() != *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_ne() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs != *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -598,6 +625,7 @@ pub fn op_lt(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -607,9 +635,10 @@ pub fn op_lt(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if jump_if_null {
@@ -618,8 +647,16 @@ pub fn op_lt(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() < *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_lt() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs < *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -641,6 +678,7 @@ pub fn op_le(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -650,9 +688,10 @@ pub fn op_le(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if jump_if_null {
@@ -661,8 +700,16 @@ pub fn op_le(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() <= *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_le() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs <= *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -684,6 +731,7 @@ pub fn op_gt(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -693,9 +741,10 @@ pub fn op_gt(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if jump_if_null {
@@ -704,8 +753,16 @@ pub fn op_gt(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() > *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_gt() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs > *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -727,6 +784,7 @@ pub fn op_ge(
         rhs,
         target_pc,
         flags,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -736,9 +794,10 @@ pub fn op_ge(
     let rhs = *rhs;
     let target_pc = *target_pc;
     let jump_if_null = flags.has_jump_if_null();
+    let collation = collation.unwrap_or_default();
     match (
-        &state.registers[lhs].get_owned_value(),
-        &state.registers[rhs].get_owned_value(),
+        state.registers[lhs].get_owned_value(),
+        state.registers[rhs].get_owned_value(),
     ) {
         (_, OwnedValue::Null) | (OwnedValue::Null, _) => {
             if jump_if_null {
@@ -747,8 +806,16 @@ pub fn op_ge(
                 state.pc += 1;
             }
         }
-        _ => {
-            if *state.registers[lhs].get_owned_value() >= *state.registers[rhs].get_owned_value() {
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => {
+            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
+            if order.is_ge() {
+                state.pc = target_pc.to_offset_int();
+            } else {
+                state.pc += 1;
+            }
+        }
+        (lhs, rhs) => {
+            if *lhs >= *rhs {
                 state.pc = target_pc.to_offset_int();
             } else {
                 state.pc += 1;
@@ -2688,6 +2755,7 @@ pub fn op_sorter_open(
         cursor_id,
         columns: _,
         order,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2700,7 +2768,7 @@ pub fn op_sorter_open(
             _ => unreachable!(),
         })
         .collect();
-    let cursor = Sorter::new(order);
+    let cursor = Sorter::new(order, collation.unwrap_or_default());
     let mut cursors = state.cursors.borrow_mut();
     cursors
         .get_mut(*cursor_id)

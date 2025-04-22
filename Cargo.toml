@@ -50,6 +50,8 @@ limbo_series = { path = "extensions/series", version = "0.0.19" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.19" }
 limbo_time = { path = "extensions/time", version = "0.0.19" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.19" }
+strum = { version = "0.26", features = ["derive"] }
+strum_macros = "0.26"
 
 [profile.release]
 debug = "line-tables-only"

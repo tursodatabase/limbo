@@ -270,7 +270,7 @@ pub fn emit_query<'a>(
 
     // Initialize cursors and other resources needed for query execution
     if let Some(ref mut order_by) = plan.order_by {
-        init_order_by(program, t_ctx, order_by)?;
+        init_order_by(program, t_ctx, order_by, &plan.table_references)?;
     }
 
     if let Some(ref group_by) = plan.group_by {

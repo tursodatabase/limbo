@@ -4,6 +4,7 @@ use limbo_sqlite3_parser::ast;
 
 use crate::{
     schema::{Column, PseudoTable},
+    translate::collate::CollationSeq,
     types::{OwnedValue, Record},
     util::exprs_are_equivalent,
     vdbe::{
@@ -16,7 +17,7 @@ use crate::{
 use super::{
     emitter::TranslateCtx,
     expr::translate_expr,
-    plan::{Direction, ResultSetColumn, SelectPlan},
+    plan::{Direction, ResultSetColumn, SelectPlan, TableReference},
     result_row::{emit_offset, emit_result_row_and_limit},
 };
 
@@ -34,6 +35,7 @@ pub fn init_order_by(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     order_by: &[(ast::Expr, Direction)],
+    referenced_tables: &[TableReference],
 ) -> Result<()> {
     let sort_cursor = program.alloc_cursor_id(None, CursorType::Sorter);
     t_ctx.meta_sort = Some(SortMetadata {
@@ -44,10 +46,41 @@ pub fn init_order_by(
     for (_, direction) in order_by.iter() {
         order.push(OwnedValue::Integer(*direction as i64));
     }
+
+    /*
+     * Terms of the ORDER BY clause that is part of a SELECT statement may be assigned a collating sequence using the COLLATE operator,
+     * in which case the specified collating function is used for sorting.
+     * Otherwise, if the expression sorted by an ORDER BY clause is a column,
+     * then the collating sequence of the column is used to determine sort order.
+     * If the expression is not a column and has no COLLATE clause, then the BINARY collating sequence is used.
+     */
+    let mut collation = None;
+    for (expr, _) in order_by.iter() {
+        match expr {
+            ast::Expr::Collate(_, collation_name) => {
+                collation = Some(CollationSeq::new(collation_name)?);
+                break;
+            }
+            ast::Expr::Column { table, column, .. } => {
+                let table_reference = referenced_tables.get(*table).unwrap();
+
+                let Some(table_column) = table_reference.table.get_column_at(*column) else {
+                    crate::bail_parse_error!("column index out of bounds");
+                };
+
+                if table_column.collation.is_some() {
+                    collation = table_column.collation;
+                    break;
+                }
+            }
+            _ => {}
+        };
+    }
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sort_cursor,
         columns: order_by.len(),
         order: Record::new(order),
+        collation,
     });
     Ok(())
 }
@@ -77,6 +110,7 @@ pub fn emit_order_by(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            collation: None,
         });
     }
     for i in 0..result_columns.len() {
@@ -95,6 +129,7 @@ pub fn emit_order_by(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            collation: None,
         });
     }
 

@@ -5,6 +5,7 @@ use limbo_sqlite3_parser::ast;
 use crate::{
     function::AggFunc,
     schema::{Column, PseudoTable},
+    translate::collate::CollationSeq,
     types::{OwnedValue, Record},
     util::exprs_are_equivalent,
     vdbe::{
@@ -79,10 +80,42 @@ pub fn init_group_by(
     for _ in group_by.exprs.iter() {
         order.push(OwnedValue::Integer(ASCENDING));
     }
+
+    // Should work the same way as Order By
+    /*
+     * Terms of the ORDER BY clause that is part of a SELECT statement may be assigned a collating sequence using the COLLATE operator,
+     * in which case the specified collating function is used for sorting.
+     * Otherwise, if the expression sorted by an ORDER BY clause is a column,
+     * then the collating sequence of the column is used to determine sort order.
+     * If the expression is not a column and has no COLLATE clause, then the BINARY collating sequence is used.
+     */
+    let mut collation = None;
+    for expr in group_by.exprs.iter() {
+        match expr {
+            ast::Expr::Collate(_, collation_name) => {
+                collation = Some(CollationSeq::new(collation_name)?);
+                break;
+            }
+            ast::Expr::Column { table, column, .. } => {
+                let table_reference = plan.table_references.get(*table).unwrap();
+
+                let Some(table_column) = table_reference.table.get_column_at(*column) else {
+                    crate::bail_parse_error!("column index out of bounds");
+                };
+
+                if table_column.collation.is_some() {
+                    collation = table_column.collation;
+                    break;
+                }
+            }
+            _ => {}
+        };
+    }
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sort_cursor,
         columns: non_aggregate_count + plan.aggregates.len(),
         order: Record::new(order),
+        collation,
     });
 
     program.add_comment(program.offset(), "clear group by abort flag");
@@ -218,6 +251,7 @@ pub fn emit_group_by<'a>(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            collation: None,
         })
         .collect::<Vec<_>>();
 
@@ -266,6 +300,7 @@ pub fn emit_group_by<'a>(
         start_reg_a: reg_group_exprs_cmp,
         start_reg_b: groups_start_reg,
         count: group_by.exprs.len(),
+        collation: program.curr_collation(),
     });
 
     let agg_step_label = program.allocate_label();

@@ -140,12 +140,13 @@ pub fn insn_to_str(
                 start_reg_a,
                 start_reg_b,
                 count,
+                collation,
             } => (
                 "Compare",
                 *start_reg_a as i32,
                 *start_reg_b as i32,
                 *count as i32,
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&format!("k({count}, {})", collation.unwrap_or_default())),
                 0,
                 format!(
                     "r[{}..{}]==r[{}..{}]",
@@ -210,13 +211,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Eq",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]==r[{}] goto {}",
@@ -229,13 +231,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Ne",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]!=r[{}] goto {}",
@@ -248,13 +251,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Lt",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!("if r[{}]<r[{}] goto {}", lhs, rhs, target_pc.to_debug_int()),
             ),
@@ -262,13 +266,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Le",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]<=r[{}] goto {}",
@@ -281,13 +286,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Gt",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!("if r[{}]>r[{}] goto {}", lhs, rhs, target_pc.to_debug_int()),
             ),
@@ -295,13 +301,14 @@ pub fn insn_to_str(
                 lhs,
                 rhs,
                 target_pc,
+                collation,
                 ..
             } => (
                 "Ge",
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]>=r[{}] goto {}",
@@ -873,20 +880,28 @@ pub fn insn_to_str(
                 cursor_id,
                 columns,
                 order,
+                collation,
             } => {
                 let _p4 = String::new();
                 let to_print: Vec<String> = order
                     .get_values()
                     .iter()
-                    .map(|v| match v {
-                        OwnedValue::Integer(i) => {
-                            if *i == 0 {
-                                "B".to_string()
-                            } else {
-                                "-B".to_string()
+                    .enumerate()
+                    .map(|(idx, v)| {
+                        if idx == 0 {
+                            collation.unwrap_or_default().to_string()
+                        } else {
+                            match v {
+                                OwnedValue::Integer(i) => {
+                                    if *i == 0 {
+                                        "B".to_string()
+                                    } else {
+                                        "-B".to_string()
+                                    }
+                                }
+                                _ => unreachable!(),
                             }
                         }
-                        _ => unreachable!(),
                     })
                     .collect();
                 (

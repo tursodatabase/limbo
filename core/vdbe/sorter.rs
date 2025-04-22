@@ -1,18 +1,20 @@
-use crate::types::ImmutableRecord;
+use crate::{translate::collate::CollationSeq, types::ImmutableRecord, RefValue};
 use std::cmp::Ordering;
 
 pub struct Sorter {
     records: Vec<ImmutableRecord>,
     current: Option<ImmutableRecord>,
     order: Vec<bool>,
+    collation: CollationSeq,
 }
 
 impl Sorter {
-    pub fn new(order: Vec<bool>) -> Self {
+    pub fn new(order: Vec<bool>, collation: CollationSeq) -> Self {
         Self {
             records: Vec::new(),
             current: None,
             order,
+            collation,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -27,12 +29,18 @@ impl Sorter {
     pub fn sort(&mut self) {
         self.records.sort_by(|a, b| {
             let cmp_by_idx = |idx: usize, ascending: bool| {
-                let a = &a.get_value(idx);
-                let b = &b.get_value(idx);
-                if ascending {
-                    a.cmp(b)
-                } else {
-                    b.cmp(a)
+                let mut a = &a.get_value(idx);
+                let mut b = &b.get_value(idx);
+                if !ascending {
+                    let tmp = a;
+                    a = b;
+                    b = tmp;
+                }
+                match (a, b) {
+                    (RefValue::Text(left), RefValue::Text(right)) => self
+                        .collation
+                        .compare_strings(left.as_str(), right.as_str()),
+                    _ => a.cmp(b),
                 }
             };
 

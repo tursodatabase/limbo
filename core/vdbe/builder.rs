@@ -12,7 +12,10 @@ use crate::{
     parameters::Parameters,
     schema::{BTreeTable, Index, PseudoTable},
     storage::sqlite3_ondisk::DatabaseHeader,
-    translate::plan::{ResultSetColumn, TableReference},
+    translate::{
+        collate::CollationSeq,
+        plan::{ResultSetColumn, TableReference},
+    },
     Connection, VirtualTable,
 };
 
@@ -37,6 +40,8 @@ pub struct ProgramBuilder {
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
+    /// Curr collation sequence. Bool indicates whether it was set by a COLLATE expr
+    collation: Option<(CollationSeq, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +100,7 @@ impl ProgramBuilder {
             parameters: Parameters::new(),
             result_columns: Vec::new(),
             table_references: Vec::new(),
+            collation: None,
         }
     }
 
@@ -459,6 +465,26 @@ impl ProgramBuilder {
         self.resolve_cursor_id_safe(table_identifier)
             .unwrap_or_else(|| panic!("Cursor not found: {}", table_identifier))
     }
+
+    pub fn set_collation(&mut self, c: Option<(CollationSeq, bool)>) {
+        self.collation = c
+    }
+
+    pub fn curr_collation_ctx(&self) -> Option<(CollationSeq, bool)> {
+        self.collation
+    }
+
+    pub fn curr_collation(&self) -> Option<CollationSeq> {
+        self.collation.map(|c| c.0)
+    }
+
+    pub fn reset_collation(&mut self) {
+        self.collation = None;
+    }
+
+    // pub fn pop_collation(&mut self) -> Option<CollationSeq> {
+    //     self.collations.pop()
+    // }
 
     pub fn build(
         mut self,

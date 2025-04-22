@@ -485,6 +485,7 @@ impl TableReference {
                     primary_key: false,
                     notnull: false,
                     default: None,
+                    collation: None,
                 })
                 .collect(),
         )));
