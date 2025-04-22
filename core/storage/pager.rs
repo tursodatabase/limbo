@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::trace;
 
-use super::page_cache::{DumbLruPageCache, PageCacheKey};
+use super::page_cache::{CacheError, DumbLruPageCache, PageCacheKey, CacheResizeResult};
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 pub struct PageInner {
@@ -22,6 +22,7 @@ pub struct PageInner {
     pub id: usize,
 }
 
+#[derive(Debug)]
 pub struct Page {
     pub inner: UnsafeCell<PageInner>,
 }
@@ -213,6 +214,7 @@ impl Pager {
         })
     }
 
+    // FIXME: handle no room in page cache
     pub fn btree_create(&self, flags: &CreateBTreeFlags) -> u32 {
         let page_type = match flags {
             _ if flags.is_table() => PageType::TableLeaf,
@@ -226,6 +228,7 @@ impl Pager {
 
     /// Allocate a new overflow page.
     /// This is done when a cell overflows and new space is needed.
+    // FIXME: handle no room in page cache
     pub fn allocate_overflow_page(&self) -> PageRef {
         let page = self.allocate_page().unwrap();
         tracing::debug!("Pager::allocate_overflow_page(id={})", page.get().id);
@@ -240,6 +243,7 @@ impl Pager {
 
     /// Allocate a new page to the btree via the pager.
     /// This marks the page as dirty and writes the page header.
+    // FIXME: handle no room in page cache
     pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
         let page = self.allocate_page().unwrap();
         crate::btree_init_page(&page, page_type, offset, self.usable_space() as u16);
@@ -302,7 +306,7 @@ impl Pager {
     }
 
     /// Reads a page from the database.
-    pub fn read_page(&self, page_idx: usize) -> Result<PageRef> {
+    pub fn read_page(&self, page_idx: usize) -> Result<PageRef, LimboError> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let max_frame = match &self.wal {
@@ -324,9 +328,14 @@ impl Pager {
                 {
                     page.set_uptodate();
                 }
-                // TODO(pere) ensure page is inserted, we should probably first insert to page cache
-                // and if successful, read frame or page
-                page_cache.insert(page_key, page.clone());
+                // TODO(pere) should probably first insert to page cache, and if successful,
+                // read frame or page
+                match page_cache.insert(page_key, page.clone()) {
+                    Ok(_) => {}
+                    Err(CacheError::Full) => return Err(LimboError::CacheFull),
+                    Err(CacheError::KeyExists) => unreachable!("Page should not exist in cache after get() miss"),
+                    Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache: {:?}", e))),
+                }
                 return Ok(page);
             }
         }
@@ -336,8 +345,12 @@ impl Pager {
             page.clone(),
             page_idx,
         )?;
-        // TODO(pere) ensure page is inserted
-        page_cache.insert(page_key, page.clone());
+        match page_cache.insert(page_key, page.clone()) {
+            Ok(_) => {}
+            Err(CacheError::Full) => return Err(LimboError::CacheFull),
+            Err(CacheError::KeyExists) => unreachable!("Page should not exist in cache after get() miss"),
+            Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache: {:?}", e))),
+        }
         Ok(page)
     }
 
@@ -359,18 +372,23 @@ impl Pager {
                 {
                     page.set_uptodate();
                 }
-                // TODO(pere) ensure page is inserted
-                if !page_cache.contains_key(&page_key) {
-                    page_cache.insert(page_key, page.clone());
+                match page_cache.insert(page_key, page.clone()) {
+                    Err(CacheError::KeyExists) => {}, // Exists but same page, not error
+                    Err(CacheError::Full) => return Err(LimboError::CacheFull),
+                    Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache during load: {:?}", e))),
+                    Ok(_) => {}
                 }
                 return Ok(());
             }
         }
 
-        // TODO(pere) ensure page is inserted
-        if !page_cache.contains_key(&page_key) {
-            page_cache.insert(page_key, page.clone());
-        }
+        match page_cache.insert(page_key, page.clone()) {
+             Err(CacheError::KeyExists) => {}, // Ensures same page
+             Err(CacheError::Full) => return Err(LimboError::CacheFull),
+             Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache during load: {:?}", e))),
+             Ok(_) => {}
+        };
+
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
             self.buffer_pool.clone(),
@@ -387,9 +405,9 @@ impl Pager {
     }
 
     /// Changes the size of the page cache.
-    pub fn change_page_cache_size(&self, capacity: usize) {
+    pub fn change_page_cache_size(&self, capacity: usize) -> Result<CacheResizeResult> {
         let mut page_cache = self.page_cache.write();
-        page_cache.resize(capacity);
+        Ok(page_cache.resize(capacity))
     }
 
     pub fn add_dirty(&self, page_id: usize) {
@@ -425,8 +443,9 @@ impl Pager {
                         }
                         // This page is no longer valid.
                         // For example:
-                        // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame so it must be invalidated.
-                        cache.delete(page_key);
+                        // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame
+                        // so it must be invalidated. There shouldn't be any active refs.
+                        cache.delete(page_key).map_err(|e| {LimboError::InternalError(format!("Failed to delete page {:?} from cache during flush: {:?}. Might be actively referenced.", page_id, e))})?;
                     }
                     self.dirty_pages.borrow_mut().clear();
                     self.flush_info.borrow_mut().state = FlushState::WaitAppendFrames;
@@ -551,7 +570,7 @@ impl Pager {
             }
         }
         // TODO: only clear cache of things that are really invalidated
-        self.page_cache.write().clear();
+        self.page_cache.write().clear().expect("Failed to clear page cache");
         checkpoint_result
     }
 
@@ -631,6 +650,7 @@ impl Pager {
         Gets a new page that increasing the size of the page or uses a free page.
         Currently free list pages are not yet supported.
     */
+    // FIXME: handle no room in page cache
     #[allow(clippy::readonly_write_lock)]
     pub fn allocate_page(&self) -> Result<PageRef> {
         let header = &self.db_header;
@@ -654,33 +674,60 @@ impl Pager {
             }
         }
 
+        // FIXME: should reserve page cache entry before modifying the database
         let page = allocate_page(header.database_size as usize, &self.buffer_pool, 0);
         {
             // setup page and add to cache
             page.set_dirty();
             self.add_dirty(page.get().id);
-            let mut cache = self.page_cache.write();
             let max_frame = match &self.wal {
                 Some(wal) => wal.borrow().get_max_frame(),
                 None => 0,
             };
 
             let page_key = PageCacheKey::new(page.get().id, Some(max_frame));
-            cache.insert(page_key, page.clone());
+            let mut cache = self.page_cache.write();
+            match cache.insert(page_key, page.clone()) {
+                Err(CacheError::Full) => return Err(LimboError::CacheFull),
+                Err(_) => {
+                    return Err(LimboError::InternalError(
+                        "Unknown error inserting page to cache".into(),
+                    ))
+                }
+                Ok(_) => return Ok(page),
+            }
         }
-        Ok(page)
     }
 
-    pub fn put_loaded_page(&self, id: usize, page: PageRef) {
+    pub fn put_loaded_page(&self, id: usize, page: PageRef) -> Result<(), LimboError> {
         let mut cache = self.page_cache.write();
-        // cache insert invalidates previous page
         let max_frame = match &self.wal {
             Some(wal) => wal.borrow().get_max_frame(),
             None => 0,
         };
         let page_key = PageCacheKey::new(id, Some(max_frame));
-        cache.insert(page_key, page.clone());
+
+        // FIXME: is this correct? Why would there be another version of the page?
+        // Check if there's an existing page at this key and remove it
+        // This can happen when a page is being updated during a transaction
+        // or when WAL frames are being managed
+        if let Some(_existing_page_ref) = cache.get(&page_key) {
+            cache.delete(page_key.clone()).map_err(|e| {
+                LimboError::InternalError(format!(
+                    "put_loaded_page failed to remove old version of page {:?}: {:?}.",
+                    page_key, e
+                ))
+            })?;
+        }
+
+        cache.insert(page_key, page.clone()).map_err(|e| {
+            LimboError::InternalError(format!(
+                "Failed to insert loaded page {} into cache: {:?}", id, e
+            ))
+        })?;
+
         page.set_loaded();
+        Ok(())
     }
 
     pub fn usable_size(&self) -> usize {
