@@ -1420,7 +1420,7 @@ impl SeekOp {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Copy)]
 pub enum SeekKey<'a> {
     TableRowId(u64),
     IndexKey(&'a ImmutableRecord),
