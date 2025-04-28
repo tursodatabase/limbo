@@ -74,7 +74,7 @@ use translate::select::prepare_select_plan;
 pub use types::OwnedValue;
 pub use types::RefValue;
 use util::{columns_from_create_table_body, parse_schema_rows};
-use vdbe::{builder::QueryMode, VTabOpaqueCursor};
+use vdbe::{builder, explain, VTabOpaqueCursor};
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
 
@@ -326,6 +326,7 @@ impl Connection {
                         program,
                         self._db.mv_store.clone(),
                         self.pager.clone(),
+                        QueryMode::Normal,
                     ))
                 }
                 Cmd::Explain(_stmt) => todo!(),
@@ -351,25 +352,30 @@ impl Connection {
         let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
+                let stmt = stmt.clone();
+                let query_mode: QueryMode = cmd.into();
                 let program = translate::translate(
                     self.schema
                         .try_read()
                         .ok_or(LimboError::SchemaLocked)?
                         .deref(),
-                    stmt.clone(),
+                    stmt,
                     self.header.clone(),
                     self.pager.clone(),
                     Rc::downgrade(self),
                     &syms,
-                    cmd.into(),
+                    query_mode.clone(),
                 )?;
                 let stmt = Statement::new(
                     program.into(),
                     self._db.mv_store.clone(),
                     self.pager.clone(),
+                    query_mode.clone(),
                 );
                 Ok(Some(stmt))
             }
+
+            // TODO: remove this after complete `Program.explain_step`
             Cmd::ExplainQueryPlan(stmt) => {
                 match stmt {
                     ast::Stmt::Select(select) => {
@@ -448,6 +454,7 @@ impl Connection {
                             &mut state,
                             self._db.mv_store.clone(),
                             self.pager.clone(),
+                            QueryMode::Normal,
                         )?;
                         if matches!(res, StepResult::Done) {
                             break;
@@ -553,11 +560,16 @@ impl Connection {
     }
 }
 
+pub type QueryMode = builder::QueryMode;
+
 pub struct Statement {
     program: Rc<vdbe::Program>,
     state: vdbe::ProgramState,
     mv_store: Option<Rc<MvStore>>,
     pager: Rc<Pager>,
+
+    // TODO: support changing query mode like sqlite3_stmt_explain
+    query_mode: QueryMode,
 }
 
 impl Statement {
@@ -565,13 +577,22 @@ impl Statement {
         program: Rc<vdbe::Program>,
         mv_store: Option<Rc<MvStore>>,
         pager: Rc<Pager>,
+        query_mode: QueryMode,
     ) -> Self {
-        let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
+        let state = vdbe::ProgramState::new(
+            match query_mode {
+                QueryMode::Normal => program.max_registers,
+                QueryMode::Explain => explain::EXPLAIN_COLUMNS.len(),
+                QueryMode::ExplainQueryPlan => explain::EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+            },
+            program.cursor_ref.len(),
+        );
         Self {
             program,
             state,
             mv_store,
             pager,
+            query_mode,
         }
     }
 
@@ -584,8 +605,12 @@ impl Statement {
     }
 
     pub fn step(&mut self) -> Result<StepResult> {
-        self.program
-            .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
+        self.program.step(
+            &mut self.state,
+            self.mv_store.clone(),
+            self.pager.clone(),
+            self.query_mode,
+        )
     }
 
     pub fn run_once(&self) -> Result<()> {
@@ -593,15 +618,29 @@ impl Statement {
     }
 
     pub fn num_columns(&self) -> usize {
-        self.program.result_columns.len()
+        match self.query_mode {
+            QueryMode::Normal => self.program.result_columns.len(),
+            QueryMode::Explain => explain::EXPLAIN_COLUMNS.len(),
+            QueryMode::ExplainQueryPlan => explain::EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+        }
     }
 
     pub fn get_column_name(&self, idx: usize) -> Cow<str> {
-        let column = &self.program.result_columns[idx];
-        match column.name(&self.program.table_references) {
-            Some(name) => Cow::Borrowed(name),
-            None => Cow::Owned(column.expr.to_string()),
+        match self.query_mode {
+            QueryMode::Normal => {
+                let column = &self.program.result_columns[idx];
+                match column.name(&self.program.table_references) {
+                    Some(name) => Cow::Borrowed(name),
+                    None => Cow::Owned(column.expr.to_string()),
+                }
+            }
+            QueryMode::Explain => explain::EXPLAIN_COLUMNS[idx].into(),
+            QueryMode::ExplainQueryPlan => explain::EXPLAIN_QUERY_PLAN_COLUMNS[idx].into(),
         }
+    }
+
+    pub fn get_query_mode(&self) -> QueryMode {
+        return self.query_mode;
     }
 
     pub fn parameters(&self) -> &parameters::Parameters {
@@ -622,10 +661,6 @@ impl Statement {
 
     pub fn row(&self) -> Option<&Row> {
         self.state.result_row.as_ref()
-    }
-
-    pub fn explain(&self) -> String {
-        self.program.explain()
     }
 }
 
