@@ -1122,6 +1122,7 @@ pub fn insn_to_str(
             Insn::OpenWrite {
                 cursor_id,
                 root_page,
+                name,
                 ..
             } => (
                 "OpenWrite",
@@ -1133,7 +1134,7 @@ pub fn insn_to_str(
                 0,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("root={}; {}", root_page, name),
             ),
             Insn::Copy {
                 src_reg,

@@ -173,6 +173,7 @@ pub fn translate_insert(
         program.emit_insn(Insn::OpenWrite {
             cursor_id,
             root_page: RegisterOrLiteral::Literal(root_page),
+            name: table_name.0.clone(),
         });
 
         // Main loop
@@ -188,6 +189,7 @@ pub fn translate_insert(
         program.emit_insn(Insn::OpenWrite {
             cursor_id,
             root_page: RegisterOrLiteral::Literal(root_page),
+            name: table_name.0.clone(),
         });
 
         populate_column_registers(
@@ -205,6 +207,7 @@ pub fn translate_insert(
         program.emit_insn(Insn::OpenWrite {
             cursor_id: idx_cursor.2,
             root_page: idx_cursor.1.into(),
+            name: idx_cursor.0.clone(),
         });
     }
     // Common record insertion logic for both single and multiple rows

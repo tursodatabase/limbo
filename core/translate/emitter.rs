@@ -466,6 +466,7 @@ fn emit_delete_insns(
             program.emit_insn(Insn::OpenWrite {
                 cursor_id: index_cursor_id,
                 root_page: RegisterOrLiteral::Literal(index.root_page),
+                name: index.name.clone(),
             });
             let num_regs = index.columns.len() + 1;
             let start_reg = program.alloc_registers(num_regs);

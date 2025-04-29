@@ -110,6 +110,7 @@ pub fn translate_create_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: 1usize.into(),
+        name: tbl_name.name.0.clone()
     });
 
     // Add the table entry to sqlite_schema
@@ -526,6 +527,7 @@ pub fn translate_create_virtual_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: 1usize.into(),
+        name: table_name.clone()
     });
 
     let sql = create_vtable_body_to_str(&vtab, vtab_module.clone());
@@ -605,6 +607,7 @@ pub fn translate_drop_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: 1usize.into(),
+        name: tbl_name.name.0.clone()
     });
 
     //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
