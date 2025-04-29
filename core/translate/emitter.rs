@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use limbo_sqlite3_parser::ast::{self};
 
+use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
 use crate::schema::Index;
 use crate::translate::plan::{DeletePlan, Plan, Search};
@@ -727,6 +728,69 @@ fn emit_update_insns(
         });
     }
 
+    for (pos, index) in plan.indexes.iter().enumerate() {
+        if index.unique {
+            let (idx_name, idx_root_page, idx_cursor_id) =
+                idx_cursors.get(pos).expect("index cursor should exist");
+
+            let num_cols = index.columns.len();
+            // allocate scratch registers for the index columns plus rowid
+            let idx_start_reg = program.alloc_registers(num_cols + 1);
+
+            let rowid_reg = beg;
+            let idx_cols_start_reg = beg + 1;
+
+            // copy each index column from the table's column registers into these scratch regs
+            for (i, col) in index.columns.iter().enumerate() {
+                // copy from the table's column register over to the index's scratch register
+
+                program.emit_insn(Insn::Copy {
+                    src_reg: idx_cols_start_reg + i,
+                    dst_reg: idx_start_reg + i,
+                    amount: 0,
+                });
+            }
+            // last register is the rowid
+            program.emit_insn(Insn::Copy {
+                src_reg: rowid_reg,
+                dst_reg: idx_start_reg + num_cols,
+                amount: 0,
+            });
+
+            let constraint_check = program.allocate_label();
+            program.emit_insn(Insn::NoConflict {
+                cursor_id: *idx_cursor_id,
+                target_pc: constraint_check,
+                record_reg: idx_start_reg,
+                num_regs: num_cols,
+            });
+
+            let column_names = index.columns.iter().enumerate().fold(
+                String::with_capacity(50),
+                |mut accum, (idx, col)| {
+                    if idx > 0 {
+                        accum.push_str(", ");
+                    }
+                    accum.push_str(&table_ref.table.get_name());
+                    accum.push('.');
+                    accum.push_str(&col.name);
+
+                    accum
+                },
+            );
+
+            // TODO: Emit IdxRowId to get the rowId of the last entry the index points to
+            // TODO: Emit Eq to see if rowId that index points to matches the rowId of current row
+
+            program.emit_insn(Insn::Halt {
+                err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index
+                description: column_names,
+            });
+
+            program.resolve_label(constraint_check, program.offset());
+        }
+    }
+
     for cond in plan
         .where_clause
         .iter()
@@ -851,6 +915,7 @@ fn emit_update_insns(
             dest_reg: record_reg,
             index_name: None,
         });
+        // TODO: Delete opcode should be emitted here
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
             key_reg: beg,
