@@ -657,6 +657,23 @@ fn emit_update_insns(
         })
         .collect::<Vec<(&String, usize, usize)>>();
 
+    let open_indices_label = program.allocate_label();
+    // Open all cursors Once
+    program.emit_insn(Insn::Once {
+        target_pc_when_reentered: open_indices_label,
+    });
+
+    // Open all the index btrees for writing
+    for idx_cursor in idx_cursors.iter() {
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: idx_cursor.2,
+            root_page: idx_cursor.1.into(),
+            name: idx_cursor.0.clone(),
+        });
+    }
+
+    program.resolve_label(open_indices_label, program.offset());
+
     for cond in plan
         .where_clause
         .iter()
