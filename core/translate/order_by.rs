@@ -239,6 +239,7 @@ pub fn sorter_insert(
         start_reg,
         count: column_count,
         dest_reg: record_reg,
+        index_name: None,
     });
     program.emit_insn(Insn::SorterInsert {
         cursor_id,

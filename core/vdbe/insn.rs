@@ -372,6 +372,7 @@ pub enum Insn {
         start_reg: usize, // P1
         count: usize,     // P2
         dest_reg: usize,  // P3
+        index_name: Option<String>,
     },
 
     /// Emit a row of results.

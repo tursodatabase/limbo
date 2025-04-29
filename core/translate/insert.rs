@@ -288,7 +288,7 @@ pub fn translate_insert(
         _ => (),
     }
 
-    for index_col_mapping in index_col_mappings.iter() {
+    for index_col_mapping in index_col_mappings {
         // find which cursor we opened earlier for this index
         let idx_cursor_id = idx_cursors
             .iter()
@@ -317,16 +317,17 @@ pub fn translate_insert(
             amount: 0,
         });
 
+        let index = schema
+            .get_index(&table_name.0, &index_col_mapping.idx_name)
+            .expect("index should be present");
+
         let record_reg = program.alloc_register();
         program.emit_insn(Insn::MakeRecord {
             start_reg: idx_start_reg,
             count: num_cols + 1,
             dest_reg: record_reg,
+            index_name: Some(index_col_mapping.idx_name),
         });
-
-        let index = schema
-            .get_index(&table_name.0, &index_col_mapping.idx_name)
-            .expect("index should be present");
 
         if index.unique {
             let label_idx_insert = program.allocate_label();
@@ -383,6 +384,7 @@ pub fn translate_insert(
         start_reg: column_registers_start,
         count: num_cols,
         dest_reg: record_register,
+        index_name: None,
     });
 
     program.emit_insn(Insn::Insert {

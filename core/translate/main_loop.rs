@@ -1230,6 +1230,7 @@ fn emit_autoindex(
         start_reg: ephemeral_cols_start_reg,
         count: num_regs_to_reserve,
         dest_reg: record_reg,
+        index_name: Some(index.name.clone()),
     });
     program.emit_insn(Insn::IdxInsert {
         cursor_id: index_cursor_id,

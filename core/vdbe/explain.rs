@@ -530,20 +530,25 @@ pub fn insn_to_str(
                 start_reg,
                 count,
                 dest_reg,
-            } => (
-                "MakeRecord",
-                *start_reg as i32,
-                *count as i32,
-                *dest_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                format!(
-                    "r[{}]=mkrec(r[{}..{}])",
-                    dest_reg,
-                    start_reg,
-                    start_reg + count - 1,
-                ),
-            ),
+                index_name,
+            } => {
+                let for_index = index_name.as_ref().map(|name| format!(" ;for {}", name));
+                (
+                    "MakeRecord",
+                    *start_reg as i32,
+                    *count as i32,
+                    *dest_reg as i32,
+                    OwnedValue::build_text(""),
+                    0,
+                    format!(
+                        "r[{}]=mkrec(r[{}..{}]){}",
+                        dest_reg,
+                        start_reg,
+                        start_reg + count - 1,
+                        for_index.unwrap_or("".to_string())
+                    ),
+                )
+            }
             Insn::ResultRow { start_reg, count } => (
                 "ResultRow",
                 *start_reg as i32,

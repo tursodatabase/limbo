@@ -849,6 +849,7 @@ fn emit_update_insns(
             start_reg: start,
             count: table_ref.columns().len(),
             dest_reg: record_reg,
+            index_name: None,
         });
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
