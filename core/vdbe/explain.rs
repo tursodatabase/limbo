@@ -532,7 +532,7 @@ pub fn insn_to_str(
                 dest_reg,
                 index_name,
             } => {
-                let for_index = index_name.as_ref().map(|name| format!(" ;for {}", name));
+                let for_index = index_name.as_ref().map(|name| format!("; for {}", name));
                 (
                     "MakeRecord",
                     *start_reg as i32,

@@ -12,7 +12,7 @@ use crate::schema::Index;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::{CursorType, ProgramBuilder};
-use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
+use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -639,7 +639,6 @@ fn emit_update_insns(
         _ => return Ok(()),
     };
 
-    // dbg!(&plan.indexes);
     // THIS IS SAME CODE AS WE HAVE ON INSERT
     // allocate cursor id's for each btree index cursor we'll need to populate the indexes
     // (idx name, root_page, idx cursor id)
@@ -647,6 +646,7 @@ fn emit_update_insns(
         .indexes_to_update
         .iter()
         .map(|idx| {
+            let record_reg = program.alloc_register();
             (
                 &idx.name,
                 idx.root_page,
@@ -654,9 +654,10 @@ fn emit_update_insns(
                     Some(idx.table_name.clone()),
                     CursorType::BTreeIndex(idx.clone()),
                 ),
+                record_reg,
             )
         })
-        .collect::<Vec<(&String, usize, usize)>>();
+        .collect::<Vec<(&String, usize, usize, usize)>>();
 
     let open_indices_label = program.allocate_label();
     // Open all cursors Once
@@ -728,9 +729,9 @@ fn emit_update_insns(
         });
     }
 
-    for (pos, index) in plan.indexes.iter().enumerate() {
+    for (pos, index) in plan.indexes_to_update.iter().enumerate() {
         if index.unique {
-            let (idx_name, idx_root_page, idx_cursor_id) =
+            let (_, _, idx_cursor_id, record_reg) =
                 idx_cursors.get(pos).expect("index cursor should exist");
 
             let num_cols = index.columns.len();
@@ -741,7 +742,7 @@ fn emit_update_insns(
             let idx_cols_start_reg = beg + 1;
 
             // copy each index column from the table's column registers into these scratch regs
-            for (i, col) in index.columns.iter().enumerate() {
+            for i in 0..num_cols {
                 // copy from the table's column register over to the index's scratch register
 
                 program.emit_insn(Insn::Copy {
@@ -755,6 +756,13 @@ fn emit_update_insns(
                 src_reg: rowid_reg,
                 dst_reg: idx_start_reg + num_cols,
                 amount: 0,
+            });
+
+            program.emit_insn(Insn::MakeRecord {
+                start_reg: idx_start_reg,
+                count: num_cols + 1,
+                dest_reg: *record_reg,
+                index_name: Some(index.name.clone()),
             });
 
             let constraint_check = program.allocate_label();
@@ -779,8 +787,18 @@ fn emit_update_insns(
                 },
             );
 
-            // TODO: Emit IdxRowId to get the rowId of the last entry the index points to
-            // TODO: Emit Eq to see if rowId that index points to matches the rowId of current row
+            let idx_rowid_reg = program.alloc_register();
+            program.emit_insn(Insn::IdxRowId {
+                cursor_id: *idx_cursor_id,
+                dest: idx_rowid_reg,
+            });
+
+            program.emit_insn(Insn::Eq {
+                lhs: rowid_reg,
+                rhs: idx_rowid_reg,
+                target_pc: constraint_check,
+                flags: CmpInsFlags::default(), // TODO: not sure type of comparison flag is needed
+            });
 
             program.emit_insn(Insn::Halt {
                 err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index
@@ -915,6 +933,50 @@ fn emit_update_insns(
             dest_reg: record_reg,
             index_name: None,
         });
+
+        // For each index -> insert
+        for (pos, index) in plan.indexes_to_update.iter().enumerate() {
+            let num_regs = index.columns.len() + 1;
+            let start_reg = program.alloc_registers(num_regs);
+
+            // Emit columns that are part of the index
+            index
+                .columns
+                .iter()
+                .enumerate()
+                .for_each(|(reg_offset, column_index)| {
+                    program.emit_insn(Insn::Column {
+                        cursor_id,
+                        column: column_index.pos_in_table,
+                        dest: start_reg + reg_offset,
+                    });
+                });
+
+            program.emit_insn(Insn::RowId {
+                cursor_id,
+                dest: start_reg + num_regs - 1,
+            });
+
+            let (_, _, idx_cursor_id, record_reg) =
+                idx_cursors.get(pos).expect("index cursor should exist");
+
+            program.emit_insn(Insn::IdxDelete {
+                start_reg,
+                num_regs,
+                cursor_id: *idx_cursor_id,
+            });
+
+            program.emit_insn(Insn::IdxInsert {
+                cursor_id: *idx_cursor_id,
+                record_reg: *record_reg,
+                unpacked_start: Some(start),
+                unpacked_count: Some((index.columns.len() + 1) as u16),
+                flags: IdxInsertFlags::new(),
+            });
+        }
+
+        program.emit_insn(Insn::Delete { cursor_id });
+
         // TODO: Delete opcode should be emitted here
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
