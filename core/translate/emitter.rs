@@ -637,6 +637,25 @@ fn emit_update_insns(
         _ => return Ok(()),
     };
 
+    // dbg!(&plan.indexes);
+    // THIS IS SAME CODE AS WE HAVE ON INSERT
+    // allocate cursor id's for each btree index cursor we'll need to populate the indexes
+    // (idx name, root_page, idx cursor id)
+    let idx_cursors = plan
+        .indexes_to_update
+        .iter()
+        .map(|idx| {
+            (
+                &idx.name,
+                idx.root_page,
+                program.alloc_cursor_id(
+                    Some(idx.table_name.clone()),
+                    CursorType::BTreeIndex(idx.clone()),
+                ),
+            )
+        })
+        .collect::<Vec<(&String, usize, usize)>>();
+
     for cond in plan
         .where_clause
         .iter()
