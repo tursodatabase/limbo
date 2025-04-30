@@ -1086,15 +1086,22 @@ pub fn insn_to_str(
                 target_pc,
                 record_reg,
                 num_regs,
-            } => (
-                "NoConflict",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *record_reg as i32,
-                OwnedValue::build_text(&format!("{num_regs}")),
-                0,
-                format!("key=r[{}]", record_reg),
-            ),
+            } => {
+                let key = if *num_regs > 0 {
+                    format!("key=r[{}..{}]", record_reg, record_reg + num_regs - 1)
+                } else {
+                    format!("key=r[{}]", record_reg)
+                };
+                (
+                    "NoConflict",
+                    *cursor_id as i32,
+                    target_pc.to_debug_int(),
+                    *record_reg as i32,
+                    OwnedValue::build_text(&format!("{num_regs}")),
+                    0,
+                    key,
+                )
+            }
             Insn::NotExists {
                 cursor,
                 rowid_reg,

@@ -744,12 +744,13 @@ fn emit_update_insns(
             let rowid_reg = beg;
             let idx_cols_start_reg = beg + 1;
 
+
             // copy each index column from the table's column registers into these scratch regs
-            for i in 0..num_cols {
+            for (i, col) in index.columns.iter().enumerate(){
                 // copy from the table's column register over to the index's scratch register
 
                 program.emit_insn(Insn::Copy {
-                    src_reg: idx_cols_start_reg + i,
+                    src_reg: idx_cols_start_reg + col.pos_in_table,
                     dst_reg: idx_start_reg + i,
                     amount: 0,
                 });
