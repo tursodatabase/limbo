@@ -659,22 +659,25 @@ fn emit_update_insns(
         })
         .collect::<Vec<(&String, usize, usize, usize)>>();
 
-    let open_indices_label = program.allocate_label();
-    // Open all cursors Once
-    program.emit_insn(Insn::Once {
-        target_pc_when_reentered: open_indices_label,
-    });
+    if !idx_cursors.is_empty() {
+        let open_indices_label = program.allocate_label();
 
-    // Open all the index btrees for writing
-    for idx_cursor in idx_cursors.iter() {
-        program.emit_insn(Insn::OpenWrite {
-            cursor_id: idx_cursor.2,
-            root_page: idx_cursor.1.into(),
-            name: idx_cursor.0.clone(),
+        // Open all cursors Once
+        program.emit_insn(Insn::Once {
+            target_pc_when_reentered: open_indices_label,
         });
-    }
 
-    program.resolve_label(open_indices_label, program.offset());
+        // Open all the index btrees for writing
+        for idx_cursor in idx_cursors.iter() {
+            program.emit_insn(Insn::OpenWrite {
+                cursor_id: idx_cursor.2,
+                root_page: idx_cursor.1.into(),
+                name: idx_cursor.0.clone(),
+            });
+        }
+
+        program.preassign_label_to_next_insn(open_indices_label);
+    }
 
     for cond in plan
         .where_clause
@@ -797,15 +800,15 @@ fn emit_update_insns(
                 lhs: rowid_reg,
                 rhs: idx_rowid_reg,
                 target_pc: constraint_check,
-                flags: CmpInsFlags::default(), // TODO: not sure type of comparison flag is needed
+                flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
             });
 
             program.emit_insn(Insn::Halt {
-                err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index
+                err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index for error code
                 description: column_names,
             });
 
-            program.resolve_label(constraint_check, program.offset());
+            program.preassign_label_to_next_insn(constraint_check);
         }
     }
 
@@ -975,9 +978,6 @@ fn emit_update_insns(
             });
         }
 
-        program.emit_insn(Insn::Delete { cursor_id });
-
-        // TODO: Delete opcode should be emitted here
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
             key_reg: beg,
