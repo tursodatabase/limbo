@@ -304,9 +304,8 @@ def generate_test(col_amount: int, primary_keys: int) -> ConstraintTest:
 
     update_errors = []
     if len(insert_stmts) > 1:
-        update_errors = [
-            table.generate_update() for _ in table.columns if col.primary_key
-        ]
+        # TODO: As we have no rollback we just generate one update statement
+        update_errors = [table.generate_update()]
 
     return ConstraintTest(
         table=table,
@@ -327,7 +326,6 @@ def custom_test_1() -> ConstraintTest:
         "INSERT INTO users VALUES (2, 'bob');",
     ]
     update_stmts = [
-        "UPDATE users SET id = 3;",
         "UPDATE users SET id = 2, username = 'bob' WHERE id == 1;",
     ]
     return ConstraintTest(
