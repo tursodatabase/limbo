@@ -714,22 +714,20 @@ fn emit_update_insns(
 
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
 
-    let rowid_alias_index = table_ref.columns().iter().position(|c| c.is_rowid_alias);
+    let rowid_alias_index = {
+        let rowid_alias_index = table_ref.columns().iter().position(|c| c.is_rowid_alias);
+        if let Some(index) = rowid_alias_index {
+            plan.set_clauses.iter().position(|(idx, _)| *idx == index)
+        } else {
+            None
+        }
+    };
     let rowid_set_clause_reg = if rowid_alias_index.is_some() {
         Some(program.alloc_register())
     } else {
         None
     };
-    let has_user_provided_rowid = {
-        if let Some(index) = rowid_alias_index {
-            plan.set_clauses
-                .iter()
-                .position(|(idx, _)| *idx == index)
-                .is_some()
-        } else {
-            false
-        }
-    };
+    let has_user_provided_rowid = rowid_alias_index.is_some();
 
     let check_rowid_not_exists_label = if has_user_provided_rowid {
         Some(program.allocate_label())
