@@ -753,8 +753,11 @@ impl BTreeCursor {
             let mem_page = mem_page_rc.get();
 
             let contents = mem_page.contents.as_ref().unwrap();
+            let cell_count = contents.cell_count();
 
-            if cell_idx == contents.cell_count() {
+            tracing::trace!(cell_idx, cell_count, "get_next_record");
+
+            if cell_count == 0 || cell_idx == cell_count {
                 // do rightmost
                 let has_parent = self.stack.has_parent();
                 match contents.rightmost_pointer() {
@@ -3587,7 +3590,9 @@ impl BTreeCursor {
                 DeleteState::FindCell => {
                     let page = self.stack.top();
                     let mut cell_idx = self.stack.current_cell_index() as usize;
-                    cell_idx -= 1;
+                    if cell_idx > 0 {
+                        cell_idx -= 1;
+                    }
 
                     let contents = page.get().contents.as_ref().unwrap();
                     if cell_idx >= contents.cell_count() {
@@ -4330,6 +4335,11 @@ impl PageStack {
     /// Cell index of the current page
     fn current_cell_index(&self) -> i32 {
         let current = self.current();
+        tracing::event!(
+            tracing::Level::TRACE,
+            "current: cell_indices={:?}",
+            self.cell_indices
+        );
         self.cell_indices.borrow()[current]
     }
 
@@ -4344,14 +4354,32 @@ impl PageStack {
     /// We usually advance after going traversing a new page
     fn advance(&self) {
         let current = self.current();
-        tracing::trace!("pagestack::advance {}", self.cell_indices.borrow()[current],);
+        tracing::trace!(
+            "pagestack::advance {}, cell_indices={:?}",
+            self.cell_indices.borrow()[current],
+            self.cell_indices
+        );
         self.cell_indices.borrow_mut()[current] += 1;
+        tracing::event!(
+            tracing::Level::TRACE,
+            "after: cell_indices={:?}",
+            self.cell_indices
+        );
     }
 
     fn retreat(&self) {
         let current = self.current();
-        tracing::trace!("pagestack::retreat {}", self.cell_indices.borrow()[current]);
+        tracing::trace!(
+            "pagestack::retreat {}, cell_indices={:?}",
+            self.cell_indices.borrow()[current],
+            self.cell_indices
+        );
         self.cell_indices.borrow_mut()[current] -= 1;
+        tracing::event!(
+            tracing::Level::TRACE,
+            "after: cell_indices={:?}",
+            self.cell_indices
+        );
     }
 
     /// Move the cursor to the next cell in the current page according to the iteration direction.
@@ -4368,7 +4396,18 @@ impl PageStack {
 
     fn set_cell_index(&self, idx: i32) {
         let current = self.current();
-        self.cell_indices.borrow_mut()[current] = idx
+        tracing::event!(
+            tracing::Level::TRACE,
+            "set_cell_index={} cell_indices={:?}",
+            idx,
+            self.cell_indices
+        );
+        self.cell_indices.borrow_mut()[current] = idx;
+        tracing::event!(
+            tracing::Level::TRACE,
+            "after: cell_indices={:?}",
+            self.cell_indices
+        );
     }
 
     fn has_parent(&self) -> bool {

@@ -24,10 +24,17 @@
 
         lib = pkgs.lib;
 
+        # Custom SQLite package with debug enabled
+        sqlite-debug = pkgs.sqlite.overrideAttrs (oldAttrs: rec {
+          name = "sqlite-debug-${oldAttrs.version}";
+          configureFlags = oldAttrs.configureFlags ++ [ "--enable-debug" ];
+          dontStrip = true;
+          separateDebugInfo = true;
+        });
+
         cargoArtifacts = craneLib.buildDepsOnly {
           src = ./.;
           pname = "limbo";
-          stritcDeps = true;
           nativeBuildInputs = with pkgs; [ python3 ];
         };
 
@@ -58,7 +65,7 @@
         devShells.default = with pkgs; mkShell {
           nativeBuildInputs = [
             clang
-            sqlite
+            sqlite-debug  # Use debug-enabled SQLite
             gnumake
             tcl
             python3
