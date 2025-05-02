@@ -937,7 +937,6 @@ fn emit_update_insns(
                     &t_ctx.resolver,
                 )?;
             }
-            // if let Some(rowid_reg) = rowid_set_clause_reg {}
         } else {
             let column_idx_in_index = index.as_ref().and_then(|(idx, _)| {
                 idx.columns
@@ -1156,7 +1155,7 @@ fn emit_update_insns(
             });
         }
 
-        // program.emit_insn(Insn::Delete { cursor_id });
+        program.emit_insn(Insn::Delete { cursor_id });
 
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
