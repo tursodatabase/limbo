@@ -4737,6 +4737,17 @@ pub fn op_affinity(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_count(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),
