@@ -357,7 +357,7 @@ enum AccessMethodKind {
 }
 
 /// A bitmask representing which tables are in the join.
-/// For example, if the bitmask is 0b1101, then the tables 0, 1, and 3 are in the join.
+/// For example, if the bitmask is 0b1101, then the tables 0, 2, and 3 are in the join.
 /// Since this is a mask, the tables aren't ordered.
 /// This is used for memoizing the best way to join a subset of N tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -579,12 +579,12 @@ fn compute_best_join_order(
     maybe_order_target: Option<&OrderTarget>,
     access_methods_cache: &mut HashMap<usize, AccessMethod>,
 ) -> Result<Option<BestJoinOrderResult>> {
+    // Skip work if we have no tables to consider.
     if table_references.is_empty() {
         return Ok(None);
     }
 
-    let n = table_references.len();
-    let mut best_plan_memo: HashMap<JoinBitmask, JoinN> = HashMap::new();
+    let num_tables = table_references.len();
 
     // Compute naive left-to-right plan to use as pruning threshold
     let naive_plan = compute_naive_left_deep_plan(
@@ -594,6 +594,10 @@ fn compute_best_join_order(
         maybe_order_target,
         access_methods_cache,
     )?;
+
+    // Keep track of both 1. the best plan overall (not considering sorting), and 2. the best ordered plan (which might not be the same).
+    // We assign Some Cost (tm) to any required sort operation, so the best ordered plan may end up being
+    // the one we choose, if the cost reduction from avoiding sorting brings it below the cost of the overall best one.
     let mut best_ordered_plan: Option<JoinN> = None;
     let mut best_plan_is_also_ordered = if let Some(ref order_target) = maybe_order_target {
         plan_satisfies_order_target(
@@ -605,6 +609,8 @@ fn compute_best_join_order(
     } else {
         false
     };
+
+    // If we have one table, then the "naive left-to-right plan" is always the best.
     if table_references.len() == 1 {
         return Ok(Some(BestJoinOrderResult {
             best_plan: naive_plan,
@@ -612,11 +618,16 @@ fn compute_best_join_order(
         }));
     }
     let mut best_plan = naive_plan;
-    let mut join_order = Vec::with_capacity(n);
+
+    // Reuse a single mutable join order to avoid allocating join orders per permutation.
+    let mut join_order = Vec::with_capacity(num_tables);
     join_order.push(JoinOrderMember {
         table_no: 0,
         is_outer: false,
     });
+
+    // Keep track of the current best cost so we can short-circuit planning for subplans
+    // that already exceed the cost of the current best plan.
     let cost_upper_bound = best_plan.cost;
     let cost_upper_bound_ordered = {
         if best_plan_is_also_ordered {
@@ -626,8 +637,16 @@ fn compute_best_join_order(
         }
     };
 
-    // Base cases: 1-table subsets
-    for i in 0..n {
+    // Keep track of the best plan for a given subset of tables.
+    // Consider this example: we have tables a,b,c,d to join.
+    // if we find that 'b JOIN a' is better than 'a JOIN b', then we don't need to even try
+    // to do 'a JOIN b JOIN c', because we know 'b JOIN a JOIN c' is going to be better.
+    // This is due to the commutativity and associativity of inner joins.
+    let mut best_plan_memo: HashMap<JoinBitmask, JoinN> = HashMap::new();
+
+    // Dynamic programming base case: calculate the best way to access each single table, as if
+    // there were no other tables.
+    for i in 0..num_tables {
         let mut mask = JoinBitmask::new(0);
         mask.set(i);
         let table_ref = &table_references[i];
@@ -655,6 +674,10 @@ fn compute_best_join_order(
     }
     join_order.clear();
 
+    // As mentioned, inner joins are commutative. Outer joins are NOT.
+    // Example:
+    // "a LEFT JOIN b" can NOT be reordered as "b LEFT JOIN a".
+    // If there are outer joins in the plan, ensure correct ordering.
     let left_join_illegal_map = {
         let left_join_count = table_references
             .iter()
@@ -686,27 +709,37 @@ fn compute_best_join_order(
         }
     };
 
-    // Build larger plans
-    for subset_size in 2..=n {
-        for mask in generate_join_bitmasks(n, subset_size) {
+    // Now that we have our single-table base cases, we can start considering join subsets of 2 tables and more.
+    // Try to join each single table to each other table.
+    for subset_size in 2..=num_tables {
+        for mask in generate_join_bitmasks(num_tables, subset_size) {
+            // Keep track of the best way to join this subset of tables.
+            // Take the (a,b,c,d) example from above:
+            // E.g. for "a JOIN b JOIN c", the possibilities are (a,b,c), (a,c,b), (b,a,c) and so on.
+            // If we find out (b,a,c) is the best way to join these three, then we ONLY need to compute
+            // the cost of (b,a,c,d) in the final step, because (a,b,c,d) (and all others) are guaranteed to be worse.
             let mut best_for_mask: Option<JoinN> = None;
+            // also keep track of the best plan for this subset that orders the rows in an Interesting Way (tm),
+            // i.e. allows us to eliminate sort operations downstream.
             let (mut best_ordered_for_mask, mut best_for_mask_is_also_ordered) = (None, false);
-            // Try all possible RHS base tables in this mask
-            for rhs_idx in 0..n {
+
+            // Try to join all subsets (masks) with all other tables.
+            // In this block, LHS is always (n-1) tables, and RHS is a single table.
+            for rhs_idx in 0..num_tables {
                 let rhs_bit = 1 << rhs_idx;
 
-                // Make sure rhs is in this mask
+                // If the RHS table isn't a member of this join subset, skip.
                 if mask.0 & rhs_bit == 0 {
                     continue;
                 }
 
-                // LHS = mask - rhs
+                // If there are no other tables except RHS, skip.
                 let lhs_mask = JoinBitmask(mask.0 ^ rhs_bit);
                 if lhs_mask.0 == 0 {
                     continue;
                 }
 
-                // Skip illegal left join ordering
+                // If this join ordering would violate LEFT JOIN ordering restrictions, skip.
                 if let Some(illegal_lhs) = left_join_illegal_map
                     .as_ref()
                     .and_then(|deps| deps.get(&rhs_idx))
@@ -717,6 +750,8 @@ fn compute_best_join_order(
                     }
                 }
 
+                // If the already cached plan for this subset was too crappy to consider,
+                // then joining it with RHS won't help. Skip.
                 let Some(lhs) = best_plan_memo.get(&lhs_mask) else {
                     continue;
                 };
@@ -727,6 +762,7 @@ fn compute_best_join_order(
                     indexes_ref = indexes;
                 }
 
+                // Build a JoinOrder out of the table bitmask we are now considering.
                 for table_no in lhs.table_numbers.iter() {
                     join_order.push(JoinOrderMember {
                         table_no: *table_no,
@@ -745,6 +781,7 @@ fn compute_best_join_order(
                 });
                 assert!(join_order.len() == subset_size);
 
+                // Calculate the best way to join LHS with RHS.
                 let rel = join_lhs_tables_to_rhs_table(
                     Some(lhs),
                     rhs_idx,
@@ -757,6 +794,9 @@ fn compute_best_join_order(
                 )?;
                 join_order.clear();
 
+                // Since cost_upper_bound_ordered is always >= to cost_upper_bound,
+                // if the cost we calculated for this plan is worse than cost_upper_bound_ordered,
+                // this join subset is already worse than our best plan for the ENTIRE query, so skip.
                 if rel.cost >= cost_upper_bound_ordered {
                     continue;
                 }
@@ -772,7 +812,9 @@ fn compute_best_join_order(
                     false
                 };
 
+                // If this plan is worse than our overall best, it might still be the best ordered plan.
                 if rel.cost >= cost_upper_bound {
+                    // But if it isn't, skip.
                     if !satisfies_order_target {
                         continue;
                     }
@@ -791,7 +833,7 @@ fn compute_best_join_order(
 
             if let Some(rel) = best_ordered_for_mask.take() {
                 let cost = rel.cost;
-                let has_all_tables = mask.0.count_ones() as usize == n;
+                let has_all_tables = mask.0.count_ones() as usize == num_tables;
                 if has_all_tables && cost_upper_bound_ordered > cost {
                     best_ordered_plan = Some(rel);
                 }
@@ -799,7 +841,7 @@ fn compute_best_join_order(
 
             if let Some(rel) = best_for_mask.take() {
                 let cost = rel.cost;
-                let has_all_tables = mask.0.count_ones() as usize == n;
+                let has_all_tables = mask.0.count_ones() as usize == num_tables;
                 if has_all_tables {
                     if cost_upper_bound > cost {
                         best_plan = rel;
@@ -3000,7 +3042,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        /// Should just be a table scan access method
+        // Should just be a table scan access method
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[0]].kind,
             AccessMethodKind::TableScan { iter_dir }
@@ -3566,7 +3608,7 @@ mod tests {
             ));
         }
 
-        let mut table_references = {
+        let table_references = {
             let mut refs = vec![_create_table_reference(dim_tables[0].clone(), None)];
             refs.extend(dim_tables.iter().skip(1).map(|t| {
                 _create_table_reference(
