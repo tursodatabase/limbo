@@ -200,6 +200,20 @@ enum ReadPayloadOverflow {
     },
 }
 
+struct CountInfo {
+    state: CountState,
+    /// Maintain count of the number of records in the btree. Used for the `Count` opcode
+    count: usize,
+}
+
+/// State Machine of Count Operation
+#[derive(Debug, Clone, Copy)]
+enum CountState {
+    LoadPage,
+    MoveParent,
+    MoveChild,
+}
+
 #[derive(Clone, Debug)]
 pub enum BTreeKey<'a> {
     TableRowId((u64, Option<&'a ImmutableRecord>)),
@@ -289,6 +303,7 @@ enum CursorState {
     Write(WriteInfo),
     Destroy(DestroyInfo),
     Delete(DeleteInfo),
+    Count(CountInfo),
 }
 
 impl CursorState {
@@ -328,6 +343,20 @@ impl CursorState {
     fn mut_delete_info(&mut self) -> Option<&mut DeleteInfo> {
         match self {
             CursorState::Delete(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn count_info(&self) -> Option<&CountInfo> {
+        match self {
+            CursorState::Count(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn mut_count_info(&mut self) -> Option<&mut CountInfo> {
+        match self {
+            CursorState::Count(x) => Some(x),
             _ => None,
         }
     }
@@ -4226,6 +4255,147 @@ impl BTreeCursor {
         match self.state {
             CursorState::Write(_) => true,
             _ => false,
+        }
+    }
+
+    /// Count the number of entries in the b-tree
+    ///
+    /// Only supposed to be used in the context of a simple Count Select Statement
+    pub fn count(&mut self) -> Result<CursorResult<usize>> {
+        if let Some(_mv_cursor) = &self.mv_cursor {
+            todo!("Implement count for mvcc");
+        }
+
+        if let CursorState::None = &self.state {
+            self.move_to_root();
+            self.state = CursorState::Count(CountInfo {
+                state: CountState::LoadPage,
+                count: 0,
+            });
+        }
+
+        loop {
+            let count_state = self
+                .state
+                .count_info()
+                .expect("count info should have been set")
+                .state;
+
+            match count_state {
+                CountState::LoadPage => {
+                    let mem_page_rc = self.stack.top();
+                    return_if_locked_maybe_load!(self.pager, mem_page_rc);
+                    let mem_page = mem_page_rc.get();
+                    let contents = mem_page.contents.as_ref().unwrap();
+                    let cell_idx = self.stack.current_cell_index() as usize;
+
+                    let count_info = self
+                        .state
+                        .mut_count_info()
+                        .expect("count info should have been set");
+
+                    /* If this is a leaf page or the tree is not an int-key tree, then
+                     ** this page contains countable entries. Increment the entry counter
+                     ** accordingly.
+                     */
+                    // TODO: (pedrocarlo) does not take into account if "tree is not an int-key tree" condition
+                    if contents.is_leaf() {
+                        count_info.count += contents.cell_count();
+                    }
+
+                    if contents.is_leaf() || cell_idx > contents.cell_count() {
+                        count_info.state = CountState::MoveParent;
+                    } else {
+                        count_info.state = CountState::MoveChild;
+                    }
+                }
+                CountState::MoveParent => {
+                    let mem_page_rc = self.stack.top();
+                    assert!(mem_page_rc.is_loaded());
+
+                    if !self.stack.has_parent() {
+                        // All pages of the b-tree have been visited. Return successfully
+                        self.move_to_root();
+                        // Borrow count_info here like this due to borrow checking
+                        let count_info = self
+                            .state
+                            .mut_count_info()
+                            .expect("count info should have been set");
+                        return Ok(CursorResult::Ok(count_info.count));
+                    }
+
+                    let count_info = self
+                        .state
+                        .mut_count_info()
+                        .expect("count info should have been set");
+
+                    // Move to parent
+                    self.going_upwards = true;
+                    self.stack.pop();
+
+                    count_info.state = CountState::LoadPage;
+                }
+                CountState::MoveChild => {
+                    let mem_page_rc = self.stack.top();
+                    assert!(mem_page_rc.is_loaded());
+                    let contents = mem_page_rc.get().contents.as_ref().unwrap();
+                    let cell_idx = self.stack.current_cell_index() as usize;
+
+                    assert!(!contents.is_leaf());
+                    assert!(
+                        cell_idx <= contents.cell_count(),
+                        "cell_idx={} cell_count={}",
+                        cell_idx,
+                        contents.cell_count()
+                    );
+
+                    if cell_idx == contents.cell_count() {
+                        // Move to right child
+                        // should be safe as contents is not a leaf page
+                        let right_most_pointer = contents.rightmost_pointer().unwrap();
+                        self.stack.advance();
+                        let mem_page = self.pager.read_page(right_most_pointer as usize)?;
+                        self.going_upwards = false;
+                        self.stack.push(mem_page);
+                    } else {
+                        // Move to child left page
+                        let cell = contents.cell_get(
+                            cell_idx,
+                            payload_overflow_threshold_max(
+                                contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )?;
+
+                        match cell {
+                            BTreeCell::TableInteriorCell(TableInteriorCell {
+                                _left_child_page: left_child_page,
+                                ..
+                            })
+                            | BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                                left_child_page,
+                                ..
+                            }) => {
+                                self.stack.advance();
+                                let mem_page = self.pager.read_page(left_child_page as usize)?;
+                                self.going_upwards = false;
+                                self.stack.push(mem_page);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    let count_info = self
+                        .state
+                        .mut_count_info()
+                        .expect("count info should have been set");
+                    count_info.state = CountState::LoadPage;
+                }
+            }
         }
     }
 }

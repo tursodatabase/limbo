@@ -1,4 +1,4 @@
-use super::emitter::emit_program;
+use super::emitter::{emit_program, TranslateCtx};
 use super::plan::{select_star, JoinOrderMember, Operation, Search, SelectQueryType};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
@@ -10,6 +10,7 @@ use crate::translate::planner::{
 };
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
+use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
 use limbo_sqlite3_parser::ast::{self, SortOrder};
@@ -483,4 +484,68 @@ fn estimate_num_labels(select: &SelectPlan) -> usize {
         init_halt_labels + table_labels + group_by_labels + order_by_labels + condition_labels;
 
     num_labels
+}
+
+/// Reference: https://github.com/sqlite/sqlite/blob/5db695197b74580c777b37ab1b787531f15f7f9f/src/select.c#L8613
+///
+/// Checks to see if the query is of the format `SELECT count(*) FROM <tbl>`
+pub fn is_simple_count(plan: &SelectPlan) -> bool {
+    // TODO: (pedrocarlo) check for HAVING clause
+    if !plan.where_clause.is_empty()
+        || plan.aggregates.len() != 1
+        || matches!(plan.query_type, SelectQueryType::Subquery { .. })
+        || plan.table_references.len() != 1
+        || plan.result_columns.len() != 1
+        || plan.group_by.is_some()
+    // TODO: (pedrocarlo) maybe can optimize to use the count optmization with more columns
+    {
+        return false;
+    }
+    let table_ref = plan.table_references.first().unwrap();
+    if !matches!(table_ref.table, crate::schema::Table::BTree(..)) {
+        return false;
+    }
+    let agg = plan.aggregates.first().unwrap();
+    if !matches!(agg.func, AggFunc::Count0) {
+        return false;
+    }
+    true
+}
+
+pub fn emit_simple_count<'a>(
+    program: &mut ProgramBuilder,
+    _t_ctx: &mut TranslateCtx<'a>,
+    plan: &'a SelectPlan,
+) -> Result<()> {
+    let cursors = plan
+        .table_references
+        .get(0)
+        .unwrap()
+        .resolve_cursors(program)?;
+
+    let cursor_id = {
+        match cursors {
+            (_, Some(cursor_id)) | (Some(cursor_id), None) => cursor_id,
+            _ => panic!("cursor for table should have been opened"),
+        }
+    };
+
+    // TODO: I think this allocation can be avoided if we are smart with the `TranslateCtx`
+    let target_reg = program.alloc_register();
+
+    program.emit_insn(Insn::Count {
+        cursor_id,
+        target_reg,
+        exact: true,
+    });
+
+    program.emit_insn(Insn::Close { cursor_id });
+    let output_reg = program.alloc_register();
+    program.emit_insn(Insn::Copy {
+        src_reg: target_reg,
+        dst_reg: output_reg,
+        amount: 0,
+    });
+    program.emit_result_row(output_reg, 1);
+    Ok(())
 }
