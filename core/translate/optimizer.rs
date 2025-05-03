@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 
 use crate::{
-    schema::{BTreeTable, Column, Index, IndexColumn, Schema, Type},
+    schema::{Index, IndexColumn, Schema, Table},
     translate::plan::TerminationKey,
     types::SeekOp,
     util::exprs_are_equivalent,
@@ -13,8 +13,8 @@ use crate::{
 use super::{
     emitter::Resolver,
     plan::{
-        DeletePlan, EvalAt, GroupBy, IterationDirection, JoinInfo, JoinOrderMember, Operation,
-        Plan, Search, SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
+        DeletePlan, EvalAt, GroupBy, IterationDirection, JoinOrderMember, Operation, Plan, Search,
+        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
     },
     planner::determine_where_to_eval_expr,
 };
@@ -53,8 +53,6 @@ fn optimize_select_plan(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     if let Some(best_join_order) = best_join_order {
         plan.join_order = best_join_order;
     }
-
-    eliminate_orderby_like_groupby(plan)?;
 
     Ok(())
 }
@@ -105,164 +103,6 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
-    if plan.order_by.is_none() | plan.group_by.is_none() {
-        return Ok(());
-    }
-    if plan.table_references.len() == 0 {
-        return Ok(());
-    }
-
-    let order_by_clauses = plan.order_by.as_mut().unwrap();
-    // TODO: let's make the group by sorter aware of the order by orders so we dont need to skip
-    // descending terms.
-    if order_by_clauses
-        .iter()
-        .any(|(_, dir)| matches!(dir, SortOrder::Desc))
-    {
-        return Ok(());
-    }
-    let group_by_clauses = plan.group_by.as_mut().unwrap();
-    // all order by terms must be in the group by clause for order by to be eliminated
-    if !order_by_clauses.iter().all(|(o_expr, _)| {
-        group_by_clauses
-            .exprs
-            .iter()
-            .any(|g_expr| exprs_are_equivalent(g_expr, o_expr))
-    }) {
-        return Ok(());
-    }
-
-    // reorder group by terms so that they match the order by terms
-    // this way the group by sorter will effectively do the order by sorter's job and
-    // we can remove the order by clause
-    group_by_clauses.exprs.sort_by_key(|g_expr| {
-        order_by_clauses
-            .iter()
-            .position(|(o_expr, _)| exprs_are_equivalent(o_expr, g_expr))
-            .unwrap_or(usize::MAX)
-    });
-
-    plan.order_by = None;
-    Ok(())
-}
-
-/// Eliminate unnecessary ORDER BY clauses.
-/// Returns true if the ORDER BY clause was eliminated.
-fn eliminate_unnecessary_orderby(
-    table_references: &mut [TableReference],
-    available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
-    group_by: &Option<GroupBy>,
-) -> Result<bool> {
-    let Some(order) = order_by else {
-        return Ok(false);
-    };
-    let Some(first_table_reference) = table_references.first_mut() else {
-        return Ok(false);
-    };
-    let Some(btree_table) = first_table_reference.btree() else {
-        return Ok(false);
-    };
-    // If GROUP BY clause is present, we can't rely on already ordered columns because GROUP BY reorders the data
-    // This early return prevents the elimination of ORDER BY when GROUP BY exists, as sorting must be applied after grouping
-    // And if ORDER BY clause duplicates GROUP BY we handle it later in fn eliminate_orderby_like_groupby
-    if group_by.is_some() {
-        return Ok(false);
-    }
-    let Operation::Scan {
-        index, iter_dir, ..
-    } = &mut first_table_reference.op
-    else {
-        return Ok(false);
-    };
-
-    assert!(
-        index.is_none(),
-        "Nothing shouldve transformed the scan to use an index yet"
-    );
-
-    // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
-    if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
-        *iter_dir = match order[0].1 {
-            SortOrder::Asc => IterationDirection::Forwards,
-            SortOrder::Desc => IterationDirection::Backwards,
-        };
-        *order_by = None;
-        return Ok(true);
-    }
-
-    // Find the best matching index for the ORDER BY columns
-    let table_name = &btree_table.name;
-    let mut best_index = (None, 0);
-
-    for (_, indexes) in available_indexes.iter() {
-        for index_candidate in indexes.iter().filter(|i| &i.table_name == table_name) {
-            let matching_columns = index_candidate.columns.iter().enumerate().take_while(|(i, c)| {
-                            if let Some((Expr::Column { table, column, .. }, _)) = order.get(*i) {
-                                let col_idx_in_table = btree_table
-                                    .columns
-                                    .iter()
-                                    .position(|tc| tc.name.as_ref() == Some(&c.name));
-                                matches!(col_idx_in_table, Some(col_idx) if *table == 0 && *column == col_idx)
-                            } else {
-                                false
-                            }
-                        }).count();
-
-            if matching_columns > best_index.1 {
-                best_index = (Some(index_candidate), matching_columns);
-            }
-        }
-    }
-
-    let Some(matching_index) = best_index.0 else {
-        return Ok(false);
-    };
-    let match_count = best_index.1;
-
-    // If we found a matching index, use it for scanning
-    *index = Some(matching_index.clone());
-    // If the order by order matches the index order, we can iterate the index in forwards order.
-    // If they don't, we must iterate the index in backwards order.
-    let index_order = &matching_index.columns.first().as_ref().unwrap().order;
-    *iter_dir = match (index_order, order[0].1) {
-        (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
-            IterationDirection::Forwards
-        }
-        (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
-            IterationDirection::Backwards
-        }
-    };
-
-    // If the index covers all ORDER BY columns, and one of the following applies:
-    // - the ORDER BY orders exactly match the index orderings,
-    // - the ORDER by orders are the exact opposite of the index orderings,
-    // we can remove the ORDER BY clause.
-    if match_count == order.len() {
-        let full_match = {
-            let mut all_match_forward = true;
-            let mut all_match_reverse = true;
-            for (i, (_, order)) in order.iter().enumerate() {
-                match (&matching_index.columns[i].order, order) {
-                    (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
-                        all_match_reverse = false;
-                    }
-                    (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
-                        all_match_forward = false;
-                    }
-                }
-            }
-            all_match_forward || all_match_reverse
-        };
-        if full_match {
-            *order_by = None;
-        }
-    }
-
-    Ok(order_by.is_none())
 }
 
 /// Represents an n-ary join, anywhere from 1 table to N tables.
@@ -362,7 +202,30 @@ fn join_lhs_tables_to_rhs_table(
             build_cost: Cost(0.0),
         },
         kind: AccessMethodKind::TableScan {
-            iter_dir: IterationDirection::Forwards,
+            iter_dir: if let Some(order_target) = maybe_order_target {
+                // if the order target 1. has a single column 2. it is the rowid alias of this table 3. the order target column is in descending order, then we should use IterationDirection::Backwards
+                let rowid_alias_column_no = rhs_table_reference
+                    .columns()
+                    .iter()
+                    .position(|c| c.is_rowid_alias);
+
+                let should_use_backwards =
+                    if let Some(rowid_alias_column_no) = rowid_alias_column_no {
+                        order_target.0.len() == 1
+                            && order_target.0[0].table_no == rhs_table_number
+                            && order_target.0[0].column_no == rowid_alias_column_no
+                            && order_target.0[0].order == SortOrder::Desc
+                    } else {
+                        false
+                    };
+                if should_use_backwards {
+                    IterationDirection::Backwards
+                } else {
+                    IterationDirection::Forwards
+                }
+            } else {
+                IterationDirection::Forwards
+            },
         },
     };
 
@@ -413,7 +276,7 @@ fn join_lhs_tables_to_rhs_table(
                 } else {
                     AccessMethodKind::IndexScan {
                         index: index_search.index.expect("index must exist"),
-                        iter_dir: IterationDirection::Forwards,
+                        iter_dir: index_search.iter_dir,
                     }
                 },
             };
@@ -450,7 +313,7 @@ fn join_lhs_tables_to_rhs_table(
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
     let cost = lhs_cost + best_access_method.cost.total();
 
-    let mut new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
+    let new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
         let mut numbers = l.table_numbers.clone();
         numbers.push(rhs_table_number);
         numbers
@@ -563,7 +426,6 @@ fn generate_join_bitmasks(table_number_max_exclusive: usize, how_many: usize) ->
 }
 
 /// Check if the plan's row iteration order matches the [OrderTarget]'s column order
-/// TODO this needs to take iteration order into account, foo vitun bar saatana
 fn plan_satisfies_order_target(
     plan: &JoinN,
     table_references: &[TableReference],
@@ -623,11 +485,17 @@ fn plan_satisfies_order_target(
                     }
                 } else {
                     // same as table scan
+                    let iter_dir = seek_def.iter_dir;
                     for i in 0..table_ref.table.columns().len() {
                         let target_col = &order_target.0[target_col_idx];
+                        let order_matches = if iter_dir == IterationDirection::Forwards {
+                            target_col.order == SortOrder::Asc
+                        } else {
+                            target_col.order == SortOrder::Desc
+                        };
                         if target_col.table_no != *table_no
                             || target_col.column_no != i
-                            || target_col.order != SortOrder::Asc
+                            || !order_matches
                         {
                             return false;
                         }
@@ -663,28 +531,43 @@ fn plan_satisfies_order_target(
                 }
             }
             AccessMethodKind::TableScan { iter_dir } => {
-                for i in 0..table_ref.table.columns().len() {
-                    let target_col = &order_target.0[target_col_idx];
-                    let order_matches = if *iter_dir == IterationDirection::Forwards {
-                        target_col.order == SortOrder::Asc
-                    } else {
-                        target_col.order != SortOrder::Asc
-                    };
-                    if target_col.table_no != *table_no
-                        || target_col.column_no != i
-                        || !order_matches
-                    {
-                        return false;
-                    }
-                    target_col_idx += 1;
-                    if target_col_idx == order_target.0.len() {
-                        return true;
-                    }
+                let rowid_alias_col = table_ref
+                    .table
+                    .columns()
+                    .iter()
+                    .position(|c| c.is_rowid_alias);
+                let Some(rowid_alias_col) = rowid_alias_col else {
+                    return false;
+                };
+                let target_col = &order_target.0[target_col_idx];
+                let order_matches = if *iter_dir == IterationDirection::Forwards {
+                    target_col.order == SortOrder::Asc
+                } else {
+                    target_col.order == SortOrder::Desc
+                };
+                if target_col.table_no != *table_no
+                    || target_col.column_no != rowid_alias_col
+                    || !order_matches
+                {
+                    return false;
+                }
+                target_col_idx += 1;
+                if target_col_idx == order_target.0.len() {
+                    return true;
                 }
             }
         }
     }
     false
+}
+
+/// The result of [compute_best_join_order].
+#[derive(Debug)]
+struct BestJoinOrderResult {
+    /// The best plan overall.
+    best_plan: JoinN,
+    /// The best plan for the given order target, if it isn't the overall best.
+    best_ordered_plan: Option<JoinN>,
 }
 
 /// Compute the best way to join a given set of tables.
@@ -693,9 +576,9 @@ fn compute_best_join_order(
     table_references: &[TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &Vec<WhereTerm>,
-    maybe_order_target: Option<OrderTarget>,
+    maybe_order_target: Option<&OrderTarget>,
     access_methods_cache: &mut HashMap<usize, AccessMethod>,
-) -> Result<Option<JoinN>> {
+) -> Result<Option<BestJoinOrderResult>> {
     if table_references.is_empty() {
         return Ok(None);
     }
@@ -708,12 +591,9 @@ fn compute_best_join_order(
         table_references,
         available_indexes,
         where_clause,
-        maybe_order_target.as_ref(),
+        maybe_order_target,
         access_methods_cache,
     )?;
-    if table_references.len() == 1 {
-        return Ok(Some(naive_plan));
-    }
     let mut best_ordered_plan: Option<JoinN> = None;
     let mut best_plan_is_also_ordered = if let Some(ref order_target) = maybe_order_target {
         plan_satisfies_order_target(
@@ -725,6 +605,12 @@ fn compute_best_join_order(
     } else {
         false
     };
+    if table_references.len() == 1 {
+        return Ok(Some(BestJoinOrderResult {
+            best_plan: naive_plan,
+            best_ordered_plan: None,
+        }));
+    }
     let mut best_plan = naive_plan;
     let mut join_order = Vec::with_capacity(n);
     join_order.push(JoinOrderMember {
@@ -762,7 +648,7 @@ fn compute_best_join_order(
             where_clause,
             indexes_ref,
             &join_order,
-            maybe_order_target.as_ref(),
+            maybe_order_target,
             access_methods_cache,
         )?;
         best_plan_memo.insert(mask, rel);
@@ -866,7 +752,7 @@ fn compute_best_join_order(
                     where_clause,
                     indexes_ref,
                     &join_order,
-                    maybe_order_target.as_ref(),
+                    maybe_order_target,
                     access_methods_cache,
                 )?;
                 join_order.clear();
@@ -926,7 +812,14 @@ fn compute_best_join_order(
         }
     }
 
-    Ok(Some(best_plan))
+    Ok(Some(BestJoinOrderResult {
+        best_plan,
+        best_ordered_plan: if best_plan_is_also_ordered {
+            None
+        } else {
+            best_ordered_plan
+        },
+    }))
 }
 
 /// Specialized version of [compute_best_join_order] that just joins tables in the order they are given
@@ -989,17 +882,27 @@ fn compute_naive_left_deep_plan(
     Ok(best_plan)
 }
 
+#[derive(Debug, PartialEq, Clone)]
 struct ColumnOrder {
     table_no: usize,
     column_no: usize,
     order: SortOrder,
 }
 
-struct OrderTarget(Vec<ColumnOrder>);
+#[derive(Debug, PartialEq, Clone)]
+enum EliminatesSort {
+    GroupBy,
+    OrderBy,
+    GroupByAndOrderBy,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct OrderTarget(Vec<ColumnOrder>, EliminatesSort);
 
 impl OrderTarget {
     fn maybe_from_iterator<'a>(
         list: impl Iterator<Item = (&'a ast::Expr, SortOrder)> + Clone,
+        eliminates_sort: EliminatesSort,
     ) -> Option<Self> {
         if list.clone().count() == 0 {
             return None;
@@ -1022,6 +925,7 @@ impl OrderTarget {
                 }
             })
             .collect(),
+            eliminates_sort,
         ))
     }
 }
@@ -1030,6 +934,9 @@ impl OrderTarget {
 /// Ideally, a join order is both efficient in joining the tables
 /// but also returns the results in an order that minimizes the amount of
 /// sorting that needs to be done later (either in GROUP BY, ORDER BY, or both).
+///
+/// TODO: this does not currently handle the case where we definitely cannot eliminate
+/// the ORDER BY sorter, but we could still eliminate the GROUP BY sorter.
 fn compute_order_target(
     order_by: &Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: Option<&mut GroupBy>,
@@ -1038,12 +945,14 @@ fn compute_order_target(
         // No ordering demands - we don't care what order the joined result rows are in
         (None, None) => None,
         // Only ORDER BY - we would like the joined result rows to be in the order specified by the ORDER BY
-        (Some(order_by), None) => {
-            OrderTarget::maybe_from_iterator(order_by.iter().map(|(expr, order)| (expr, *order)))
-        }
+        (Some(order_by), None) => OrderTarget::maybe_from_iterator(
+            order_by.iter().map(|(expr, order)| (expr, *order)),
+            EliminatesSort::OrderBy,
+        ),
         // Only GROUP BY - we would like the joined result rows to be in the order specified by the GROUP BY
         (None, Some(group_by)) => OrderTarget::maybe_from_iterator(
             group_by.exprs.iter().map(|expr| (expr, SortOrder::Asc)),
+            EliminatesSort::GroupBy,
         ),
         // Both ORDER BY and GROUP BY:
         // If the GROUP BY does not contain all the expressions in the ORDER BY,
@@ -1065,6 +974,7 @@ fn compute_order_target(
             if !group_by_contains_all {
                 return OrderTarget::maybe_from_iterator(
                     group_by.exprs.iter().map(|expr| (expr, SortOrder::Asc)),
+                    EliminatesSort::GroupBy,
                 );
             }
             // If yes, let's try to target an ordering that matches the GROUP BY columns,
@@ -1087,6 +997,7 @@ fn compute_order_target(
                             .chain(std::iter::repeat(&SortOrder::Asc)),
                     )
                     .map(|(expr, dir)| (expr, *dir)),
+                EliminatesSort::GroupByAndOrderBy,
             )
         }
     }
@@ -1101,25 +1012,68 @@ fn use_indexes(
 ) -> Result<Option<Vec<JoinOrderMember>>> {
     let mut access_methods_cache = HashMap::new();
     let maybe_order_target = compute_order_target(order_by, group_by.as_mut());
-    let Some(best) = compute_best_join_order(
+    let Some(best_join_order_result) = compute_best_join_order(
         table_references,
         available_indexes,
         where_clause,
-        maybe_order_target,
+        maybe_order_target.as_ref(),
         &mut access_methods_cache,
     )?
     else {
         return Ok(None);
     };
 
+    let BestJoinOrderResult {
+        best_plan,
+        best_ordered_plan,
+    } = best_join_order_result;
+
+    let best_plan = if let Some(best_ordered_plan) = best_ordered_plan {
+        let best_unordered_plan_cost = best_plan.cost;
+        let best_ordered_plan_cost = best_ordered_plan.cost;
+        const SORT_COST_PER_ROW_MULTIPLIER: f64 = 0.001;
+        let sorting_penalty =
+            Cost(best_plan.output_cardinality as f64 * SORT_COST_PER_ROW_MULTIPLIER);
+        if best_unordered_plan_cost + sorting_penalty > best_ordered_plan_cost {
+            best_ordered_plan
+        } else {
+            best_plan
+        }
+    } else {
+        best_plan
+    };
+
+    if let Some(order_target) = maybe_order_target {
+        let satisfies_order_target = plan_satisfies_order_target(
+            &best_plan,
+            table_references,
+            &mut access_methods_cache,
+            &order_target,
+        );
+        if satisfies_order_target {
+            match order_target.1 {
+                EliminatesSort::GroupBy => {
+                    let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
+                }
+                EliminatesSort::OrderBy => {
+                    let _ = order_by.take();
+                }
+                EliminatesSort::GroupByAndOrderBy => {
+                    let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
+                    let _ = order_by.take();
+                }
+            }
+        }
+    }
+
     let (mut best_access_methods, best_table_numbers) = {
-        let mut kinds = Vec::with_capacity(best.best_access_methods.len());
-        for am_idx in best.best_access_methods.iter() {
+        let mut kinds = Vec::with_capacity(best_plan.best_access_methods.len());
+        for am_idx in best_plan.best_access_methods.iter() {
             // take value from cache
             let am = access_methods_cache.remove(am_idx).unwrap();
             kinds.push(am.kind);
         }
-        (kinds, best.table_numbers)
+        (kinds, best_plan.table_numbers)
     };
     let mut to_remove_from_where_clause = vec![];
     for table_number in best_table_numbers.iter().rev() {
@@ -1131,7 +1085,9 @@ fn use_indexes(
             // FIXME: Operation::Subquery shouldn't exist. It's not an operation, it's a kind of temporary table.
             assert!(
                 matches!(access_method, AccessMethodKind::TableScan { .. }),
-                "nothing in the current optimizer should be able to optimize subqueries"
+                "nothing in the current optimizer should be able to optimize subqueries, but got {:?} for table {}",
+                access_method,
+                table_references[*table_number].table.get_name()
             );
             continue;
         }
@@ -1799,7 +1755,32 @@ pub fn try_extract_index_search_from_where_clause(
             false,
             input_cardinality,
         );
-        if cost.total() < best_index.cost.total() {
+        let order_satisfiability_bonus = if let Some(order_target) = maybe_order_target {
+            let mut all_same_direction = true;
+            let mut all_opposite_direction = true;
+            for i in 0..order_target.0.len().min(index.columns.len()) {
+                if order_target.0[i].table_no != table_index
+                    || order_target.0[i].column_no != index.columns[i].pos_in_table
+                {
+                    all_same_direction = false;
+                    all_opposite_direction = false;
+                    break;
+                }
+                if order_target.0[i].order == index.columns[i].order {
+                    all_opposite_direction = false;
+                } else {
+                    all_same_direction = false;
+                }
+            }
+            if all_same_direction || all_opposite_direction {
+                Cost(1.0)
+            } else {
+                Cost(0.0)
+            }
+        } else {
+            Cost(0.0)
+        };
+        if cost.total() < best_index.cost.total() + order_satisfiability_bonus {
             best_index.index = Some(Arc::clone(index));
             best_index.cost = cost;
             best_index.constraints.clear();
@@ -1809,7 +1790,7 @@ pub fn try_extract_index_search_from_where_clause(
 
     // We haven't found a persistent btree index that is any better than a full table scan;
     // let's see if building an ephemeral index would be better.
-    if best_index.index.is_none() {
+    if best_index.index.is_none() && matches!(table_reference.table, Table::BTree(_)) {
         let (ephemeral_cost, constraints_with_col_idx, mut constraints_without_col_idx) =
             ephemeral_index_estimate_cost(
                 where_clause,
@@ -1837,11 +1818,7 @@ pub fn try_extract_index_search_from_where_clause(
         return Ok(None);
     }
 
-    if best_index.constraints.is_empty() {
-        return Ok(Some(best_index));
-    }
-
-    let iter_dir = if let Some(order_target) = maybe_order_target {
+    best_index.iter_dir = if let Some(order_target) = maybe_order_target {
         // if index columns match the order target columns in the exact reverse directions, then we should use IterationDirection::Backwards
         let index = best_index.index.as_ref().unwrap();
         let mut should_use_backwards = true;
@@ -1866,9 +1843,16 @@ pub fn try_extract_index_search_from_where_clause(
         IterationDirection::Forwards
     };
 
+    if best_index.constraints.is_empty() {
+        return Ok(Some(best_index));
+    }
+
     // Build the seek definition
-    let seek_def =
-        build_seek_def_from_index_constraints(&best_index.constraints, iter_dir, where_clause)?;
+    let seek_def = build_seek_def_from_index_constraints(
+        &best_index.constraints,
+        best_index.iter_dir,
+        where_clause,
+    )?;
 
     // Remove the used terms from the where_clause since they are now part of the seek definition
     // Sort terms by position in descending order to avoid shifting indices during removal

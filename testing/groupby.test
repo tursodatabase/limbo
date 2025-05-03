@@ -192,3 +192,9 @@ do_execsql_test groupby_orderby_removal_regression_test {
 } {1|Foster|1
 2|Salazar|1
 3|Perry|1}
+
+do_execsql_test group_by_no_sorting_required {
+  select age, count(1) from users group by age limit 3;
+} {1|112
+2|113
+3|97}
