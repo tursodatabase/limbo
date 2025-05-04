@@ -582,6 +582,7 @@ fn emit_program_for_update(
         program.emit_insn(Insn::OpenWrite {
             cursor_id: index_cursor,
             root_page: RegisterOrLiteral::Literal(index.root_page),
+            name: index.name.clone(),
         });
         index_cursors.push(index_cursor);
     }
@@ -895,6 +896,7 @@ fn emit_update_insns(
             start_reg: index_record_reg_start,
             count: index_record_reg_count,
             dest_reg: index_record_reg,
+            index_name: Some(index.name.clone()),
         });
         program.emit_insn(Insn::IdxInsert {
             cursor_id: index_cursor,
@@ -973,7 +975,7 @@ fn emit_update_insns(
         }
     }
 
-    for (pos, index) in plan.indexes.iter().enumerate() {
+    for (pos, index) in plan.indexes_to_update.iter().enumerate() {
         if index.unique {
             let (_, _, idx_cursor_id, record_reg) =
                 idx_cursors.get(pos).expect("index cursor should exist");
