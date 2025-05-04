@@ -106,6 +106,7 @@ pub fn prepare_select_plan<'a>(
                 offset: None,
                 contains_constant_false_condition: false,
                 query_type: SelectQueryType::TopLevel,
+                is_simple_count: false,
             };
 
             let mut aggregate_expressions = Vec::new();
@@ -387,6 +388,8 @@ pub fn prepare_select_plan<'a>(
             (plan.limit, plan.offset) =
                 select.limit.map_or(Ok((None, None)), |l| parse_limit(&l))?;
 
+            plan.is_simple_count = is_simple_count(&plan);
+
             // Return the unoptimized query plan
             Ok(Plan::Select(plan))
         }
@@ -507,6 +510,22 @@ pub fn is_simple_count(plan: &SelectPlan) -> bool {
     }
     let agg = plan.aggregates.first().unwrap();
     if !matches!(agg.func, AggFunc::Count0) {
+        return false;
+    }
+
+    let count = limbo_sqlite3_parser::ast::Expr::FunctionCall {
+        name: limbo_sqlite3_parser::ast::Id("count".to_string()),
+        distinctness: None,
+        args: None,
+        order_by: None,
+        filter_over: None,
+    };
+    let count_star = limbo_sqlite3_parser::ast::Expr::FunctionCallStar {
+        name: limbo_sqlite3_parser::ast::Id("count".to_string()),
+        filter_over: None,
+    };
+    let result_col_expr = &plan.result_columns.get(0).unwrap().expr;
+    if *result_col_expr != count || *result_col_expr != count_star {
         return false;
     }
     true

@@ -23,7 +23,7 @@ use super::group_by::{
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
-use super::select::{emit_simple_count, is_simple_count};
+use super::select::emit_simple_count;
 use super::schema::ParseSchema;
 use super::subquery::emit_subqueries;
 
@@ -233,8 +233,6 @@ pub fn emit_query<'a>(
     plan: &'a mut SelectPlan,
     t_ctx: &'a mut TranslateCtx<'a>,
 ) -> Result<usize> {
-    let is_simple_count = is_simple_count(plan);
-
     // Emit subqueries first so the results can be read in the main query loop.
     emit_subqueries(program, t_ctx, &mut plan.table_references)?;
 
@@ -312,7 +310,7 @@ pub fn emit_query<'a>(
         program.preassign_label_to_next_insn(jump_target_when_true);
     }
 
-    if !is_simple_count {
+    if !plan.is_simple_count {
         // Set up main query execution loop
         open_loop(
             program,
@@ -347,7 +345,7 @@ pub fn emit_query<'a>(
         group_by_emit_row_phase(program, t_ctx, plan)?;
     } else if !plan.aggregates.is_empty() {
         // Handle aggregation without GROUP BY
-        if is_simple_count {
+        if plan.is_simple_count {
             emit_simple_count(program, t_ctx, plan)?;
         } else {
             emit_ungrouped_aggregation(program, t_ctx, plan)?;
