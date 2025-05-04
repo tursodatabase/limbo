@@ -193,8 +193,9 @@ impl VTabModule for CsvVTable {
         )"
     }
 
-    /// Open to return a new cursor: In this simple example, the CSV file is read completely into memory on connect.
-    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+    /// You have the option of storing a connection to the database that opened the module, and you can query
+    /// tables accessible by the underlying connection.
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
         // Read CSV file contents from "data.csv"
         let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
         // For simplicity, we'll ignore the header row.
@@ -207,11 +208,21 @@ impl VTabModule for CsvVTable {
                     .collect()
             })
             .collect();
-        Ok(CsvCursor { rows, index: 0 })
+        Ok(CsvCursor { rows, index: 0, conn })
     }
 
     /// Filter through result columns. (not used in this simple example)
-    fn filter(_cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
+    fn filter(cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
+        /// Prepare statement:
+        let stmt = cursor.conn.prepare("SELECT a, b, c from some_table;");
+
+        /// Iterate over rows:
+        while let StepResult::Row = stmt.step() {
+            let row = stmt.get_row();
+            if let Some(a) = row.first() {
+                // do something with column 'a'
+            }
+        }
         ResultCode::OK
     }
 
@@ -257,6 +268,7 @@ impl VTabModule for CsvVTable {
 struct CsvCursor {
     rows: Vec<Vec<String>>,
     index: usize,
+    conn: Rc<Connection>,
 }
 
 /// Implement the VTabCursor trait for your cursor type

@@ -1,5 +1,6 @@
 #[cfg(feature = "fs")]
 mod dynamic;
+mod vtab_connect;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
@@ -152,12 +153,15 @@ impl Connection {
         ResultCode::OK
     }
 
-    pub fn build_limbo_ext(&self) -> ExtensionApi {
+    pub fn build_limbo_ext(self: &Rc<Connection>) -> ExtensionApi {
+        let cloned = self.clone();
         ExtensionApi {
-            ctx: self as *const _ as *mut c_void,
+            ctx: Rc::into_raw(cloned) as *const _ as *mut c_void,
+            conn: std::ptr::null_mut(),
             register_scalar_function,
             register_aggregate_function,
             register_vtab_module,
+            connect: vtab_connect::connect,
             #[cfg(feature = "fs")]
             vfs_interface: limbo_ext::VfsInterface {
                 register_vfs: dynamic::register_vfs,
@@ -167,7 +171,7 @@ impl Connection {
         }
     }
 
-    pub fn register_builtins(&self) -> Result<(), String> {
+    pub fn register_builtins(self: &Rc<Connection>) -> Result<(), String> {
         #[allow(unused_variables)]
         let mut ext_api = self.build_limbo_ext();
         #[cfg(feature = "uuid")]

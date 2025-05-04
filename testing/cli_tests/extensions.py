@@ -499,7 +499,7 @@ def test_ipaddr():
 
 
 def test_vfs():
-    limbo = TestLimboShell()
+    limbo = TestLimboShell("")
     ext_path = "target/debug/liblimbo_ext_tests"
     limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
     limbo.execute_dot(f".load {ext_path}")
@@ -552,6 +552,65 @@ def test_drop_virtual_table():
     limbo.quit()
 
 
+def test_tablestats():
+    ext_path = "target/debug/liblimbo_ext_tests"
+    limbo = TestLimboShell("")
+    limbo.execute_dot("CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT);")
+    limbo.execute_dot("INSERT INTO people(name) VALUES ('Ada'), ('Grace'), ('Linus');")
+
+    limbo.execute_dot("CREATE TABLE logs(ts INT, msg TEXT);")
+    limbo.execute_dot("INSERT INTO logs VALUES (1,'boot ok');")
+
+    # verify counts
+    limbo.run_test_fn(
+        "SELECT COUNT(*) FROM people;", lambda res: res == "3", "three people rows"
+    )
+    limbo.run_test_fn(
+        "SELECT COUNT(*) FROM logs;", lambda res: res == "1", "one logs row"
+    )
+    # load extension
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.execute_dot("CREATE VIRTUAL TABLE stats USING tablestats;")
+
+    def _split(res):
+        return [ln.strip() for ln in res.splitlines() if ln.strip()]
+
+    limbo.run_test_fn(
+        "SELECT * FROM stats ORDER BY name;",
+        lambda res: sorted(_split(res)) == sorted(["logs|1", "people|3"]),
+        "stats shows correct initial counts (and skips itself)",
+    )
+
+    limbo.execute_dot("INSERT INTO logs VALUES (2,'panic'), (3,'recovery');")
+    limbo.execute_dot("DELETE FROM people WHERE name='Linus';")
+
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='logs';",
+        lambda res: res == "logs|3",
+        "row‑count grows after INSERT",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='people';",
+        lambda res: res == "people|2",
+        "row‑count shrinks after DELETE",
+    )
+
+    limbo.execute_dot("CREATE TABLE misc(x);")
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='misc';",
+        lambda res: res == "misc|0",
+        "newly‑created table shows up with zero rows",
+    )
+
+    limbo.execute_dot("DROP TABLE logs;")
+    limbo.run_test_fn(
+        "SELECT name FROM stats WHERE name='logs';",
+        lambda res: res == "",
+        "dropped table disappears from stats",
+    )
+    limbo.quit()
+
+
 def test_sqlite_vfs_compat():
     sqlite = TestLimboShell(
         init_commands="",
@@ -600,6 +659,7 @@ def main():
         test_sqlite_vfs_compat()
         test_kv()
         test_drop_virtual_table()
+        test_tablestats()
     except Exception as e:
         console.error(f"Test FAILED: {e}")
         cleanup()

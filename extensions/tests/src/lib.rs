@@ -1,17 +1,19 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtResult,
-    IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
+    register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
+    ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::rc::Rc;
 use std::sync::Mutex;
 
 register_extension! {
-    vtabs: { KVStoreVTab },
+    vtabs: { KVStoreVTab, TableStats },
     scalars: { test_scalar },
     vfs: { TestFS },
 }
@@ -39,7 +41,7 @@ impl VTabModule for KVStoreVTab {
         "CREATE TABLE x (key TEXT PRIMARY KEY, value TEXT);".to_string()
     }
 
-    fn open(&self) -> Result<Self::VCursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
         let _ = env_logger::try_init();
         Ok(KVStoreCursor {
             rows: Vec::new(),
@@ -300,5 +302,133 @@ impl VfsFile for TestFile {
 
     fn size(&self) -> i64 {
         self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
+    }
+}
+
+#[derive(VTabModuleDerive, Default)]
+pub struct TableStats;
+
+pub struct StatsCursor {
+    pos: usize,
+    rows: Vec<(String, i64)>,
+    conn: Option<Rc<Connection>>,
+}
+
+/// implement the module
+impl VTabModule for TableStats {
+    type VCursor = StatsCursor;
+    const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
+    const NAME: &'static str = "tablestats";
+    type Error = String;
+
+    fn create_schema(_args: &[Value]) -> String {
+        // table name, total rows
+        "CREATE TABLE x(name TEXT, rows INT);".to_string()
+    }
+
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::VCursor, Self::Error> {
+        Ok(StatsCursor {
+            pos: 0,
+            rows: Vec::new(),
+            conn,
+        })
+    }
+
+    fn filter(
+        cursor: &mut Self::VCursor,
+        _args: &[Value],
+        _idx_info: Option<(&str, i32)>,
+    ) -> ResultCode {
+        cursor.rows.clear();
+        cursor.pos = 0;
+
+        let Some(conn) = &cursor.conn else {
+            return ResultCode::Error;
+        };
+
+        // discover application tables
+        let mut master = conn
+            .prepare(
+                "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
+            )
+            .map_err(|_| ResultCode::Error)
+            .unwrap();
+
+        let mut tables = Vec::new();
+        while let StepResult::Row = master.step() {
+            let row = master.get_row();
+            let tbl = if let Some(val) = row.first() {
+                val.to_text().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            };
+            if tbl.is_empty() {
+                continue;
+            };
+            if row.get(1).is_some_and(|v| {
+                v.to_text()
+                    .unwrap()
+                    .contains(&format!("USING {}", Self::NAME))
+            }) {
+                continue;
+            }
+            tables.push(tbl);
+        }
+        for tbl in tables {
+            // count rows for each table
+            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {};", tbl)) {
+                let count = match count_stmt.step() {
+                    StepResult::Row => count_stmt.get_row()[0].to_integer().unwrap_or(0),
+                    _ => 0,
+                };
+                cursor.rows.push((tbl, count));
+            }
+        }
+        ResultCode::OK
+    }
+
+    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
+        cursor
+            .rows
+            .get(cursor.pos)
+            .ok_or("row out of range".to_string())
+            .and_then(|(name, cnt)| match idx {
+                0 => Ok(Value::from_text(name.clone())),
+                1 => Ok(Value::from_integer(*cnt)),
+                _ => Err("bad column".into()),
+            })
+    }
+
+    fn next(cursor: &mut Self::VCursor) -> ResultCode {
+        cursor.pos += 1;
+        if cursor.pos >= cursor.rows.len() {
+            ResultCode::EOF
+        } else {
+            ResultCode::OK
+        }
+    }
+
+    fn eof(cursor: &Self::VCursor) -> bool {
+        cursor.pos >= cursor.rows.len()
+    }
+}
+
+impl VTabCursor for StatsCursor {
+    type Error = String;
+
+    fn rowid(&self) -> i64 {
+        self.pos as i64
+    }
+
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        <TableStats as VTabModule>::column(self, idx)
+    }
+
+    fn eof(&self) -> bool {
+        <TableStats as VTabModule>::eof(self)
+    }
+
+    fn next(&mut self) -> ResultCode {
+        <TableStats as VTabModule>::next(self)
     }
 }

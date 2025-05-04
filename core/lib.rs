@@ -729,7 +729,14 @@ impl VirtualTable {
     }
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
+        let cursor = unsafe {
+            (self.implementation.open)(self.implementation.ctx, self.implementation.conn)
+        };
+        if cursor.is_null() {
+            return Err(LimboError::ExtensionError(
+                "Failed to open virtual table cursor".to_string(),
+            ));
+        }
         VTabOpaqueCursor::new(cursor)
     }
 
