@@ -180,9 +180,62 @@ fn bench_execute_select_1(criterion: &mut Criterion) {
     group.finish();
 }
 
+fn bench_execute_select_count(criterion: &mut Criterion) {
+    // https://github.com/tursodatabase/limbo/issues/174
+    // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
+    let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let io = Arc::new(PlatformIO::new().unwrap());
+    let db = Database::open_file(io.clone(), "../testing/testing.db", false).unwrap();
+    let limbo_conn = db.connect().unwrap();
+
+    let mut group = criterion.benchmark_group("Execute `SELECT count() FROM users`");
+
+    group.bench_function("limbo_execute_select_count", |b| {
+        let mut stmt = limbo_conn.prepare("SELECT count() FROM users").unwrap();
+        let io = io.clone();
+        b.iter(|| {
+            loop {
+                match stmt.step().unwrap() {
+                    limbo_core::StepResult::Row => {
+                        black_box(stmt.row());
+                    }
+                    limbo_core::StepResult::IO => {
+                        let _ = io.run_once();
+                    }
+                    limbo_core::StepResult::Done => {
+                        break;
+                    }
+                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                        unreachable!();
+                    }
+                }
+            }
+            stmt.reset();
+        });
+    });
+
+    if enable_rusqlite {
+        let sqlite_conn = rusqlite_open();
+
+        group.bench_function("sqlite_execute_select_count", |b| {
+            let mut stmt = sqlite_conn.prepare("SELECT count() FROM users").unwrap();
+            b.iter(|| {
+                let mut rows = stmt.raw_query();
+                while let Some(row) = rows.next().unwrap() {
+                    black_box(row);
+                }
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_prepare_query, bench_execute_select_1, bench_execute_select_rows
+    targets = bench_prepare_query, bench_execute_select_1, bench_execute_select_rows, bench_execute_select_count
 }
 criterion_main!(benches);
