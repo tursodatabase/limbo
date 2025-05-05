@@ -20,6 +20,7 @@ use crate::{
     LimboError, Result,
 };
 
+#[cfg(debug_assertions)]
 use std::collections::HashSet;
 use std::{
     cell::{Cell, Ref, RefCell},
@@ -338,6 +339,14 @@ enum OverflowState {
     Done,
 }
 
+enum CursorContext {
+    TableRowId(u64),
+
+    /// If we are in an index tree we can then reuse this field to save
+    /// our cursor information
+    IndexKeyRowId(ImmutableRecord),
+}
+
 pub struct BTreeCursor {
     /// The multi-version cursor that is used to read and write to the database file.
     mv_cursor: Option<Rc<RefCell<MvCursor>>>,
@@ -364,7 +373,8 @@ pub struct BTreeCursor {
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     empty_record: Cell<bool>,
     pub index_key_sort_order: IndexKeySortOrder,
-    rowid_seen: HashSet<u64>,
+    /// Stores the last record that was seen.
+    context: Option<CursorContext>,
 }
 
 impl BTreeCursor {
@@ -390,7 +400,7 @@ impl BTreeCursor {
             reusable_immutable_record: RefCell::new(None),
             empty_record: Cell::new(true),
             index_key_sort_order: IndexKeySortOrder::default(),
-            rowid_seen: HashSet::new(),
+            context: None,
         }
     }
 
@@ -756,8 +766,6 @@ impl BTreeCursor {
             let contents = mem_page.contents.as_ref().unwrap();
             let cell_count = contents.cell_count();
 
-            tracing::trace!(cell_idx, cell_count, "get_next_record");
-
             if cell_count == 0 || cell_idx == cell_count {
                 // do rightmost
                 let has_parent = self.stack.has_parent();
@@ -832,11 +840,6 @@ impl BTreeCursor {
                         )?
                     };
                     self.stack.advance();
-                    if self.rowid_seen.contains(_rowid) {
-                        continue;
-                    } else {
-                        self.rowid_seen.insert(*_rowid);
-                    }
                     return Ok(CursorResult::Ok(Some(*_rowid)));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
@@ -902,11 +905,6 @@ impl BTreeCursor {
                             Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
-                        if self.rowid_seen.contains(&rowid) {
-                            continue;
-                        } else {
-                            self.rowid_seen.insert(rowid);
-                        }
                         return Ok(CursorResult::Ok(Some(rowid)));
                     } else {
                         continue;
@@ -967,11 +965,6 @@ impl BTreeCursor {
                             Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
-                        if self.rowid_seen.contains(&rowid) {
-                            continue;
-                        } else {
-                            self.rowid_seen.insert(rowid);
-                        }
                         return Ok(CursorResult::Ok(Some(rowid)));
                     } else {
                         continue;
@@ -3437,7 +3430,6 @@ impl BTreeCursor {
     }
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
-        self.rowid_seen.clear();
         if self.mv_cursor.is_some() {
             let rowid = return_if_io!(self.get_next_record(None));
             self.rowid.replace(rowid);
@@ -3461,6 +3453,7 @@ impl BTreeCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
+        let _ = self.restore_context()?;
         let rowid = return_if_io!(self.get_next_record(None));
         self.rowid.replace(rowid);
         self.empty_record.replace(rowid.is_none());
@@ -3554,6 +3547,7 @@ impl BTreeCursor {
     /// 8. Finish -> Delete operation is done. Return CursorResult(Ok())
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
+        self.save_context();
 
         if let CursorState::None = &self.state {
             self.state = CursorState::Delete(DeleteInfo {
@@ -4250,6 +4244,44 @@ impl BTreeCursor {
             _ => false,
         }
     }
+
+    /// Save cursor context, to be restored later
+    pub fn save_context(&mut self) {
+        if let Some(rowid) = self.rowid.get() {
+            match self.stack.top().get_contents().page_type() {
+                PageType::TableInterior | PageType::TableLeaf => {
+                    self.context = Some(CursorContext::TableRowId(rowid));
+                }
+                PageType::IndexInterior | PageType::IndexLeaf => {
+                    self.context = Some(CursorContext::IndexKeyRowId(
+                        self.reusable_immutable_record
+                            .borrow()
+                            .as_ref()
+                            .unwrap()
+                            .clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// If context is defined, restore it and set it None on success
+    fn restore_context(&mut self) -> Result<CursorResult<bool>> {
+        if self.context.is_none() {
+            return Ok(CursorResult::Ok(false));
+        }
+        let ctx = self.context.as_ref().unwrap();
+        let res = match ctx {
+            CursorContext::TableRowId(rowid) => self.seek(SeekKey::TableRowId(*rowid), SeekOp::EQ),
+            CursorContext::IndexKeyRowId(record) => {
+                // TODO: see how to avoid clone here
+                let record = record.clone();
+                self.seek(SeekKey::IndexKey(&record), SeekOp::EQ)
+            }
+        }?;
+        self.context = None;
+        Ok(res)
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -4352,11 +4384,6 @@ impl PageStack {
     /// Cell index of the current page
     fn current_cell_index(&self) -> i32 {
         let current = self.current();
-        tracing::event!(
-            tracing::Level::TRACE,
-            "current: cell_indices={:?}",
-            self.cell_indices
-        );
         self.cell_indices.borrow()[current]
     }
 
@@ -4377,11 +4404,6 @@ impl PageStack {
             self.cell_indices
         );
         self.cell_indices.borrow_mut()[current] += 1;
-        tracing::event!(
-            tracing::Level::TRACE,
-            "after: cell_indices={:?}",
-            self.cell_indices
-        );
     }
 
     fn retreat(&self) {
@@ -4392,11 +4414,6 @@ impl PageStack {
             self.cell_indices
         );
         self.cell_indices.borrow_mut()[current] -= 1;
-        tracing::event!(
-            tracing::Level::TRACE,
-            "after: cell_indices={:?}",
-            self.cell_indices
-        );
     }
 
     /// Move the cursor to the next cell in the current page according to the iteration direction.
@@ -4413,18 +4430,7 @@ impl PageStack {
 
     fn set_cell_index(&self, idx: i32) {
         let current = self.current();
-        tracing::event!(
-            tracing::Level::TRACE,
-            "set_cell_index={} cell_indices={:?}",
-            idx,
-            self.cell_indices
-        );
         self.cell_indices.borrow_mut()[current] = idx;
-        tracing::event!(
-            tracing::Level::TRACE,
-            "after: cell_indices={:?}",
-            self.cell_indices
-        );
     }
 
     fn has_parent(&self) -> bool {
