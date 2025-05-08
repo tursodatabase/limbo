@@ -191,46 +191,7 @@ fn join_lhs_tables_to_rhs_table(
         * output_cardinality_multiplier)
         .ceil() as usize;
 
-    // Let's find the best access method and its cost.
-    // Initialize the best access method to a table scan.
-    let mut best_access_method = AccessMethod {
-        // worst case: read all rows of the inner table N times, where N is the number of rows in the outer best_plan
-        cost: ScanCost {
-            run_cost: estimate_page_io_cost(
-                input_cardinality as f64 * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64,
-            ),
-            build_cost: Cost(0.0),
-        },
-        kind: AccessMethodKind::Scan {
-            index: None,
-            iter_dir: if let Some(order_target) = maybe_order_target {
-                // if the order target 1. has a single column 2. it is the rowid alias of this table 3. the order target column is in descending order, then we should use IterationDirection::Backwards
-                let rowid_alias_column_no = rhs_table_reference
-                    .columns()
-                    .iter()
-                    .position(|c| c.is_rowid_alias);
-
-                let should_use_backwards =
-                    if let Some(rowid_alias_column_no) = rowid_alias_column_no {
-                        order_target.0.len() == 1
-                            && order_target.0[0].table_no == rhs_table_number
-                            && order_target.0[0].column_no == rowid_alias_column_no
-                            && order_target.0[0].order == SortOrder::Desc
-                    } else {
-                        false
-                    };
-                if should_use_backwards {
-                    IterationDirection::Backwards
-                } else {
-                    IterationDirection::Forwards
-                }
-            } else {
-                IterationDirection::Forwards
-            },
-        },
-    };
-
-    let mut rowid_search = None;
+    let mut rowid_candidate = None;
     for (wi, term) in where_clause.iter().enumerate() {
         if let Some(rse) = try_extract_rowid_search_expression(
             term,
@@ -242,10 +203,10 @@ fn join_lhs_tables_to_rhs_table(
             maybe_order_target,
             input_cardinality as f64,
         )? {
-            rowid_search = Some(rse);
+            rowid_candidate = Some(rse);
         }
     }
-    let index_search = try_extract_index_search_from_where_clause(
+    let index_candidate = try_extract_index_search_from_where_clause(
         where_clause,
         loop_idx,
         rhs_table_number,
@@ -256,57 +217,65 @@ fn join_lhs_tables_to_rhs_table(
         input_cardinality as f64,
     )?;
 
-    match (rowid_search, index_search) {
-        (Some(rowid_search), None) => {
-            best_access_method = AccessMethod {
-                cost: rowid_search.cost,
-                kind: AccessMethodKind::Search {
-                    search: rowid_search.search.expect("search must exist"),
-                    constraints: rowid_search.constraints,
+    let best_candidate = match (index_candidate, rowid_candidate) {
+        (Some(i), Some(r)) => Some(if r.cost.total() < i.cost.total() {
+            r
+        } else {
+            i
+        }),
+        (Some(i), None) => Some(i),
+        (None, r) => r,
+    };
+
+    let best_access_method = match best_candidate {
+        Some(c) => AccessMethod {
+            cost: c.cost,
+            kind: match c.search {
+                Some(search) => AccessMethodKind::Search {
+                    search,
+                    constraints: c.constraints,
                 },
-            };
-        }
-        (None, Some(index_search)) => {
-            best_access_method = AccessMethod {
-                cost: index_search.cost,
-                kind: match index_search.search {
-                    Some(search) => AccessMethodKind::Search {
-                        search,
-                        constraints: index_search.constraints,
-                    },
-                    None => AccessMethodKind::Scan {
-                        index: index_search.index,
-                        iter_dir: index_search.iter_dir,
-                    },
+                None => AccessMethodKind::Scan {
+                    index: c.index,
+                    iter_dir: c.iter_dir,
                 },
-            };
-        }
-        (Some(rowid_search), Some(index_search)) => {
-            if rowid_search.cost.total() < index_search.cost.total() {
-                best_access_method = AccessMethod {
-                    cost: rowid_search.cost,
-                    kind: AccessMethodKind::Search {
-                        search: rowid_search.search.expect("search must exist"),
-                        constraints: rowid_search.constraints,
-                    },
-                };
-            } else {
-                best_access_method = AccessMethod {
-                    cost: index_search.cost,
-                    kind: match index_search.search {
-                        Some(search) => AccessMethodKind::Search {
-                            search,
-                            constraints: index_search.constraints,
-                        },
-                        None => AccessMethodKind::Scan {
-                            index: index_search.index,
-                            iter_dir: index_search.iter_dir,
-                        },
-                    },
-                };
-            }
-        }
-        (None, None) => {}
+            },
+        },
+        None => AccessMethod {
+            cost: ScanCost {
+                run_cost: estimate_page_io_cost(
+                    input_cardinality as f64 * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64,
+                ),
+                build_cost: Cost(0.0),
+            },
+            kind: AccessMethodKind::Scan {
+                index: None,
+                iter_dir: if let Some(order_target) = maybe_order_target {
+                    // if the order target 1. has a single column 2. it is the rowid alias of this table 3. the order target column is in descending order, then we should use IterationDirection::Backwards
+                    let rowid_alias_column_no = rhs_table_reference
+                        .columns()
+                        .iter()
+                        .position(|c| c.is_rowid_alias);
+
+                    let should_use_backwards =
+                        if let Some(rowid_alias_column_no) = rowid_alias_column_no {
+                            order_target.0.len() == 1
+                                && order_target.0[0].table_no == rhs_table_number
+                                && order_target.0[0].column_no == rowid_alias_column_no
+                                && order_target.0[0].order == SortOrder::Desc
+                        } else {
+                            false
+                        };
+                    if should_use_backwards {
+                        IterationDirection::Backwards
+                    } else {
+                        IterationDirection::Forwards
+                    }
+                } else {
+                    IterationDirection::Forwards
+                },
+            },
+        },
     };
 
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
