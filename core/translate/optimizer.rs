@@ -201,7 +201,8 @@ fn join_lhs_tables_to_rhs_table(
             ),
             build_cost: Cost(0.0),
         },
-        kind: AccessMethodKind::TableScan {
+        kind: AccessMethodKind::Scan {
+            index: None,
             iter_dir: if let Some(order_target) = maybe_order_target {
                 // if the order target 1. has a single column 2. it is the rowid alias of this table 3. the order target column is in descending order, then we should use IterationDirection::Backwards
                 let rowid_alias_column_no = rhs_table_reference
@@ -268,16 +269,15 @@ fn join_lhs_tables_to_rhs_table(
         (None, Some(index_search)) => {
             best_access_method = AccessMethod {
                 cost: index_search.cost,
-                kind: if index_search.search.is_some() {
-                    AccessMethodKind::Search {
-                        search: index_search.search.expect("search must exist"),
+                kind: match index_search.search {
+                    Some(search) => AccessMethodKind::Search {
+                        search,
                         constraints: index_search.constraints,
-                    }
-                } else {
-                    AccessMethodKind::IndexScan {
-                        index: index_search.index.expect("index must exist"),
+                    },
+                    None => AccessMethodKind::Scan {
+                        index: index_search.index,
                         iter_dir: index_search.iter_dir,
-                    }
+                    },
                 },
             };
         }
@@ -293,16 +293,15 @@ fn join_lhs_tables_to_rhs_table(
             } else {
                 best_access_method = AccessMethod {
                     cost: index_search.cost,
-                    kind: if index_search.search.is_some() {
-                        AccessMethodKind::Search {
-                            search: index_search.search.expect("search must exist"),
+                    kind: match index_search.search {
+                        Some(search) => AccessMethodKind::Search {
+                            search,
                             constraints: index_search.constraints,
-                        }
-                    } else {
-                        AccessMethodKind::IndexScan {
-                            index: index_search.index.expect("index must exist"),
-                            iter_dir: IterationDirection::Forwards,
-                        }
+                        },
+                        None => AccessMethodKind::Scan {
+                            index: index_search.index,
+                            iter_dir: index_search.iter_dir,
+                        },
                     },
                 };
             }
@@ -343,13 +342,12 @@ struct AccessMethod {
 
 #[derive(Debug, Clone)]
 enum AccessMethodKind {
-    TableScan {
+    /// A full scan, which can be an index scan or a table scan.
+    Scan {
+        index: Option<Arc<Index>>,
         iter_dir: IterationDirection,
     },
-    IndexScan {
-        index: Arc<Index>,
-        iter_dir: IterationDirection,
-    },
+    /// A search, which can be an index seek or a rowid-based search.
     Search {
         search: Search,
         constraints: Vec<IndexConstraint>,
@@ -439,7 +437,39 @@ fn plan_satisfies_order_target(
         let access_method = &plan.best_access_methods[target_col_idx];
         let access_method = access_methods_cache.get(access_method).unwrap();
         match &access_method.kind {
-            AccessMethodKind::IndexScan { index, iter_dir } => {
+            AccessMethodKind::Scan {
+                index: None,
+                iter_dir,
+            } => {
+                let rowid_alias_col = table_ref
+                    .table
+                    .columns()
+                    .iter()
+                    .position(|c| c.is_rowid_alias);
+                let Some(rowid_alias_col) = rowid_alias_col else {
+                    return false;
+                };
+                let target_col = &order_target.0[target_col_idx];
+                let order_matches = if *iter_dir == IterationDirection::Forwards {
+                    target_col.order == SortOrder::Asc
+                } else {
+                    target_col.order == SortOrder::Desc
+                };
+                if target_col.table_no != *table_no
+                    || target_col.column_no != rowid_alias_col
+                    || !order_matches
+                {
+                    return false;
+                }
+                target_col_idx += 1;
+                if target_col_idx == order_target.0.len() {
+                    return true;
+                }
+            }
+            AccessMethodKind::Scan {
+                index: Some(index),
+                iter_dir,
+            } => {
                 // The index columns must match the order target columns for this table
                 for index_col in index.columns.iter() {
                     let target_col = &order_target.0[target_col_idx];
@@ -522,32 +552,6 @@ fn plan_satisfies_order_target(
                 if target_col.table_no != *table_no
                     || target_col.column_no != rowid_alias_col
                     || target_col.order != SortOrder::Asc
-                {
-                    return false;
-                }
-                target_col_idx += 1;
-                if target_col_idx == order_target.0.len() {
-                    return true;
-                }
-            }
-            AccessMethodKind::TableScan { iter_dir } => {
-                let rowid_alias_col = table_ref
-                    .table
-                    .columns()
-                    .iter()
-                    .position(|c| c.is_rowid_alias);
-                let Some(rowid_alias_col) = rowid_alias_col else {
-                    return false;
-                };
-                let target_col = &order_target.0[target_col_idx];
-                let order_matches = if *iter_dir == IterationDirection::Forwards {
-                    target_col.order == SortOrder::Asc
-                } else {
-                    target_col.order == SortOrder::Desc
-                };
-                if target_col.table_no != *table_no
-                    || target_col.column_no != rowid_alias_col
-                    || !order_matches
                 {
                     return false;
                 }
@@ -1126,7 +1130,7 @@ fn use_indexes(
         ) {
             // FIXME: Operation::Subquery shouldn't exist. It's not an operation, it's a kind of temporary table.
             assert!(
-                matches!(access_method, AccessMethodKind::TableScan { .. }),
+                matches!(access_method, AccessMethodKind::Scan { index: None, .. }),
                 "nothing in the current optimizer should be able to optimize subqueries, but got {:?} for table {}",
                 access_method,
                 table_references[*table_number].table.get_name()
@@ -1134,14 +1138,7 @@ fn use_indexes(
             continue;
         }
         table_references[*table_number].op = match access_method {
-            AccessMethodKind::TableScan { iter_dir } => Operation::Scan {
-                iter_dir,
-                index: None,
-            },
-            AccessMethodKind::IndexScan { index, iter_dir } => Operation::Scan {
-                iter_dir,
-                index: Some(index),
-            },
+            AccessMethodKind::Scan { iter_dir, index } => Operation::Scan { iter_dir, index },
             AccessMethodKind::Search {
                 search,
                 constraints,
@@ -3045,7 +3042,7 @@ mod tests {
         // Should just be a table scan access method
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[0]].kind,
-            AccessMethodKind::TableScan { iter_dir }
+            AccessMethodKind::Scan { index: None, iter_dir }
             if iter_dir == IterationDirection::Forwards
         ));
     }
@@ -3207,7 +3204,7 @@ mod tests {
         assert!(
             matches!(
                 &access_methods_cache[&best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::TableScan { iter_dir }
+                AccessMethodKind::Scan { index: None, iter_dir }
                 if *iter_dir == IterationDirection::Forwards
             ),
             "expected TableScan access method, got {:?}",
@@ -3475,7 +3472,7 @@ mod tests {
         // Verify table scan is used since there are no indexes
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[0]].kind,
-            AccessMethodKind::TableScan { iter_dir }
+            AccessMethodKind::Scan { index: None, iter_dir }
             if iter_dir == IterationDirection::Forwards
         ));
         // Verify that an ephemeral index was built on t1
@@ -3550,19 +3547,19 @@ mod tests {
         // Verify table scan is used since there are no indexes
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[0]].kind,
-            AccessMethodKind::TableScan { iter_dir }
+            AccessMethodKind::Scan { index: None, iter_dir }
             if iter_dir == IterationDirection::Forwards
         ));
         // Verify that t1 is chosen next due to its inequality filter
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[1]].kind,
-            AccessMethodKind::TableScan { iter_dir }
+            AccessMethodKind::Scan { index: None, iter_dir }
             if iter_dir == IterationDirection::Forwards
         ));
         // Verify that t3 is chosen last due to no filters
         assert!(matches!(
             access_methods_cache[&best_plan.best_access_methods[2]].kind,
-            AccessMethodKind::TableScan { iter_dir }
+            AccessMethodKind::Scan { index: None, iter_dir }
             if iter_dir == IterationDirection::Forwards
         ));
     }
@@ -3654,7 +3651,7 @@ mod tests {
         assert!(
             matches!(
                 &access_methods_cache[&best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::TableScan { iter_dir }
+                AccessMethodKind::Scan { index: None, iter_dir }
                 if *iter_dir == IterationDirection::Forwards
             ),
             "First table (fact) should use table scan due to column filter"
@@ -3738,7 +3735,7 @@ mod tests {
         assert!(
             matches!(
                 &access_methods_cache[&best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::TableScan { iter_dir }
+                AccessMethodKind::Scan { index: None, iter_dir }
                 if *iter_dir == IterationDirection::Forwards
             ),
             "First table should use Table scan"
