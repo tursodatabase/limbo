@@ -82,15 +82,13 @@ impl Statement {
     }
 }
 
-fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> JsUnknown {
+fn to_js_value(env: &napi::Env, value: &limbo_core::Value) -> JsUnknown {
     match value {
-        limbo_core::OwnedValue::Null => env.get_null().unwrap().into_unknown(),
-        limbo_core::OwnedValue::Integer(i) => env.create_int64(*i).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Float(f) => env.create_double(*f).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Text(s) => env.create_string(s.as_str()).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Blob(b) => {
-            env.create_buffer_copy(b.as_slice()).unwrap().into_unknown()
-        }
+        limbo_core::Value::Null => env.get_null().unwrap().into_unknown(),
+        limbo_core::Value::Integer(i) => env.create_int64(*i).unwrap().into_unknown(),
+        limbo_core::Value::Float(f) => env.create_double(*f).unwrap().into_unknown(),
+        limbo_core::Value::Text(s) => env.create_string(s.as_str()).unwrap().into_unknown(),
+        limbo_core::Value::Blob(b) => env.create_buffer_copy(b.as_slice()).unwrap().into_unknown(),
     }
 }
 
