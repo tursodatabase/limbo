@@ -13,7 +13,7 @@ use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
 use std::fmt::Display;
 
-const MAX_REAL_SIZE: u8 = 15;
+pub const MAX_REAL_SIZE: u8 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OwnedValueType {
@@ -144,6 +144,14 @@ impl OwnedValue {
 
     pub fn from_blob(data: Vec<u8>) -> Self {
         OwnedValue::Blob(data)
+    }
+
+    // caller is responsible for calling with a valid utf-8 string
+    pub fn from_raw_text(text: Vec<u8>) -> Self {
+        Self::Text(Text {
+            value: text,
+            subtype: TextSubtype::Text,
+        })
     }
 
     pub fn to_text(&self) -> Option<&str> {
