@@ -493,7 +493,6 @@ fn estimate_num_labels(select: &SelectPlan) -> usize {
 ///
 /// Checks to see if the query is of the format `SELECT count(*) FROM <tbl>`
 pub fn is_simple_count(plan: &SelectPlan) -> bool {
-    // TODO: (pedrocarlo) check for HAVING clause
     if !plan.where_clause.is_empty()
         || plan.aggregates.len() != 1
         || matches!(plan.query_type, SelectQueryType::Subquery { .. })
@@ -525,7 +524,7 @@ pub fn is_simple_count(plan: &SelectPlan) -> bool {
         filter_over: None,
     };
     let result_col_expr = &plan.result_columns.get(0).unwrap().expr;
-    if *result_col_expr != count || *result_col_expr != count_star {
+    if *result_col_expr != count && *result_col_expr != count_star {
         return false;
     }
     true

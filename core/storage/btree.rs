@@ -4258,8 +4258,7 @@ impl BTreeCursor {
              ** this page contains countable entries. Increment the entry counter
              ** accordingly.
              */
-            // TODO: (pedrocarlo) does not take into account if "tree is not an int-key tree" condition
-            if contents.is_leaf() {
+            if !matches!(contents.page_type(), PageType::TableInterior) {
                 self.count += contents.cell_count();
             }
 
@@ -4286,7 +4285,7 @@ impl BTreeCursor {
 
                     let cell_idx = self.stack.current_cell_index() as usize;
 
-                    if !(cell_idx > contents.cell_count()) {
+                    if cell_idx <= contents.cell_count() {
                         break;
                     }
                 }

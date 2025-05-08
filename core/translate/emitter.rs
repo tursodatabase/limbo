@@ -23,8 +23,8 @@ use super::group_by::{
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
-use super::select::emit_simple_count;
 use super::schema::ParseSchema;
+use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 
 #[derive(Debug)]
@@ -289,6 +289,11 @@ pub fn emit_query<'a>(
         OperationMode::SELECT,
     )?;
 
+    if plan.is_simple_count {
+        emit_simple_count(program, t_ctx, plan)?;
+        return Ok(t_ctx.reg_result_cols_start.unwrap());
+    }
+
     for where_term in plan
         .where_clause
         .iter()
@@ -310,22 +315,20 @@ pub fn emit_query<'a>(
         program.preassign_label_to_next_insn(jump_target_when_true);
     }
 
-    if !plan.is_simple_count {
-        // Set up main query execution loop
-        open_loop(
-            program,
-            t_ctx,
-            &plan.table_references,
-            &plan.join_order,
-            &plan.where_clause,
-        )?;
+    // Set up main query execution loop
+    open_loop(
+        program,
+        t_ctx,
+        &plan.table_references,
+        &plan.join_order,
+        &plan.where_clause,
+    )?;
 
-        // Process result columns and expressions in the inner loop
-        emit_loop(program, t_ctx, plan)?;
+    // Process result columns and expressions in the inner loop
+    emit_loop(program, t_ctx, plan)?;
 
-        // Clean up and close the main execution loop
-        close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;
-    }
+    // Clean up and close the main execution loop
+    close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
 
@@ -345,11 +348,7 @@ pub fn emit_query<'a>(
         group_by_emit_row_phase(program, t_ctx, plan)?;
     } else if !plan.aggregates.is_empty() {
         // Handle aggregation without GROUP BY
-        if plan.is_simple_count {
-            emit_simple_count(program, t_ctx, plan)?;
-        } else {
-            emit_ungrouped_aggregation(program, t_ctx, plan)?;
-        }
+        emit_ungrouped_aggregation(program, t_ctx, plan)?;
         // Single row result for aggregates without GROUP BY, so ORDER BY not needed
         order_by_necessary = false;
     }
