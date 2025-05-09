@@ -201,7 +201,7 @@ fn join_lhs_tables_to_rhs_table<'a>(
     )?;
 
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
-    let cost = lhs_cost + best_access_method.cost.total();
+    let cost = lhs_cost + best_access_method.cost;
 
     let new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
         let mut numbers = l.table_numbers.clone();
@@ -221,10 +221,11 @@ fn join_lhs_tables_to_rhs_table<'a>(
 }
 
 #[derive(Debug, Clone)]
+/// Represents a way to access a table.
 pub struct AccessMethod<'a> {
-    // The estimated number of page fetches.
-    // We are ignoring CPU cost for now.
-    pub cost: ScanCost,
+    /// The estimated number of page fetches.
+    /// We are ignoring CPU cost for now.
+    pub cost: Cost,
     pub kind: AccessMethodKind<'a>,
 }
 
@@ -275,6 +276,7 @@ impl<'a> AccessMethod<'a> {
 }
 
 #[derive(Debug, Clone)]
+/// Represents the kind of access method.
 pub enum AccessMethodKind<'a> {
     /// A full scan, which can be an index scan or a table scan.
     Scan {
@@ -1560,29 +1562,6 @@ struct IndexInfo {
     covering: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ScanCost {
-    run_cost: Cost,
-    build_cost: Cost,
-}
-
-impl std::ops::Add for ScanCost {
-    type Output = ScanCost;
-
-    fn add(self, other: ScanCost) -> ScanCost {
-        ScanCost {
-            run_cost: self.run_cost + other.run_cost,
-            build_cost: self.build_cost + other.build_cost,
-        }
-    }
-}
-
-impl ScanCost {
-    pub fn total(&self) -> Cost {
-        self.run_cost + self.build_cost
-    }
-}
-
 const ESTIMATED_HARDCODED_ROWS_PER_TABLE: usize = 1000000;
 const ESTIMATED_HARDCODED_ROWS_PER_PAGE: usize = 50; // roughly 80 bytes per 4096 byte page
 
@@ -1597,21 +1576,12 @@ fn estimate_page_io_cost(rowcount: f64) -> Cost {
 fn estimate_cost_for_scan_or_seek(
     index_info: Option<IndexInfo>,
     constraints: &[Constraint],
-    is_ephemeral: bool,
     input_cardinality: f64,
-) -> ScanCost {
-    let build_cost = if is_ephemeral {
-        estimate_page_io_cost(2.0 * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64)
-    } else {
-        Cost(0.0)
-    };
+) -> Cost {
     let Some(index_info) = index_info else {
-        return ScanCost {
-            run_cost: estimate_page_io_cost(
-                input_cardinality * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64,
-            ),
-            build_cost,
-        };
+        return estimate_page_io_cost(
+            input_cardinality * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64,
+        );
     };
 
     let final_constraint_is_range = constraints
@@ -1655,16 +1625,12 @@ fn estimate_cost_for_scan_or_seek(
     // little bonus for covering indexes
     let covering_multiplier = if index_info.covering { 0.9 } else { 1.0 };
 
-    let cost = estimate_page_io_cost(
+    estimate_page_io_cost(
         cost_multiplier
             * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
             * input_cardinality
             * covering_multiplier,
-    );
-    ScanCost {
-        run_cost: cost,
-        build_cost,
-    }
+    )
 }
 
 fn usable_constraints_for_join_order<'a>(
@@ -1703,8 +1669,7 @@ pub fn find_best_access_method_for_join_order<'a>(
     maybe_order_target: Option<&OrderTarget>,
     input_cardinality: f64,
 ) -> Result<AccessMethod<'a>> {
-    let cost_of_full_table_scan =
-        estimate_cost_for_scan_or_seek(None, &[], false, input_cardinality);
+    let cost_of_full_table_scan = estimate_cost_for_scan_or_seek(None, &[], input_cardinality);
     let mut best_access_method = AccessMethod {
         cost: cost_of_full_table_scan,
         kind: AccessMethodKind::Scan {
@@ -1738,7 +1703,6 @@ pub fn find_best_access_method_for_join_order<'a>(
         let cost = estimate_cost_for_scan_or_seek(
             Some(index_info),
             &usable_constraints,
-            false,
             input_cardinality,
         );
 
@@ -1786,7 +1750,7 @@ pub fn find_best_access_method_for_join_order<'a>(
         } else {
             Cost(0.0)
         };
-        if cost.total() < best_access_method.cost.total() + order_satisfiability_bonus {
+        if cost < best_access_method.cost + order_satisfiability_bonus {
             best_access_method.cost = cost;
             best_access_method.set_constraints(&csmap.lookup, &usable_constraints);
         }
