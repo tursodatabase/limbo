@@ -351,7 +351,7 @@ fn check_automatic_pk_index_required(
                         is_descending,
                     } => {
                         let is_integer =
-                            typename.is_some() && typename.unwrap().to_uppercase() == "INTEGER";
+                            typename.is_some() && typename.unwrap().eq_ignore_ascii_case("INTEGER"); // Should match on any case of INTEGER
                         !is_integer || *is_descending
                     }
                     PrimaryKeyDefinitionType::Composite => true,

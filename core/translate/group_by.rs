@@ -216,6 +216,7 @@ pub fn group_by_create_pseudo_table(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            unique: false,
         })
         .collect::<Vec<_>>();
 

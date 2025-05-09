@@ -72,6 +72,7 @@ pub fn emit_order_by(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            unique: false,
         });
     }
     for i in 0..result_columns.len() {
@@ -90,6 +91,7 @@ pub fn emit_order_by(
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            unique: false,
         });
     }
 
