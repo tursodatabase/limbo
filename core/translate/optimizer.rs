@@ -1892,6 +1892,26 @@ pub struct Constraints {
     constraints: Vec<Constraint>,
 }
 
+fn as_binary_components(
+    expr: &ast::Expr,
+) -> Result<Option<(&ast::Expr, ast::Operator, &ast::Expr)>> {
+    match unwrap_parens(expr)? {
+        ast::Expr::Binary(lhs, operator, rhs)
+            if matches!(
+                operator,
+                ast::Operator::Equals
+                    | ast::Operator::Greater
+                    | ast::Operator::Less
+                    | ast::Operator::GreaterEquals
+                    | ast::Operator::LessEquals
+            ) =>
+        {
+            Ok(Some((lhs.as_ref(), *operator, rhs.as_ref())))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Precompute all potentially usable [Constraints] from a WHERE clause.
 /// The resulting list of [Constraints] is then used to evaluate the best access methods for various join orders.
 pub fn constraints_from_where_clause(
@@ -1917,31 +1937,21 @@ pub fn constraints_from_where_clause(
             constraints: Vec::new(),
         };
         for (i, term) in where_clause.iter().enumerate() {
-            let ast::Expr::Binary(lhs, operator, rhs) = unwrap_parens(&term.expr)? else {
+            let Some((lhs, operator, rhs)) = as_binary_components(&term.expr)? else {
                 continue;
             };
-            if !matches!(
-                operator,
-                ast::Operator::Equals
-                    | ast::Operator::Greater
-                    | ast::Operator::Less
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::LessEquals
-            ) {
-                continue;
-            }
             if let Some(outer_join_tbl) = term.from_outer_join {
                 if outer_join_tbl != table_no {
                     continue;
                 }
             }
-            match lhs.as_ref() {
+            match lhs {
                 ast::Expr::Column { table, column, .. } => {
                     if *table == table_no {
                         if rowid_alias_column.map_or(false, |idx| *column == idx) {
                             cs.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Rhs),
-                                operator: *operator,
+                                operator,
                                 index_col_pos: 0,
                                 table_col_pos: rowid_alias_column.unwrap(),
                                 sort_order: SortOrder::Asc,
@@ -1950,7 +1960,7 @@ pub fn constraints_from_where_clause(
                         } else {
                             cs_ephemeral.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Rhs),
-                                operator: *operator,
+                                operator,
                                 index_col_pos: 0,
                                 table_col_pos: *column,
                                 sort_order: SortOrder::Asc,
@@ -1963,7 +1973,7 @@ pub fn constraints_from_where_clause(
                     if *table == table_no && rowid_alias_column.is_some() {
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Rhs),
-                            operator: *operator,
+                            operator,
                             index_col_pos: 0,
                             table_col_pos: rowid_alias_column.unwrap(),
                             sort_order: SortOrder::Asc,
@@ -1973,13 +1983,13 @@ pub fn constraints_from_where_clause(
                 }
                 _ => {}
             };
-            match rhs.as_ref() {
+            match rhs {
                 ast::Expr::Column { table, column, .. } => {
                     if *table == table_no {
                         if rowid_alias_column.map_or(false, |idx| *column == idx) {
                             cs.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Lhs),
-                                operator: opposite_cmp_op(*operator),
+                                operator: opposite_cmp_op(operator),
                                 index_col_pos: 0,
                                 table_col_pos: rowid_alias_column.unwrap(),
                                 sort_order: SortOrder::Asc,
@@ -1988,7 +1998,7 @@ pub fn constraints_from_where_clause(
                         } else {
                             cs_ephemeral.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Lhs),
-                                operator: opposite_cmp_op(*operator),
+                                operator: opposite_cmp_op(operator),
                                 index_col_pos: 0,
                                 table_col_pos: *column,
                                 sort_order: SortOrder::Asc,
@@ -2001,7 +2011,7 @@ pub fn constraints_from_where_clause(
                     if *table == table_no && rowid_alias_column.is_some() {
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Lhs),
-                            operator: opposite_cmp_op(*operator),
+                            operator: opposite_cmp_op(operator),
                             index_col_pos: 0,
                             table_col_pos: rowid_alias_column.unwrap(),
                             sort_order: SortOrder::Asc,
@@ -2077,19 +2087,9 @@ pub fn constraints_from_where_clause(
                     constraints: Vec::new(),
                 };
                 for (i, term) in where_clause.iter().enumerate() {
-                    let ast::Expr::Binary(lhs, operator, rhs) = unwrap_parens(&term.expr)? else {
+                    let Some((lhs, operator, rhs)) = as_binary_components(&term.expr)? else {
                         continue;
                     };
-                    if !matches!(
-                        operator,
-                        ast::Operator::Equals
-                            | ast::Operator::Greater
-                            | ast::Operator::Less
-                            | ast::Operator::GreaterEquals
-                            | ast::Operator::LessEquals
-                    ) {
-                        continue;
-                    }
                     if let Some(outer_join_tbl) = term.from_outer_join {
                         if outer_join_tbl != table_no {
                             continue;
@@ -2100,10 +2100,10 @@ pub fn constraints_from_where_clause(
                     {
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Rhs),
-                            operator: *operator,
+                            operator,
                             index_col_pos: position_in_index,
                             table_col_pos: {
-                                let ast::Expr::Column { column, .. } = lhs.as_ref() else {
+                                let ast::Expr::Column { column, .. } = lhs else {
                                     crate::bail_parse_error!("expected column in index constraint");
                                 };
                                 *column
@@ -2117,10 +2117,10 @@ pub fn constraints_from_where_clause(
                     {
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Lhs),
-                            operator: opposite_cmp_op(*operator),
+                            operator: opposite_cmp_op(operator),
                             index_col_pos: position_in_index,
                             table_col_pos: {
-                                let ast::Expr::Column { column, .. } = rhs.as_ref() else {
+                                let ast::Expr::Column { column, .. } = rhs else {
                                     crate::bail_parse_error!("expected column in index constraint");
                                 };
                                 *column
@@ -2257,20 +2257,9 @@ fn is_potential_index_constraint(
         return false;
     }
     // Skip terms that are not binary comparisons
-    let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
+    let Ok(Some((lhs, _, rhs))) = as_binary_components(&term.expr) else {
         return false;
     };
-    // Only consider index scans for binary ops that are comparisons
-    if !matches!(
-        *operator,
-        ast::Operator::Equals
-            | ast::Operator::Greater
-            | ast::Operator::GreaterEquals
-            | ast::Operator::Less
-            | ast::Operator::LessEquals
-    ) {
-        return false;
-    }
 
     // If both lhs and rhs refer to columns from this table, we can't use this constraint
     // because we can't use the index to satisfy the condition.
