@@ -118,8 +118,11 @@ struct JoinN {
     pub cost: Cost,
 }
 
+/// In lieu of statistics, we estimate that an equality filter will reduce the output set to 1% of its size.
 const SELECTIVITY_EQ: f64 = 0.01;
+/// In lieu of statistics, we estimate that a range filter will reduce the output set to 40% of its size.
 const SELECTIVITY_RANGE: f64 = 0.4;
+/// In lieu of statistics, we estimate that other filters will reduce the output set to 90% of its size.
 const SELECTIVITY_OTHER: f64 = 0.9;
 
 /// Join n-1 tables with the n'th table.
