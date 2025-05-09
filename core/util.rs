@@ -166,7 +166,7 @@ pub fn parse_schema_rows(
                     root_page,
                 } => {
                     let table = schema.get_btree_table(&table_name).unwrap();
-                    let index = schema::Index::automatic_from_primary_key(
+                    let index = schema::Index::automatic_from_primary_key_and_unique(
                         table.as_ref(),
                         &name,
                         root_page as usize,

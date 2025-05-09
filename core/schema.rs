@@ -770,7 +770,7 @@ impl Index {
         }
     }
 
-    pub fn automatic_from_primary_key(
+    pub fn automatic_from_primary_key_and_unique(
         table: &BTreeTable,
         index_name: &str,
         root_page: usize,
@@ -781,26 +781,56 @@ impl Index {
             ));
         }
 
-        // let unique_columns =
-
-        let index_columns = table
-            .primary_key_columns
+        let mut index_columns = table
+            .columns
             .iter()
-            .map(|(col_name, order)| {
-                // Verify that each primary key column exists in the table
-                let Some((pos_in_table, _)) = table.get_column(col_name) else {
-                    return Err(crate::LimboError::InternalError(format!(
-                        "Column {} is in index {} but not found in table {}",
-                        col_name, index_name, table.name
-                    )));
-                };
-                Ok(IndexColumn {
-                    name: normalize_ident(col_name),
-                    order: order.clone(),
-                    pos_in_table,
-                })
+            .filter_map(|col| {
+                if col.unique {
+                    // Unique columns in Table should always be named
+                    let col_name = col.name.as_ref().unwrap();
+                    // Verify that each primary key column exists in the table
+                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
+                        return Some(Err(crate::LimboError::InternalError(format!(
+                            "Column {} is in index {} but not found in table {}",
+                            col_name, index_name, table.name
+                        ))));
+                    };
+                    Some(Ok(IndexColumn {
+                        name: normalize_ident(col_name),
+                        order: SortOrder::Asc, // Default Sort Order
+                        pos_in_table,
+                    }))
+                } else {
+                    None
+                }
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // TODO: see a better way to please Rust type system with iterators here
+        // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
+        // It would not allow me chain them even by using a core::iter::empty()
+        // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
+        if table.get_rowid_alias_column().is_none() {
+            let primary_keys = table
+                .primary_key_columns
+                .iter()
+                .map(|(col_name, order)| {
+                    // Verify that each primary key column exists in the table
+                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
+                        return Err(crate::LimboError::InternalError(format!(
+                            "Column {} is in index {} but not found in table {}",
+                            col_name, index_name, table.name
+                        )));
+                    };
+                    Ok(IndexColumn {
+                        name: normalize_ident(col_name),
+                        order: order.clone(),
+                        pos_in_table,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            index_columns.extend(primary_keys);
+        }
 
         Ok(Index {
             name: normalize_ident(index_name),
@@ -1135,7 +1165,8 @@ mod tests {
     fn test_automatic_index_single_column() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let index = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2)?;
+        let index =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
 
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
         assert_eq!(index.table_name, "t1");
@@ -1151,7 +1182,8 @@ mod tests {
     fn test_automatic_index_composite_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a, b));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let index = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2)?;
+        let index =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
 
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
         assert_eq!(index.table_name, "t1");
@@ -1169,7 +1201,8 @@ mod tests {
     fn test_automatic_index_no_primary_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT);"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let result = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2);
+        let result =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1200,7 +1233,8 @@ mod tests {
             }],
         };
 
-        let result = Index::automatic_from_primary_key(&table, "sqlite_autoindex_t1_1", 2);
+        let result =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2);
 
         assert!(result.is_err());
         assert!(matches!(
