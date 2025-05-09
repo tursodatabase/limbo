@@ -136,7 +136,7 @@ fn join_lhs_tables_to_rhs_table<'a>(
     // Estimate based on the WHERE clause terms how much the different filters will reduce the output set.
     let output_cardinality_multiplier = where_clause
         .iter()
-        .filter(|term| is_potential_index_constraint(term, loop_idx, &join_order))
+        .filter(|term| affects_result_set_of_table(term, loop_idx, &join_order))
         .map(|term| {
             let ast::Expr::Binary(lhs, op, rhs) = &term.expr else {
                 return 1.0;
@@ -2247,7 +2247,7 @@ fn get_column_position_in_index(
     Ok(index.column_table_pos_to_index_pos(*column))
 }
 
-fn is_potential_index_constraint(
+fn affects_result_set_of_table(
     term: &WhereTerm,
     loop_index: usize,
     join_order: &[JoinOrderMember],
