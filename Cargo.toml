@@ -25,6 +25,7 @@ members = [
     "sqlite3",
     "stress",
     "tests",
+    "tests_macros",
     "vendored/sqlite3-parser/sqlparser_bench",
 ]
 exclude = ["perf/latency/limbo"]
@@ -50,6 +51,7 @@ limbo_series = { path = "extensions/series", version = "0.0.19" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.19" }
 limbo_time = { path = "extensions/time", version = "0.0.19" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.19" }
+rusqlite = { version = "0.34", features = ["bundled"] }
 
 [profile.release]
 debug = "line-tables-only"

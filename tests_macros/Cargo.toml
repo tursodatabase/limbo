@@ -1,0 +1,18 @@
+[package]
+name = "limbo_tests_macros"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+hex = "0.4.3"
+proc-macro-error = "1.0.4"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+rusqlite = { workspace = true }
+syn = "2.0.100"
