@@ -132,64 +132,10 @@ fn join_lhs_tables_to_rhs_table<'a>(
     maybe_order_target: Option<&OrderTarget>,
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
 ) -> Result<JoinN> {
-    let loop_idx = lhs.map_or(0, |l| l.table_numbers.len());
-    // Estimate based on the WHERE clause terms how much the different filters will reduce the output set.
-    let output_cardinality_multiplier = where_clause
-        .iter()
-        .filter(|term| affects_result_set_of_table(term, loop_idx, &join_order))
-        .map(|term| {
-            let ast::Expr::Binary(lhs, op, rhs) = &term.expr else {
-                return 1.0;
-            };
-            let mut column = if let ast::Expr::Column { table, column, .. } = lhs.as_ref() {
-                if *table != rhs_table_number {
-                    None
-                } else {
-                    let columns = rhs_table_reference.columns();
-                    Some(&columns[*column])
-                }
-            } else {
-                None
-            };
-            if column.is_none() {
-                column = if let ast::Expr::Column { table, column, .. } = rhs.as_ref() {
-                    if *table != rhs_table_number {
-                        None
-                    } else {
-                        let columns = rhs_table_reference.columns();
-                        Some(&columns[*column])
-                    }
-                } else {
-                    None
-                }
-            };
-            let Some(column) = column else {
-                return 1.0;
-            };
-            match op {
-                ast::Operator::Equals => {
-                    if column.is_rowid_alias || column.primary_key {
-                        1.0 / ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
-                    } else {
-                        SELECTIVITY_EQ
-                    }
-                }
-                ast::Operator::Greater => SELECTIVITY_RANGE,
-                ast::Operator::GreaterEquals => SELECTIVITY_RANGE,
-                ast::Operator::Less => SELECTIVITY_RANGE,
-                ast::Operator::LessEquals => SELECTIVITY_RANGE,
-                _ => SELECTIVITY_OTHER,
-            }
-        })
-        .product::<f64>();
-
-    // Produce a number of rows estimated to be returned when this table is filtered by the WHERE clause.
-    // If there is an input best_plan on the left, we multiply the input cardinality by the estimated number of rows per table.
+    // The input cardinality for this join is the output cardinality of the previous join.
+    // For example, in a 2-way join, if the left table has 1000 rows, and the right table will return 2 rows for each of the left table's rows,
+    // then the output cardinality of the join will be 2000.
     let input_cardinality = lhs.map_or(1, |l| l.output_cardinality);
-    let output_cardinality = (input_cardinality as f64
-        * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
-        * output_cardinality_multiplier)
-        .ceil() as usize;
 
     let best_access_method = find_best_access_method_for_join_order(
         rhs_table_number,
@@ -212,6 +158,89 @@ fn join_lhs_tables_to_rhs_table<'a>(
     access_methods_arena.borrow_mut().push(best_access_method);
     let mut best_access_methods = lhs.map_or(vec![], |l| l.best_access_methods.clone());
     best_access_methods.push(access_methods_arena.borrow().len() - 1);
+
+    // Estimate based on the WHERE clause terms how much the different filters will reduce the output set.
+    let output_cardinality_multiplier = where_clause
+        .iter()
+        .filter_map(|term| {
+            // Skip terms that are not binary comparisons
+            let Ok(Some((lhs, op, rhs))) = as_binary_components(&term.expr) else {
+                return None;
+            };
+            // Skip terms that cannot be evaluated at this table's loop level
+            if !term.should_eval_at_loop(join_order.len() - 1, join_order) {
+                return None;
+            }
+
+            // If both lhs and rhs refer to columns from this table, we can't use this constraint
+            // because we can't use the index to satisfy the condition.
+            // Examples:
+            // - WHERE t.x > t.y
+            // - WHERE t.x + 1 > t.y - 5
+            // - WHERE t.x = (t.x)
+            let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs, join_order) else {
+                return None;
+            };
+            let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs, join_order) else {
+                return None;
+            };
+            if eval_at_left == EvalAt::Loop(join_order.len() - 1)
+                && eval_at_right == EvalAt::Loop(join_order.len() - 1)
+            {
+                return None;
+            }
+
+            Some((lhs, op, rhs))
+        })
+        .filter_map(|(lhs, op, rhs)| {
+            // Skip terms where neither lhs nor rhs refer to columns from this table
+            if let ast::Expr::Column { table, column, .. } = lhs {
+                if *table != rhs_table_number {
+                    None
+                } else {
+                    let columns = rhs_table_reference.columns();
+                    Some((&columns[*column], op))
+                }
+            } else {
+                None
+            }
+            .or_else(|| {
+                if let ast::Expr::Column { table, column, .. } = rhs {
+                    if *table != rhs_table_number {
+                        None
+                    } else {
+                        let columns = rhs_table_reference.columns();
+                        Some((&columns[*column], op))
+                    }
+                } else {
+                    None
+                }
+            })
+        })
+        .map(|(column, op)| match op {
+            ast::Operator::Equals => {
+                if column.is_rowid_alias || column.primary_key {
+                    1.0 / ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
+                } else {
+                    SELECTIVITY_EQ
+                }
+            }
+            ast::Operator::Greater => SELECTIVITY_RANGE,
+            ast::Operator::GreaterEquals => SELECTIVITY_RANGE,
+            ast::Operator::Less => SELECTIVITY_RANGE,
+            ast::Operator::LessEquals => SELECTIVITY_RANGE,
+            _ => SELECTIVITY_OTHER,
+        })
+        .product::<f64>();
+
+    // Produce a number of rows estimated to be returned when this table is filtered by the WHERE clause.
+    // If this table is the rightmost table in the join order, we multiply by the input cardinality,
+    // which is the output cardinality of the previous tables.
+    let output_cardinality = (input_cardinality as f64
+        * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
+        * output_cardinality_multiplier)
+        .ceil() as usize;
+
     Ok(JoinN {
         table_numbers: new_numbers,
         best_access_methods,
@@ -2245,38 +2274,6 @@ fn get_column_position_in_index(
         return Ok(None);
     }
     Ok(index.column_table_pos_to_index_pos(*column))
-}
-
-fn affects_result_set_of_table(
-    term: &WhereTerm,
-    loop_index: usize,
-    join_order: &[JoinOrderMember],
-) -> bool {
-    // Skip terms that cannot be evaluated at this table's loop level
-    if !term.should_eval_at_loop(loop_index, join_order) {
-        return false;
-    }
-    // Skip terms that are not binary comparisons
-    let Ok(Some((lhs, _, rhs))) = as_binary_components(&term.expr) else {
-        return false;
-    };
-
-    // If both lhs and rhs refer to columns from this table, we can't use this constraint
-    // because we can't use the index to satisfy the condition.
-    // Examples:
-    // - WHERE t.x > t.y
-    // - WHERE t.x + 1 > t.y - 5
-    // - WHERE t.x = (t.x)
-    let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs, join_order) else {
-        return false;
-    };
-    let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs, join_order) else {
-        return false;
-    };
-    if eval_at_left == EvalAt::Loop(loop_index) && eval_at_right == EvalAt::Loop(loop_index) {
-        return false;
-    }
-    true
 }
 
 /// Build a [SeekDef] for a given list of [Constraint]s
