@@ -2,6 +2,27 @@
 
 Query optimization is obviously an important part of any SQL-based database engine. This document is an overview of what we currently do.
 
+## Structure of the optimizer directory
+
+1. `mod.rs`
+   - Provides the high-level optimization interface through `optimize_plan()`
+
+2. `access_method.rs`
+   - Determines what is the best index to use when joining a table to a set of preceding tables
+
+3. `constraints.rs` - Manages query constraints:
+   - Extracts constraints from the WHERE clause
+   - Determines which constraints are usable with indexes
+
+4. `cost.rs`
+   - Calculates the cost of doing a seek vs a scan, for example
+
+5. `join.rs`
+   - Implements the System R style dynamic programming join ordering algorithm
+
+6. `order.rs`
+   - Determines if sort operations can be eliminated based on the chosen access methods and join order
+
 ## Join reordering and optimal index selection
 
 **The goals of query optimization are at least the following:**
