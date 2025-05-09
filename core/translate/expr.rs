@@ -2568,3 +2568,64 @@ pub fn maybe_apply_affinity(col_type: Type, target_register: usize, program: &mu
 pub fn sanitize_string(input: &str) -> String {
     input[1..input.len() - 1].replace("''", "'").to_string()
 }
+
+pub fn as_binary_components(
+    expr: &ast::Expr,
+) -> Result<Option<(&ast::Expr, ast::Operator, &ast::Expr)>> {
+    match unwrap_parens(expr)? {
+        ast::Expr::Binary(lhs, operator, rhs)
+            if matches!(
+                operator,
+                ast::Operator::Equals
+                    | ast::Operator::Greater
+                    | ast::Operator::Less
+                    | ast::Operator::GreaterEquals
+                    | ast::Operator::LessEquals
+            ) =>
+        {
+            Ok(Some((lhs.as_ref(), *operator, rhs.as_ref())))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Recursively unwrap parentheses from an expression
+/// e.g. (((t.x > 5))) -> t.x > 5
+pub fn unwrap_parens<T>(expr: T) -> Result<T>
+where
+    T: UnwrapParens,
+{
+    expr.unwrap_parens()
+}
+
+pub trait UnwrapParens {
+    fn unwrap_parens(self) -> Result<Self>
+    where
+        Self: Sized;
+}
+
+impl UnwrapParens for &ast::Expr {
+    fn unwrap_parens(self) -> Result<Self> {
+        match self {
+            ast::Expr::Column { .. } => Ok(self),
+            ast::Expr::Parenthesized(exprs) => match exprs.len() {
+                1 => unwrap_parens(exprs.first().unwrap()),
+                _ => crate::bail_parse_error!("expected single expression in parentheses"),
+            },
+            _ => Ok(self),
+        }
+    }
+}
+
+impl UnwrapParens for ast::Expr {
+    fn unwrap_parens(self) -> Result<Self> {
+        match self {
+            ast::Expr::Column { .. } => Ok(self),
+            ast::Expr::Parenthesized(mut exprs) => match exprs.len() {
+                1 => unwrap_parens(exprs.pop().unwrap()),
+                _ => crate::bail_parse_error!("expected single expression in parentheses"),
+            },
+            _ => Ok(self),
+        }
+    }
+}
