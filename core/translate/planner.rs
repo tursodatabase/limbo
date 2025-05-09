@@ -588,6 +588,195 @@ pub fn determine_where_to_eval_term(
     return determine_where_to_eval_expr(&term.expr, join_order);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TableMask(pub u128);
+
+impl std::ops::BitOrAssign for TableMask {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl TableMask {
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn without_table(&self, table_no: usize) -> Self {
+        assert!(table_no < 127, "table_no must be less than 127");
+        Self(self.0 ^ (1 << (table_no + 1)))
+    }
+
+    pub fn from_bits(bits: u128) -> Self {
+        Self(bits << 1)
+    }
+
+    pub fn from_iter(iter: impl Iterator<Item = usize>) -> Self {
+        iter.fold(Self::new(), |mut mask, table_no| {
+            assert!(table_no < 127, "table_no must be less than 127");
+            mask.add_table(table_no);
+            mask
+        })
+    }
+
+    pub fn add_table(&mut self, table_no: usize) {
+        assert!(table_no < 127, "table_no must be less than 127");
+        self.0 |= 1 << (table_no + 1);
+    }
+
+    pub fn contains_table(&self, table_no: usize) -> bool {
+        assert!(table_no < 127, "table_no must be less than 127");
+        self.0 & (1 << (table_no + 1)) != 0
+    }
+
+    pub fn contains_all(&self, other: &TableMask) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn table_count(&self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    pub fn intersects(&self, other: &TableMask) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+pub fn table_mask_from_expr(expr: &Expr) -> Result<TableMask> {
+    let mut mask = TableMask::new();
+    match expr {
+        Expr::Binary(e1, _, e2) => {
+            mask |= table_mask_from_expr(e1)?;
+            mask |= table_mask_from_expr(e2)?;
+        }
+        Expr::Column { table, .. } | Expr::RowId { table, .. } => {
+            mask.add_table(*table);
+        }
+        Expr::Between {
+            lhs,
+            not: _,
+            start,
+            end,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            mask |= table_mask_from_expr(start)?;
+            mask |= table_mask_from_expr(end)?;
+        }
+        Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(base) = base {
+                mask |= table_mask_from_expr(base)?;
+            }
+            for (when, then) in when_then_pairs {
+                mask |= table_mask_from_expr(when)?;
+                mask |= table_mask_from_expr(then)?;
+            }
+            if let Some(else_expr) = else_expr {
+                mask |= table_mask_from_expr(else_expr)?;
+            }
+        }
+        Expr::Cast { expr, .. } => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Collate(expr, _) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::DoublyQualified(_, _, _) => {
+            crate::bail_parse_error!(
+                "DoublyQualified should be resolved to a Column before resolving table mask"
+            );
+        }
+        Expr::Exists(_) => {
+            todo!();
+        }
+        Expr::FunctionCall {
+            args,
+            order_by,
+            filter_over: _,
+            ..
+        } => {
+            if let Some(args) = args {
+                for arg in args.iter() {
+                    mask |= table_mask_from_expr(arg)?;
+                }
+            }
+            if let Some(order_by) = order_by {
+                for term in order_by.iter() {
+                    mask |= table_mask_from_expr(&term.expr)?;
+                }
+            }
+        }
+        Expr::FunctionCallStar { .. } => {}
+        Expr::Id(_) => panic!("Id should be resolved to a Column before resolving table mask"),
+        Expr::InList { lhs, not: _, rhs } => {
+            mask |= table_mask_from_expr(lhs)?;
+            if let Some(rhs) = rhs {
+                for rhs_expr in rhs.iter() {
+                    mask |= table_mask_from_expr(rhs_expr)?;
+                }
+            }
+        }
+        Expr::InSelect { .. } => todo!(),
+        Expr::InTable {
+            lhs,
+            not: _,
+            rhs: _,
+            args,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            if let Some(args) = args {
+                for arg in args.iter() {
+                    mask |= table_mask_from_expr(arg)?;
+                }
+            }
+        }
+        Expr::IsNull(expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Like {
+            lhs,
+            not: _,
+            op: _,
+            rhs,
+            escape,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            mask |= table_mask_from_expr(rhs)?;
+            if let Some(escape) = escape {
+                mask |= table_mask_from_expr(escape)?;
+            }
+        }
+        Expr::Literal(_) => {}
+        Expr::Name(_) => {}
+        Expr::NotNull(expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Parenthesized(exprs) => {
+            for expr in exprs.iter() {
+                mask |= table_mask_from_expr(expr)?;
+            }
+        }
+        Expr::Qualified(_, _) => {
+            panic!("Qualified should be resolved to a Column before resolving table mask");
+        }
+        Expr::Raise(_, _) => todo!(),
+        Expr::Subquery(_) => todo!(),
+        Expr::Unary(_, expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Variable(_) => {}
+    }
+
+    Ok(mask)
+}
+
 pub fn determine_where_to_eval_expr<'a>(
     expr: &'a Expr,
     join_order: &[JoinOrderMember],
