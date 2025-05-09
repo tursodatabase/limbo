@@ -122,7 +122,8 @@ const SELECTIVITY_EQ: f64 = 0.01;
 const SELECTIVITY_RANGE: f64 = 0.4;
 const SELECTIVITY_OTHER: f64 = 0.9;
 
-fn join_lhs_tables_to_rhs_table<'a>(
+/// Join n-1 tables with the n'th table.
+fn join_lhs_and_rhs<'a>(
     lhs: Option<&JoinN>,
     rhs_table_number: usize,
     rhs_table_reference: &TableReference,
@@ -581,7 +582,7 @@ fn compute_best_join_order<'a>(
             is_outer: false,
         };
         assert!(join_order.len() == 1);
-        let rel = join_lhs_tables_to_rhs_table(
+        let rel = join_lhs_and_rhs(
             None,
             i,
             table_ref,
@@ -697,7 +698,7 @@ fn compute_best_join_order<'a>(
                 assert!(join_order.len() == subset_size);
 
                 // Calculate the best way to join LHS with RHS.
-                let rel = join_lhs_tables_to_rhs_table(
+                let rel = join_lhs_and_rhs(
                     Some(lhs),
                     rhs_idx,
                     &table_references[rhs_idx],
@@ -802,7 +803,7 @@ fn compute_naive_left_deep_plan<'a>(
         .collect::<Vec<_>>();
 
     // Start with first table
-    let mut best_plan = join_lhs_tables_to_rhs_table(
+    let mut best_plan = join_lhs_and_rhs(
         None,
         0,
         &table_references[0],
@@ -815,7 +816,7 @@ fn compute_naive_left_deep_plan<'a>(
 
     // Add remaining tables one at a time from left to right
     for i in 1..n {
-        best_plan = join_lhs_tables_to_rhs_table(
+        best_plan = join_lhs_and_rhs(
             Some(&best_plan),
             i,
             &table_references[i],
