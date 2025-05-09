@@ -173,3 +173,19 @@ do_execsql_test_on_specific_db {:memory:} named-insert-2 {
     INSERT INTO test (col_b, col_d, col_c) VALUES ('1', '2', '4');
     SELECT * FROM test;
 } {1|Empty|1|4|2}
+
+do_execsql_test_on_specific_db {:memory:} unique_insert_no_pkey {
+    CREATE TABLE t2 (x INTEGER, y INTEGER UNIQUE);
+    INSERT INTO t2 (y) VALUES (1);
+    INSERT INTO t2 (y) VALUES (6);
+    SELECT * FROM t2;
+} {|1
+|6}
+
+do_execsql_test_on_specific_db {:memory:} unique_insert_with_pkey {
+    CREATE TABLE t2 (x INTEGER PRIMARY KEY, y INTEGER UNIQUE);
+    INSERT INTO t2 (y) VALUES (1);
+    INSERT INTO t2 (y) VALUES (6);
+    SELECT * FROM t2;
+} {1|1
+2|6}

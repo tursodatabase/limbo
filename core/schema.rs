@@ -175,7 +175,7 @@ pub struct BTreeTable {
 impl BTreeTable {
     pub fn get_rowid_alias_column(&self) -> Option<(usize, &Column)> {
         if self.primary_key_columns.len() == 1 {
-            let (idx, col) = self.get_column(&self.primary_key_columns[0].0).unwrap();
+            let (idx, col) = self.get_column(&self.primary_key_columns[0].0)?;
             if self.column_is_rowid_alias(col) {
                 return Some((idx, col));
             }
@@ -775,12 +775,6 @@ impl Index {
         index_name: &str,
         root_page: usize,
     ) -> Result<Index> {
-        if table.primary_key_columns.is_empty() {
-            return Err(crate::LimboError::InternalError(
-                "Cannot create automatic index for table without primary key".to_string(),
-            ));
-        }
-
         let mut index_columns = table
             .columns
             .iter()
@@ -805,6 +799,21 @@ impl Index {
                 }
             })
             .collect::<Result<Vec<_>>>()?;
+
+        if table.primary_key_columns.is_empty() && index_columns.is_empty() {
+            return Err(crate::LimboError::InternalError(
+                "Cannot create automatic index for table without primary key or unique constraint"
+                    .to_string(),
+            ));
+        }
+
+        // Invariant: We should not create an automatic index on table with a single column as rowid_alias
+        // and no Unique columns.
+        // e.g CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);
+        // If this happens, the caller incorrectly called this function
+        if table.get_rowid_alias_column().is_some() && index_columns.is_empty() {
+            panic!("should not create an automatic index on table with a single column as rowid_alias and no UNIQUE columns");
+        }
 
         // TODO: see a better way to please Rust type system with iterators here
         // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
@@ -1162,20 +1171,14 @@ mod tests {
     }
 
     #[test]
-    fn test_automatic_index_single_column() -> Result<()> {
+    #[should_panic]
+    fn test_automatic_index_single_column() {
+        // Without composite primary keys, we should not have an automatic index on a primary key that is a rowid alias
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
-        let table = BTreeTable::from_sql(sql, 0)?;
-        let index =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
-
-        assert_eq!(index.name, "sqlite_autoindex_t1_1");
-        assert_eq!(index.table_name, "t1");
-        assert_eq!(index.root_page, 2);
-        assert!(index.unique);
-        assert_eq!(index.columns.len(), 1);
-        assert_eq!(index.columns[0].name, "a");
-        assert!(matches!(index.columns[0].order, SortOrder::Asc));
-        Ok(())
+        let table = BTreeTable::from_sql(sql, 0).unwrap();
+        let _index =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)
+                .unwrap();
     }
 
     #[test]
@@ -1241,6 +1244,23 @@ mod tests {
             result.unwrap_err(),
             LimboError::InternalError(msg) if msg.contains("not found in table")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_unique_column() -> Result<()> {
+        let sql = r#"CREATE table t1 (x INTEGER, y INTEGER UNIQUE);"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let index =
+            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
+
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "y");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
         Ok(())
     }
 }
