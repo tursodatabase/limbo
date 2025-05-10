@@ -118,6 +118,17 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     Ok(())
 }
 
+/// Optimize the join order and index selection for a query.
+///
+/// This function does the following:
+/// - Computes a set of [Constraint]s for each table.
+/// - Using those constraints, computes the best join order for the list of [TableReference]s
+///   and selects the best [crate::translate::optimizer::access_method::AccessMethod] for each table in the join order.
+/// - Mutates the [Operation]s in `table_references` to use the selected access methods.
+/// - Removes predicates from the `where_clause` that are now redundant due to the selected access methods.
+/// - Removes sorting operations if the selected join order and access methods satisfy the [crate::translate::optimizer::order::OrderTarget].
+///
+/// Returns the join order if it was optimized, or None if the default join order was considered best.
 fn use_indexes(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
@@ -144,6 +155,8 @@ fn use_indexes(
         best_ordered_plan,
     } = best_join_order_result;
 
+    // See if best_ordered_plan is better than the overall best_plan if we add a sorting penalty
+    // to the unordered plan's cost.
     let best_plan = if let Some(best_ordered_plan) = best_ordered_plan {
         let best_unordered_plan_cost = best_plan.cost;
         let best_ordered_plan_cost = best_ordered_plan.cost;
@@ -159,6 +172,7 @@ fn use_indexes(
         best_plan
     };
 
+    // Eliminate sorting if possible.
     if let Some(order_target) = maybe_order_target {
         let satisfies_order_target = plan_satisfies_order_target(
             &best_plan,
@@ -196,6 +210,8 @@ fn use_indexes(
         })
         .collect();
     let mut to_remove_from_where_clause = vec![];
+
+    // Mutate the Operations in `table_references` to use the selected access methods.
     for (i, join_order_member) in best_join_order.iter().enumerate() {
         let table_number = join_order_member.table_no;
         let access_method_kind = access_methods_arena.borrow()[best_access_methods[i]]
@@ -219,7 +235,8 @@ fn use_indexes(
                 if index.is_some() || i == 0 {
                     Operation::Scan { iter_dir, index }
                 } else {
-                    // Try to construct ephemeral index since it's going to be better than a scan for non-outermost tables.
+                    // This branch means we have a full table scan for a non-outermost table.
+                    // Try to construct an ephemeral index since it's going to be better than a scan.
                     let table_constraints = constraints_per_table
                         .iter()
                         .find(|c| c.table_no == table_number);
