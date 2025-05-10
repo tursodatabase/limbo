@@ -121,7 +121,7 @@ pub fn parse_schema_rows(
                                     });
                                 }
                                 _ => {
-                                    // Automatic index on primary key, e.g.
+                                    // Automatic index on primary key and/or unique constraint, e.g.
                                     // table|foo|foo|2|CREATE TABLE foo (a text PRIMARY KEY, b)
                                     // index|sqlite_autoindex_foo_1|foo|3|
                                     let index_name = row.get::<&str>(1)?.to_string();
@@ -165,7 +165,7 @@ pub fn parse_schema_rows(
                     root_page,
                 } => {
                     let table = schema.get_btree_table(&table_name).unwrap();
-                    let index = schema::Index::automatic_from_primary_key(
+                    let index = schema::Index::automatic_from_primary_key_and_unique(
                         table.as_ref(),
                         &name,
                         root_page as usize,
@@ -559,6 +559,12 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     )
                 }),
                 is_rowid_alias: false,
+                unique: column_def.constraints.iter().any(|c| {
+                    matches!(
+                        c.constraint,
+                        limbo_sqlite3_parser::ast::ColumnConstraint::Unique(..)
+                    )
+                }),
             };
             Some(column)
         })
