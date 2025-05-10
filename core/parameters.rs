@@ -27,6 +27,9 @@ impl Parameter {
 pub struct Parameters {
     index: NonZero<usize>,
     pub list: Vec<Parameter>,
+    // Indexes of the referenced insert values to maintain ordering of paramaters
+    param_positions: Option<Vec<usize>>,
+    current_col_value_idx: Option<usize>,
 }
 
 impl Default for Parameters {
@@ -40,6 +43,8 @@ impl Parameters {
         Self {
             index: 1.try_into().unwrap(),
             list: vec![],
+            param_positions: None,
+            current_col_value_idx: None,
         }
     }
 
@@ -47,6 +52,26 @@ impl Parameters {
         let mut params = self.list.clone();
         params.dedup();
         params.len()
+    }
+
+    pub fn set_value_index(&mut self, idx: usize) {
+        self.current_col_value_idx = Some(idx);
+    }
+
+    pub fn set_parameter_positions(&mut self, params: Vec<usize>) {
+        self.param_positions = Some(params);
+    }
+
+    pub fn get_param_index(&self) -> Option<NonZero<usize>> {
+        if let Some(val) = self.current_col_value_idx {
+            return self.param_positions.as_ref().and_then(|positions| {
+                positions
+                    .iter()
+                    .position(|param| param.eq(&val))
+                    .map(|p| NonZero::new(p + 1).unwrap())
+            });
+        };
+        None
     }
 
     pub fn name(&self, index: NonZero<usize>) -> Option<String> {
@@ -80,7 +105,11 @@ impl Parameters {
                 let index = self.next_index();
                 self.list.push(Parameter::Anonymous(index));
                 tracing::trace!("anonymous parameter at {index}");
-                index
+                if let Some(idx) = self.get_param_index() {
+                    idx
+                } else {
+                    index
+                }
             }
             name if name.starts_with(['$', ':', '@', '#']) => {
                 match self

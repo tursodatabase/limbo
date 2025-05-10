@@ -1,4 +1,7 @@
-use std::ffi::{c_char, c_void};
+use std::{
+    ffi::{c_char, c_void},
+    fmt::Debug,
+};
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -20,6 +23,7 @@ pub enum ResultCode {
     NoSuchEntity = 13,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub enum ValueType {
     Integer = 0,
@@ -33,6 +37,34 @@ pub enum ValueType {
 pub struct LimboValue {
     value_type: ValueType,
     value: ValueUnion,
+}
+impl Debug for LimboValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.value_type {
+            ValueType::Integer => {
+                let i = self.value.to_int();
+                f.debug_struct("LimboValue").field("value", &i).finish()
+            }
+            ValueType::Real => {
+                let r = self.value.to_real();
+                f.debug_struct("LimboValue").field("value", &r).finish()
+            }
+            ValueType::Text => {
+                let t = self.value.to_str();
+                f.debug_struct("LimboValue").field("value", &t).finish()
+            }
+            ValueType::Blob => {
+                let blob = self.value.to_bytes();
+                f.debug_struct("LimboValue")
+                    .field("value", &blob.to_vec())
+                    .finish()
+            }
+            ValueType::Null => f
+                .debug_struct("LimboValue")
+                .field("value", &"NULL")
+                .finish(),
+        }
+    }
 }
 
 #[repr(C)]

@@ -1851,11 +1851,8 @@ pub fn translate_expr(
                             } else {
                                 Some(program.resolve_cursor_id(&table_reference.identifier))
                             };
-                            let index_cursor_id = if let Some(index) = index {
-                                Some(program.resolve_cursor_id(&index.name))
-                            } else {
-                                None
-                            };
+                            let index_cursor_id =
+                                index.map(|index| program.resolve_cursor_id(&index.name));
                             if *is_rowid_alias {
                                 if let Some(index_cursor_id) = index_cursor_id {
                                     program.emit_insn(Insn::IdxRowId {
@@ -2539,6 +2536,16 @@ pub fn maybe_apply_affinity(col_type: Type, target_register: usize, program: &mu
             register: target_register,
         })
     }
+}
+
+/// Gather all the expected indicies of all Expr::Variable
+pub fn expected_param_indicies(cols: &[Vec<ast::Expr>]) -> Vec<usize> {
+    cols.iter()
+        .flat_map(|col| col.iter())
+        .enumerate()
+        .filter(|(_, col)| matches!(col, ast::Expr::Variable(_)))
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>()
 }
 
 /// Sanitaizes a string literal by removing single quote at front and back
