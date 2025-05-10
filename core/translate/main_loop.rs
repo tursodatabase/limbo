@@ -131,9 +131,7 @@ pub fn init_loop(
                         program.emit_insn(Insn::VOpen { cursor_id });
                     }
                 }
-                _ => {
-                    unimplemented!()
-                }
+                _ => {}
             },
             Operation::Search(search) => {
                 match mode {

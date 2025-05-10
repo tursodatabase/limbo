@@ -1,23 +1,36 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap, sync::Arc};
 
+use access_method::AccessMethodKind;
+use constraints::{
+    constraints_from_where_clause, usable_constraints_for_join_order, BinaryExprSide, Constraint,
+    ConstraintRef,
+};
+use cost::Cost;
+use join::{compute_best_join_order, BestJoinOrderResult};
 use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
+use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 
 use crate::{
     schema::{Index, IndexColumn, Schema},
     translate::plan::TerminationKey,
     types::SeekOp,
-    util::exprs_are_equivalent,
     Result,
 };
 
 use super::{
     emitter::Resolver,
+    expr::unwrap_parens,
     plan::{
-        DeletePlan, EvalAt, GroupBy, IterationDirection, JoinOrderMember, Operation, Plan, Search,
-        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
+        DeletePlan, GroupBy, IterationDirection, JoinOrderMember, Operation, Plan, Search, SeekDef,
+        SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
     },
-    planner::determine_where_to_eval_expr,
 };
+
+pub(crate) mod access_method;
+pub(crate) mod constraints;
+pub(crate) mod cost;
+pub(crate) mod join;
+pub(crate) mod order;
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
@@ -42,15 +55,17 @@ fn optimize_select_plan(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
         return Ok(());
     }
 
-    use_indexes(
+    let best_join_order = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
         &mut plan.order_by,
-        &plan.group_by,
+        &mut plan.group_by,
     )?;
 
-    eliminate_orderby_like_groupby(plan)?;
+    if let Some(best_join_order) = best_join_order {
+        plan.join_order = best_join_order;
+    }
 
     Ok(())
 }
@@ -64,12 +79,12 @@ fn optimize_delete_plan(plan: &mut DeletePlan, schema: &Schema) -> Result<()> {
         return Ok(());
     }
 
-    use_indexes(
+    let _ = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
         &mut plan.order_by,
-        &None,
+        &mut None,
     )?;
 
     Ok(())
@@ -83,12 +98,12 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
         plan.contains_constant_false_condition = true;
         return Ok(());
     }
-    use_indexes(
+    let _ = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
         &mut plan.order_by,
-        &None,
+        &mut None,
     )?;
     Ok(())
 }
@@ -103,281 +118,234 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     Ok(())
 }
 
-fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
-    if plan.order_by.is_none() | plan.group_by.is_none() {
-        return Ok(());
-    }
-    if plan.table_references.len() == 0 {
-        return Ok(());
-    }
-
-    let order_by_clauses = plan.order_by.as_mut().unwrap();
-    // TODO: let's make the group by sorter aware of the order by directions so we dont need to skip
-    // descending terms.
-    if order_by_clauses
-        .iter()
-        .any(|(_, dir)| matches!(dir, SortOrder::Desc))
-    {
-        return Ok(());
-    }
-    let group_by_clauses = plan.group_by.as_mut().unwrap();
-    // all order by terms must be in the group by clause for order by to be eliminated
-    if !order_by_clauses.iter().all(|(o_expr, _)| {
-        group_by_clauses
-            .exprs
-            .iter()
-            .any(|g_expr| exprs_are_equivalent(g_expr, o_expr))
-    }) {
-        return Ok(());
-    }
-
-    // reorder group by terms so that they match the order by terms
-    // this way the group by sorter will effectively do the order by sorter's job and
-    // we can remove the order by clause
-    group_by_clauses.exprs.sort_by_key(|g_expr| {
-        order_by_clauses
-            .iter()
-            .position(|(o_expr, _)| exprs_are_equivalent(o_expr, g_expr))
-            .unwrap_or(usize::MAX)
-    });
-
-    plan.order_by = None;
-    Ok(())
-}
-
-/// Eliminate unnecessary ORDER BY clauses.
-/// Returns true if the ORDER BY clause was eliminated.
-fn eliminate_unnecessary_orderby(
-    table_references: &mut [TableReference],
-    available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
-    group_by: &Option<GroupBy>,
-) -> Result<bool> {
-    let Some(order) = order_by else {
-        return Ok(false);
-    };
-    let Some(first_table_reference) = table_references.first_mut() else {
-        return Ok(false);
-    };
-    let Some(btree_table) = first_table_reference.btree() else {
-        return Ok(false);
-    };
-    // If GROUP BY clause is present, we can't rely on already ordered columns because GROUP BY reorders the data
-    // This early return prevents the elimination of ORDER BY when GROUP BY exists, as sorting must be applied after grouping
-    // And if ORDER BY clause duplicates GROUP BY we handle it later in fn eliminate_orderby_like_groupby
-    if group_by.is_some() {
-        return Ok(false);
-    }
-    let Operation::Scan {
-        index, iter_dir, ..
-    } = &mut first_table_reference.op
-    else {
-        return Ok(false);
-    };
-
-    assert!(
-        index.is_none(),
-        "Nothing shouldve transformed the scan to use an index yet"
-    );
-
-    // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
-    if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
-        *iter_dir = match order[0].1 {
-            SortOrder::Asc => IterationDirection::Forwards,
-            SortOrder::Desc => IterationDirection::Backwards,
-        };
-        *order_by = None;
-        return Ok(true);
-    }
-
-    // Find the best matching index for the ORDER BY columns
-    let table_name = &btree_table.name;
-    let mut best_index = (None, 0);
-
-    for (_, indexes) in available_indexes.iter() {
-        for index_candidate in indexes.iter().filter(|i| &i.table_name == table_name) {
-            let matching_columns = index_candidate.columns.iter().enumerate().take_while(|(i, c)| {
-                            if let Some((Expr::Column { table, column, .. }, _)) = order.get(*i) {
-                                let col_idx_in_table = btree_table
-                                    .columns
-                                    .iter()
-                                    .position(|tc| tc.name.as_ref() == Some(&c.name));
-                                matches!(col_idx_in_table, Some(col_idx) if *table == 0 && *column == col_idx)
-                            } else {
-                                false
-                            }
-                        }).count();
-
-            if matching_columns > best_index.1 {
-                best_index = (Some(index_candidate), matching_columns);
-            }
-        }
-    }
-
-    let Some(matching_index) = best_index.0 else {
-        return Ok(false);
-    };
-    let match_count = best_index.1;
-
-    // If we found a matching index, use it for scanning
-    *index = Some(matching_index.clone());
-    // If the order by direction matches the index direction, we can iterate the index in forwards order.
-    // If they don't, we must iterate the index in backwards order.
-    let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
-    *iter_dir = match (index_direction, order[0].1) {
-        (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
-            IterationDirection::Forwards
-        }
-        (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
-            IterationDirection::Backwards
-        }
-    };
-
-    // If the index covers all ORDER BY columns, and one of the following applies:
-    // - the ORDER BY directions exactly match the index orderings,
-    // - the ORDER by directions are the exact opposite of the index orderings,
-    // we can remove the ORDER BY clause.
-    if match_count == order.len() {
-        let full_match = {
-            let mut all_match_forward = true;
-            let mut all_match_reverse = true;
-            for (i, (_, direction)) in order.iter().enumerate() {
-                match (&matching_index.columns[i].order, direction) {
-                    (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
-                        all_match_reverse = false;
-                    }
-                    (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
-                        all_match_forward = false;
-                    }
-                }
-            }
-            all_match_forward || all_match_reverse
-        };
-        if full_match {
-            *order_by = None;
-        }
-    }
-
-    Ok(order_by.is_none())
-}
-
-/**
- * Use indexes where possible.
- *
- * When this function is called, condition expressions from both the actual WHERE clause and the JOIN clauses are in the where_clause vector.
- * If we find a condition that can be used to index scan, we pop it off from the where_clause vector and put it into a Search operation.
- * We put it there simply because it makes it a bit easier to track during translation.
- *
- * In this function we also try to eliminate ORDER BY clauses if there is an index that satisfies the ORDER BY clause.
- */
-fn use_indexes(
+/// Optimize the join order and index selection for a query.
+///
+/// This function does the following:
+/// - Computes a set of [Constraint]s for each table.
+/// - Using those constraints, computes the best join order for the list of [TableReference]s
+///   and selects the best [crate::translate::optimizer::access_method::AccessMethod] for each table in the join order.
+/// - Mutates the [Operation]s in `table_references` to use the selected access methods.
+/// - Removes predicates from the `where_clause` that are now redundant due to the selected access methods.
+/// - Removes sorting operations if the selected join order and access methods satisfy the [crate::translate::optimizer::order::OrderTarget].
+///
+/// Returns the join order if it was optimized, or None if the default join order was considered best.
+fn optimize_table_access(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut Vec<WhereTerm>,
     order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
-    group_by: &Option<GroupBy>,
-) -> Result<()> {
-    // Try to use indexes for eliminating ORDER BY clauses
-    let did_eliminate_orderby =
-        eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
+    group_by: &mut Option<GroupBy>,
+) -> Result<Option<Vec<JoinOrderMember>>> {
+    let access_methods_arena = RefCell::new(Vec::new());
+    let maybe_order_target = compute_order_target(order_by, group_by.as_mut());
+    let constraints_per_table =
+        constraints_from_where_clause(where_clause, table_references, available_indexes)?;
+    let Some(best_join_order_result) = compute_best_join_order(
+        table_references,
+        maybe_order_target.as_ref(),
+        &constraints_per_table,
+        &access_methods_arena,
+    )?
+    else {
+        return Ok(None);
+    };
 
-    let join_order = table_references
-        .iter()
-        .enumerate()
-        .map(|(i, t)| JoinOrderMember {
-            table_no: i,
-            is_outer: t.join_info.as_ref().map_or(false, |j| j.outer),
-        })
-        .collect::<Vec<_>>();
+    let BestJoinOrderResult {
+        best_plan,
+        best_ordered_plan,
+    } = best_join_order_result;
 
-    // Try to use indexes for WHERE conditions
-    for (table_index, table_reference) in table_references.iter_mut().enumerate() {
-        if matches!(table_reference.op, Operation::Scan { .. }) {
-            let index = if let Operation::Scan { index, .. } = &table_reference.op {
-                Option::clone(index)
-            } else {
-                None
-            };
-            match index {
-                // If we decided to eliminate ORDER BY using an index, let's constrain our search to only that index
-                Some(index) => {
-                    let available_indexes = available_indexes
-                        .values()
-                        .flatten()
-                        .filter(|i| i.name == index.name)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if let Some(search) = try_extract_index_search_from_where_clause(
-                        where_clause,
-                        table_index,
-                        table_reference,
-                        &available_indexes,
-                        &join_order,
-                    )? {
-                        table_reference.op = Operation::Search(search);
-                    }
-                }
-                None => {
-                    let table_name = table_reference.table.get_name();
-
-                    // If we can utilize the rowid alias of the table, let's preferentially always use it for now.
-                    let mut i = 0;
-                    while i < where_clause.len() {
-                        if let Some(search) = try_extract_rowid_search_expression(
-                            &mut where_clause[i],
-                            table_index,
-                            table_reference,
-                            &join_order,
-                        )? {
-                            where_clause.remove(i);
-                            table_reference.op = Operation::Search(search);
-                            continue;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    if did_eliminate_orderby && table_index == 0 {
-                        // If we already made the decision to remove ORDER BY based on the Rowid (e.g. ORDER BY id), then skip this.
-                        // It would be possible to analyze the index and see if the covering index would retain the ordering guarantee,
-                        // but we just don't do that yet.
-                        continue;
-                    }
-                    let placeholder = vec![];
-                    let mut usable_indexes_ref = &placeholder;
-                    if let Some(indexes) = available_indexes.get(table_name) {
-                        usable_indexes_ref = indexes;
-                    }
-                    if let Some(search) = try_extract_index_search_from_where_clause(
-                        where_clause,
-                        table_index,
-                        table_reference,
-                        usable_indexes_ref,
-                        &join_order,
-                    )? {
-                        table_reference.op = Operation::Search(search);
-                    }
-                }
-            }
+    // See if best_ordered_plan is better than the overall best_plan if we add a sorting penalty
+    // to the unordered plan's cost.
+    let best_plan = if let Some(best_ordered_plan) = best_ordered_plan {
+        let best_unordered_plan_cost = best_plan.cost;
+        let best_ordered_plan_cost = best_ordered_plan.cost;
+        const SORT_COST_PER_ROW_MULTIPLIER: f64 = 0.001;
+        let sorting_penalty =
+            Cost(best_plan.output_cardinality as f64 * SORT_COST_PER_ROW_MULTIPLIER);
+        if best_unordered_plan_cost + sorting_penalty > best_ordered_plan_cost {
+            best_ordered_plan
+        } else {
+            best_plan
         }
+    } else {
+        best_plan
+    };
 
-        // Finally, if there's no other reason to use an index, if an index covers the columns used in the query, let's use it.
-        if let Some(indexes) = available_indexes.get(table_reference.table.get_name()) {
-            for index_candidate in indexes.iter() {
-                let is_covering = table_reference.index_is_covering(index_candidate);
-                if let Operation::Scan { index, .. } = &mut table_reference.op {
-                    if index.is_some() {
-                        continue;
-                    }
-                    if is_covering {
-                        *index = Some(index_candidate.clone());
-                        break;
-                    }
+    // Eliminate sorting if possible.
+    if let Some(order_target) = maybe_order_target {
+        let satisfies_order_target = plan_satisfies_order_target(
+            &best_plan,
+            &access_methods_arena,
+            table_references,
+            &order_target,
+        );
+        if satisfies_order_target {
+            match order_target.1 {
+                EliminatesSort::GroupBy => {
+                    let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
+                }
+                EliminatesSort::OrderBy => {
+                    let _ = order_by.take();
+                }
+                EliminatesSort::GroupByAndOrderBy => {
+                    let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
+                    let _ = order_by.take();
                 }
             }
         }
     }
 
-    Ok(())
+    let (best_access_methods, best_table_numbers) =
+        (best_plan.best_access_methods, best_plan.table_numbers);
+
+    let best_join_order: Vec<JoinOrderMember> = best_table_numbers
+        .into_iter()
+        .map(|table_number| JoinOrderMember {
+            table_no: table_number,
+            is_outer: table_references[table_number]
+                .join_info
+                .as_ref()
+                .map_or(false, |join_info| join_info.outer),
+        })
+        .collect();
+    let mut to_remove_from_where_clause = vec![];
+
+    // Mutate the Operations in `table_references` to use the selected access methods.
+    for (i, join_order_member) in best_join_order.iter().enumerate() {
+        let table_number = join_order_member.table_no;
+        let access_method_kind = access_methods_arena.borrow()[best_access_methods[i]]
+            .kind
+            .clone();
+        if matches!(
+            table_references[table_number].op,
+            Operation::Subquery { .. }
+        ) {
+            // FIXME: Operation::Subquery shouldn't exist. It's not an operation, it's a kind of temporary table.
+            assert!(
+                matches!(access_method_kind, AccessMethodKind::Scan { index: None, .. }),
+                "nothing in the current optimizer should be able to optimize subqueries, but got {:?} for table {}",
+                access_method_kind,
+                table_references[table_number].table.get_name()
+            );
+            continue;
+        }
+        table_references[table_number].op = match access_method_kind {
+            AccessMethodKind::Scan { iter_dir, index } => {
+                if index.is_some() || i == 0 {
+                    Operation::Scan { iter_dir, index }
+                } else {
+                    // This branch means we have a full table scan for a non-outermost table.
+                    // Try to construct an ephemeral index since it's going to be better than a scan.
+                    let table_constraints = constraints_per_table
+                        .iter()
+                        .find(|c| c.table_no == table_number);
+                    if let Some(table_constraints) = table_constraints {
+                        let temp_constraint_refs = (0..table_constraints.constraints.len())
+                            .map(|i| ConstraintRef {
+                                constraint_vec_pos: i,
+                                index_col_pos: table_constraints.constraints[i].table_col_pos,
+                                sort_order: SortOrder::Asc,
+                            })
+                            .collect::<Vec<_>>();
+                        let usable_constraint_refs = usable_constraints_for_join_order(
+                            &table_constraints.constraints,
+                            &temp_constraint_refs,
+                            &best_join_order[..=i],
+                        );
+                        if usable_constraint_refs.is_empty() {
+                            Operation::Scan { iter_dir, index }
+                        } else {
+                            let ephemeral_index = ephemeral_index_build(
+                                &table_references[table_number],
+                                table_number,
+                                &table_constraints.constraints,
+                                &usable_constraint_refs,
+                            );
+                            let ephemeral_index = Arc::new(ephemeral_index);
+                            Operation::Search(Search::Seek {
+                                index: Some(ephemeral_index),
+                                seek_def: build_seek_def_from_constraints(
+                                    &table_constraints.constraints,
+                                    &usable_constraint_refs,
+                                    iter_dir,
+                                    where_clause,
+                                )?,
+                            })
+                        }
+                    } else {
+                        Operation::Scan { iter_dir, index }
+                    }
+                }
+            }
+            AccessMethodKind::Search {
+                index,
+                constraint_refs,
+                iter_dir,
+            } => {
+                assert!(!constraint_refs.is_empty());
+                for cref in constraint_refs.iter() {
+                    let constraint =
+                        &constraints_per_table[table_number].constraints[cref.constraint_vec_pos];
+                    to_remove_from_where_clause.push(constraint.where_clause_pos.0);
+                }
+                if let Some(index) = index {
+                    Operation::Search(Search::Seek {
+                        index: Some(index),
+                        seek_def: build_seek_def_from_constraints(
+                            &constraints_per_table[table_number].constraints,
+                            &constraint_refs,
+                            iter_dir,
+                            where_clause,
+                        )?,
+                    })
+                } else {
+                    assert!(
+                        constraint_refs.len() == 1,
+                        "expected exactly one constraint for rowid seek, got {:?}",
+                        constraint_refs
+                    );
+                    let constraint = &constraints_per_table[table_number].constraints
+                        [constraint_refs[0].constraint_vec_pos];
+                    match constraint.operator {
+                        ast::Operator::Equals => Operation::Search(Search::RowidEq {
+                            cmp_expr: {
+                                let (idx, side) = constraint.where_clause_pos;
+                                let ast::Expr::Binary(lhs, _, rhs) =
+                                    unwrap_parens(&where_clause[idx].expr)?
+                                else {
+                                    panic!("Expected a binary expression");
+                                };
+                                let where_term = WhereTerm {
+                                    expr: match side {
+                                        BinaryExprSide::Lhs => lhs.as_ref().clone(),
+                                        BinaryExprSide::Rhs => rhs.as_ref().clone(),
+                                    },
+                                    from_outer_join: where_clause[idx].from_outer_join.clone(),
+                                };
+                                where_term
+                            },
+                        }),
+                        _ => Operation::Search(Search::Seek {
+                            index: None,
+                            seek_def: build_seek_def_from_constraints(
+                                &constraints_per_table[table_number].constraints,
+                                &constraint_refs,
+                                iter_dir,
+                                where_clause,
+                            )?,
+                        }),
+                    }
+                }
+            }
+        };
+    }
+    to_remove_from_where_clause.sort_by_key(|c| *c);
+    for position in to_remove_from_where_clause.iter().rev() {
+        where_clause.remove(*position);
+    }
+
+    Ok(Some(best_join_order))
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -491,21 +459,10 @@ pub trait Optimizable {
             .map_or(false, |c| c == AlwaysTrueOrFalse::AlwaysFalse))
     }
     fn is_constant(&self, resolver: &Resolver<'_>) -> bool;
-    fn is_rowid_alias_of(&self, table_index: usize) -> bool;
     fn is_nonnull(&self, tables: &[TableReference]) -> bool;
 }
 
 impl Optimizable for ast::Expr {
-    fn is_rowid_alias_of(&self, table_index: usize) -> bool {
-        match self {
-            Self::Column {
-                table,
-                is_rowid_alias,
-                ..
-            } => *is_rowid_alias && *table == table_index,
-            _ => false,
-        }
-    }
     /// Returns true if the expressions is (verifiably) non-NULL.
     /// It might still be non-NULL even if we return false; we just
     /// weren't able to prove it.
@@ -791,289 +748,11 @@ impl Optimizable for ast::Expr {
     }
 }
 
-fn opposite_cmp_op(op: ast::Operator) -> ast::Operator {
-    match op {
-        ast::Operator::Equals => ast::Operator::Equals,
-        ast::Operator::Greater => ast::Operator::Less,
-        ast::Operator::GreaterEquals => ast::Operator::LessEquals,
-        ast::Operator::Less => ast::Operator::Greater,
-        ast::Operator::LessEquals => ast::Operator::GreaterEquals,
-        _ => panic!("unexpected operator: {:?}", op),
-    }
-}
-
-/// Struct used for scoring index scans
-/// Currently we just estimate cost in a really dumb way,
-/// i.e. no statistics are used.
-struct IndexScore {
-    index: Option<Arc<Index>>,
-    cost: f64,
-    constraints: Vec<IndexConstraint>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IndexInfo {
-    unique: bool,
-    column_count: usize,
-}
-
-const ESTIMATED_HARDCODED_ROWS_PER_TABLE: f64 = 1000.0;
-
-/// Unbelievably dumb cost estimate for rows scanned by an index scan.
-fn dumb_cost_estimator(
-    index_info: Option<IndexInfo>,
-    constraints: &[IndexConstraint],
-    is_inner_loop: bool,
-    is_ephemeral: bool,
-) -> f64 {
-    // assume that the outer table always does a full table scan :)
-    // this discourages building ephemeral indexes on the outer table
-    // (since a scan reads TABLE_ROWS rows, so an ephemeral index on the outer table would both read TABLE_ROWS rows to build the index and then seek the index)
-    // but encourages building it on the inner table because it's only built once but the inner loop is run as many times as the outer loop has iterations.
-    let loop_multiplier = if is_inner_loop {
-        ESTIMATED_HARDCODED_ROWS_PER_TABLE
-    } else {
-        1.0
-    };
-
-    // If we are building an ephemeral index, we assume we will scan the entire source table to build it.
-    // Non-ephemeral indexes don't need to be built.
-    let cost_to_build_index = is_ephemeral as usize as f64 * ESTIMATED_HARDCODED_ROWS_PER_TABLE;
-
-    let Some(index_info) = index_info else {
-        return cost_to_build_index + ESTIMATED_HARDCODED_ROWS_PER_TABLE * loop_multiplier;
-    };
-
-    let final_constraint_is_range = constraints
-        .last()
-        .map_or(false, |c| c.operator != ast::Operator::Equals);
-    let equalities_count = constraints
-        .iter()
-        .take(if final_constraint_is_range {
-            constraints.len() - 1
-        } else {
-            constraints.len()
-        })
-        .count() as f64;
-
-    let selectivity = match (
-        index_info.unique,
-        index_info.column_count as f64,
-        equalities_count,
-    ) {
-        // no equalities: let's assume range query selectivity is 0.4. if final constraint is not range and there are no equalities, it means full table scan incoming
-        (_, _, 0.0) => {
-            if final_constraint_is_range {
-                0.4
-            } else {
-                1.0
-            }
-        }
-        // on an unique index if we have equalities across all index columns, assume very high selectivity
-        (true, index_cols, eq_count) if eq_count == index_cols => 0.01 * eq_count,
-        // some equalities: let's assume each equality has a selectivity of 0.1 and range query selectivity is 0.4
-        (_, _, eq_count) => (eq_count * 0.1) * if final_constraint_is_range { 0.4 } else { 1.0 },
-    };
-    cost_to_build_index + selectivity * ESTIMATED_HARDCODED_ROWS_PER_TABLE * loop_multiplier
-}
-
-/// Try to extract an index search from the WHERE clause
-/// Returns an optional [Search] struct if an index search can be extracted, otherwise returns None.
-pub fn try_extract_index_search_from_where_clause(
-    where_clause: &mut Vec<WhereTerm>,
-    table_index: usize,
-    table_reference: &TableReference,
-    table_indexes: &[Arc<Index>],
-    join_order: &[JoinOrderMember],
-) -> Result<Option<Search>> {
-    // If there are no WHERE terms, we can't extract a search
-    if where_clause.is_empty() {
-        return Ok(None);
-    }
-
-    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
-        *iter_dir
-    } else {
-        return Ok(None);
-    };
-
-    // Find all potential index constraints
-    // For WHERE terms to be used to constrain an index scan, they must:
-    // 1. refer to columns in the table that the index is on
-    // 2. be a binary comparison expression
-    // 3. constrain the index columns in the order that they appear in the index
-    //    - e.g. if the index is on (a,b,c) then we can use all of "a = 1 AND b = 2 AND c = 3" to constrain the index scan,
-    //    - but if the where clause is "a = 1 and c = 3" then we can only use "a = 1".
-    let cost_of_full_table_scan = dumb_cost_estimator(None, &[], table_index != 0, false);
-    let mut constraints_cur = vec![];
-    let mut best_index = IndexScore {
-        index: None,
-        cost: cost_of_full_table_scan,
-        constraints: vec![],
-    };
-
-    for index in table_indexes {
-        // Check how many terms in the where clause constrain the index in column order
-        find_index_constraints(
-            where_clause,
-            table_index,
-            index,
-            join_order,
-            &mut constraints_cur,
-        )?;
-        // naive scoring since we don't have statistics: prefer the index where we can use the most columns
-        // e.g. if we can use all columns of an index on (a,b), it's better than an index of (c,d,e) where we can only use c.
-        let cost = dumb_cost_estimator(
-            Some(IndexInfo {
-                unique: index.unique,
-                column_count: index.columns.len(),
-            }),
-            &constraints_cur,
-            table_index != 0,
-            false,
-        );
-        if cost < best_index.cost {
-            best_index.index = Some(Arc::clone(index));
-            best_index.cost = cost;
-            best_index.constraints.clear();
-            best_index.constraints.append(&mut constraints_cur);
-        }
-    }
-
-    // We haven't found a persistent btree index that is any better than a full table scan;
-    // let's see if building an ephemeral index would be better.
-    if best_index.index.is_none() {
-        let (ephemeral_cost, constraints_with_col_idx, mut constraints_without_col_idx) =
-            ephemeral_index_estimate_cost(where_clause, table_reference, table_index, join_order);
-        if ephemeral_cost < best_index.cost {
-            // ephemeral index makes sense, so let's build it now.
-            // ephemeral columns are: columns from the table_reference, constraints first, then the rest
-            let ephemeral_index =
-                ephemeral_index_build(table_reference, table_index, &constraints_with_col_idx);
-            best_index.index = Some(Arc::new(ephemeral_index));
-            best_index.cost = ephemeral_cost;
-            best_index.constraints.clear();
-            best_index
-                .constraints
-                .append(&mut constraints_without_col_idx);
-        }
-    }
-
-    if best_index.index.is_none() {
-        return Ok(None);
-    }
-
-    // Build the seek definition
-    let seek_def =
-        build_seek_def_from_index_constraints(&best_index.constraints, iter_dir, where_clause)?;
-
-    // Remove the used terms from the where_clause since they are now part of the seek definition
-    // Sort terms by position in descending order to avoid shifting indices during removal
-    best_index.constraints.sort_by(|a, b| {
-        b.position_in_where_clause
-            .0
-            .cmp(&a.position_in_where_clause.0)
-    });
-
-    for constraint in best_index.constraints.iter() {
-        where_clause.remove(constraint.position_in_where_clause.0);
-    }
-
-    return Ok(Some(Search::Seek {
-        index: best_index.index,
-        seek_def,
-    }));
-}
-
-fn ephemeral_index_estimate_cost(
-    where_clause: &mut Vec<WhereTerm>,
-    table_reference: &TableReference,
-    table_index: usize,
-    join_order: &[JoinOrderMember],
-) -> (f64, Vec<(usize, IndexConstraint)>, Vec<IndexConstraint>) {
-    let mut constraints_with_col_idx: Vec<(usize, IndexConstraint)> = where_clause
-        .iter()
-        .enumerate()
-        .filter(|(_, term)| is_potential_index_constraint(term, table_index, join_order))
-        .filter_map(|(i, term)| {
-            let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
-                panic!("expected binary expression");
-            };
-            if let ast::Expr::Column { table, column, .. } = lhs.as_ref() {
-                if *table == table_index {
-                    return Some((
-                        *column,
-                        IndexConstraint {
-                            position_in_where_clause: (i, BinaryExprSide::Rhs),
-                            operator: *operator,
-                            index_column_sort_order: SortOrder::Asc,
-                        },
-                    ));
-                }
-            }
-            if let ast::Expr::Column { table, column, .. } = rhs.as_ref() {
-                if *table == table_index {
-                    return Some((
-                        *column,
-                        IndexConstraint {
-                            position_in_where_clause: (i, BinaryExprSide::Lhs),
-                            operator: opposite_cmp_op(*operator),
-                            index_column_sort_order: SortOrder::Asc,
-                        },
-                    ));
-                }
-            }
-            None
-        })
-        .collect();
-    // sort equalities first
-    constraints_with_col_idx.sort_by(|a, _| {
-        if a.1.operator == ast::Operator::Equals {
-            Ordering::Less
-        } else {
-            Ordering::Equal
-        }
-    });
-    // drop everything after the first inequality
-    constraints_with_col_idx.truncate(
-        constraints_with_col_idx
-            .iter()
-            .position(|c| c.1.operator != ast::Operator::Equals)
-            .unwrap_or(constraints_with_col_idx.len()),
-    );
-
-    let ephemeral_column_count = table_reference
-        .columns()
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| table_reference.column_is_used(*i))
-        .count();
-
-    let constraints_without_col_idx = constraints_with_col_idx
-        .iter()
-        .cloned()
-        .map(|(_, c)| c)
-        .collect::<Vec<_>>();
-    let ephemeral_cost = dumb_cost_estimator(
-        Some(IndexInfo {
-            unique: false,
-            column_count: ephemeral_column_count,
-        }),
-        &constraints_without_col_idx,
-        table_index != 0,
-        true,
-    );
-    (
-        ephemeral_cost,
-        constraints_with_col_idx,
-        constraints_without_col_idx,
-    )
-}
-
 fn ephemeral_index_build(
     table_reference: &TableReference,
     table_index: usize,
-    index_constraints: &[(usize, IndexConstraint)],
+    constraints: &[Constraint],
+    constraint_refs: &[ConstraintRef],
 ) -> Index {
     let mut ephemeral_columns: Vec<IndexColumn> = table_reference
         .columns()
@@ -1089,14 +768,14 @@ fn ephemeral_index_build(
         .collect();
     // sort so that constraints first, then rest in whatever order they were in in the table
     ephemeral_columns.sort_by(|a, b| {
-        let a_constraint = index_constraints
+        let a_constraint = constraint_refs
             .iter()
             .enumerate()
-            .find(|(_, c)| c.0 == a.pos_in_table);
-        let b_constraint = index_constraints
+            .find(|(_, c)| constraints[c.constraint_vec_pos].table_col_pos == a.pos_in_table);
+        let b_constraint = constraint_refs
             .iter()
             .enumerate()
-            .find(|(_, c)| c.0 == b.pos_in_table);
+            .find(|(_, c)| constraints[c.constraint_vec_pos].table_col_pos == b.pos_in_table);
         match (a_constraint, b_constraint) {
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -1120,215 +799,26 @@ fn ephemeral_index_build(
     ephemeral_index
 }
 
-#[derive(Debug, Clone)]
-/// A representation of an expression in a [WhereTerm] that can potentially be used as part of an index seek key.
-/// For example, if there is an index on table T(x,y) and another index on table U(z), and the where clause is "WHERE x > 10 AND 20 = z",
-/// the index constraints are:
-/// - x > 10 ==> IndexConstraint { position_in_where_clause: (0, [BinaryExprSide::Rhs]), operator: [ast::Operator::Greater] }
-/// - 20 = z ==> IndexConstraint { position_in_where_clause: (1, [BinaryExprSide::Lhs]), operator: [ast::Operator::Equals] }
-pub struct IndexConstraint {
-    position_in_where_clause: (usize, BinaryExprSide),
-    operator: ast::Operator,
-    index_column_sort_order: SortOrder,
-}
-
-/// Helper enum for [IndexConstraint] to indicate which side of a binary comparison expression is being compared to the index column.
-/// For example, if the where clause is "WHERE x = 10" and there's an index on x,
-/// the [IndexConstraint] for the where clause term "x = 10" will have a [BinaryExprSide::Rhs]
-/// because the right hand side expression "10" is being compared to the index column "x".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BinaryExprSide {
-    Lhs,
-    Rhs,
-}
-
-/// Recursively unwrap parentheses from an expression
-/// e.g. (((t.x > 5))) -> t.x > 5
-fn unwrap_parens<T>(expr: T) -> Result<T>
-where
-    T: UnwrapParens,
-{
-    expr.unwrap_parens()
-}
-
-trait UnwrapParens {
-    fn unwrap_parens(self) -> Result<Self>
-    where
-        Self: Sized;
-}
-
-impl UnwrapParens for &ast::Expr {
-    fn unwrap_parens(self) -> Result<Self> {
-        match self {
-            ast::Expr::Column { .. } => Ok(self),
-            ast::Expr::Parenthesized(exprs) => match exprs.len() {
-                1 => unwrap_parens(exprs.first().unwrap()),
-                _ => crate::bail_parse_error!("expected single expression in parentheses"),
-            },
-            _ => Ok(self),
-        }
-    }
-}
-
-impl UnwrapParens for ast::Expr {
-    fn unwrap_parens(self) -> Result<Self> {
-        match self {
-            ast::Expr::Column { .. } => Ok(self),
-            ast::Expr::Parenthesized(mut exprs) => match exprs.len() {
-                1 => unwrap_parens(exprs.pop().unwrap()),
-                _ => crate::bail_parse_error!("expected single expression in parentheses"),
-            },
-            _ => Ok(self),
-        }
-    }
-}
-
-/// Get the position of a column in an index
-/// For example, if there is an index on table T(x,y) then y's position in the index is 1.
-fn get_column_position_in_index(
-    expr: &ast::Expr,
-    table_index: usize,
-    index: &Arc<Index>,
-) -> Result<Option<usize>> {
-    let ast::Expr::Column { table, column, .. } = unwrap_parens(expr)? else {
-        return Ok(None);
-    };
-    if *table != table_index {
-        return Ok(None);
-    }
-    Ok(index.column_table_pos_to_index_pos(*column))
-}
-
-fn is_potential_index_constraint(
-    term: &WhereTerm,
-    table_index: usize,
-    join_order: &[JoinOrderMember],
-) -> bool {
-    // Skip terms that cannot be evaluated at this table's loop level
-    if !term.should_eval_at_loop(table_index, join_order) {
-        return false;
-    }
-    // Skip terms that are not binary comparisons
-    let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
-        return false;
-    };
-    // Only consider index scans for binary ops that are comparisons
-    if !matches!(
-        *operator,
-        ast::Operator::Equals
-            | ast::Operator::Greater
-            | ast::Operator::GreaterEquals
-            | ast::Operator::Less
-            | ast::Operator::LessEquals
-    ) {
-        return false;
-    }
-
-    // If both lhs and rhs refer to columns from this table, we can't use this constraint
-    // because we can't use the index to satisfy the condition.
-    // Examples:
-    // - WHERE t.x > t.y
-    // - WHERE t.x + 1 > t.y - 5
-    // - WHERE t.x = (t.x)
-    let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs, join_order) else {
-        return false;
-    };
-    let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs, join_order) else {
-        return false;
-    };
-    if eval_at_left == EvalAt::Loop(table_index) && eval_at_right == EvalAt::Loop(table_index) {
-        return false;
-    }
-    true
-}
-
-/// Find all [IndexConstraint]s for a given WHERE clause
-/// Constraints are appended as long as they constrain the index in column order.
-/// E.g. for index (a,b,c) to be fully used, there must be a [WhereTerm] for each of a, b, and c.
-/// If e.g. only a and c are present, then only the first column 'a' of the index will be used.
-fn find_index_constraints(
-    where_clause: &mut Vec<WhereTerm>,
-    table_index: usize,
-    index: &Arc<Index>,
-    join_order: &[JoinOrderMember],
-    out_constraints: &mut Vec<IndexConstraint>,
-) -> Result<()> {
-    for position_in_index in 0..index.columns.len() {
-        let mut found = false;
-        for (position_in_where_clause, term) in where_clause.iter().enumerate() {
-            if !is_potential_index_constraint(term, table_index, join_order) {
-                continue;
-            }
-
-            let ast::Expr::Binary(lhs, operator, rhs) = unwrap_parens(&term.expr)? else {
-                panic!("expected binary expression");
-            };
-
-            // Check if lhs is a column that is in the i'th position of the index
-            if Some(position_in_index) == get_column_position_in_index(lhs, table_index, index)? {
-                out_constraints.push(IndexConstraint {
-                    operator: *operator,
-                    position_in_where_clause: (position_in_where_clause, BinaryExprSide::Rhs),
-                    index_column_sort_order: index.columns[position_in_index].order,
-                });
-                found = true;
-                break;
-            }
-            // Check if rhs is a column that is in the i'th position of the index
-            if Some(position_in_index) == get_column_position_in_index(rhs, table_index, index)? {
-                out_constraints.push(IndexConstraint {
-                    operator: opposite_cmp_op(*operator), // swap the operator since e.g. if condition is 5 >= x, we want to use x <= 5
-                    position_in_where_clause: (position_in_where_clause, BinaryExprSide::Lhs),
-                    index_column_sort_order: index.columns[position_in_index].order,
-                });
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            // Expressions must constrain index columns in index definition order. If we didn't find a constraint for the i'th index column,
-            // then we stop here and return the constraints we have found so far.
-            break;
-        }
-    }
-
-    // In a multicolumn index, only the last term can have a nonequality expression.
-    // For example, imagine an index on (x,y) and the where clause is "WHERE x > 10 AND y > 20";
-    // We can't use GT(x: 10,y: 20) as the seek key, because the first row greater than (x: 10,y: 20)
-    // might be e.g. (x: 10,y: 21), which does not satisfy the where clause, but a row after that e.g. (x: 11,y: 21) does.
-    // So:
-    // - in this case only GT(x: 10) can be used as the seek key, and we must emit a regular condition expression for y > 20 while scanning.
-    // On the other hand, if the where clause is "WHERE x = 10 AND y > 20", we can use GT(x=10,y=20) as the seek key,
-    // because any rows where (x=10,y=20) < ROW < (x=11) will match the where clause.
-    for i in 0..out_constraints.len() {
-        if out_constraints[i].operator != ast::Operator::Equals {
-            out_constraints.truncate(i + 1);
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-/// Build a [SeekDef] for a given list of [IndexConstraint]s
-pub fn build_seek_def_from_index_constraints(
-    constraints: &[IndexConstraint],
+/// Build a [SeekDef] for a given list of [Constraint]s
+pub fn build_seek_def_from_constraints(
+    constraints: &[Constraint],
+    constraint_refs: &[ConstraintRef],
     iter_dir: IterationDirection,
-    where_clause: &mut Vec<WhereTerm>,
+    where_clause: &[WhereTerm],
 ) -> Result<SeekDef> {
     assert!(
-        !constraints.is_empty(),
-        "cannot build seek def from empty list of index constraints"
+        !constraint_refs.is_empty(),
+        "cannot build seek def from empty list of constraint refs"
     );
     // Extract the key values and operators
-    let mut key = Vec::with_capacity(constraints.len());
+    let mut key = Vec::with_capacity(constraint_refs.len());
 
-    for constraint in constraints {
+    for cref in constraint_refs {
         // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
-        let (idx, side) = constraint.position_in_where_clause;
-        let where_term = &mut where_clause[idx];
-        let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.take_ownership())?
-        else {
+        let constraint = &constraints[cref.constraint_vec_pos];
+        let (where_idx, side) = constraint.where_clause_pos;
+        let where_term = &where_clause[where_idx];
+        let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.clone())? else {
             crate::bail_parse_error!("expected binary expression");
         };
         let cmp_expr = if side == BinaryExprSide::Lhs {
@@ -1336,14 +826,15 @@ pub fn build_seek_def_from_index_constraints(
         } else {
             *rhs
         };
-        key.push((cmp_expr, constraint.index_column_sort_order));
+        key.push((cmp_expr, cref.sort_order));
     }
 
     // We know all but potentially the last term is an equality, so we can use the operator of the last term
     // to form the SeekOp
-    let op = constraints.last().unwrap().operator;
+    let op = constraints[constraint_refs.last().unwrap().constraint_vec_pos].operator;
 
-    build_seek_def(op, iter_dir, key)
+    let seek_def = build_seek_def(op, iter_dir, key)?;
+    Ok(seek_def)
 }
 
 /// Build a [SeekDef] for a given comparison operator and index key.
@@ -1356,7 +847,7 @@ pub fn build_seek_def_from_index_constraints(
 /// 2. The [TerminationKey], which specifies the key that we will use to terminate the index scan that follows the seek.
 ///
 /// There are some nuances to how, and which parts of, the index key can be used in the [SeekKey] and [TerminationKey],
-/// depending on the operator and iteration direction. This function explains those nuances inline when dealing with
+/// depending on the operator and iteration order. This function explains those nuances inline when dealing with
 /// each case.
 ///
 /// But to illustrate the general idea, consider the following examples:
@@ -1497,7 +988,7 @@ fn build_seek_def(
         // Termination key: end at the first GE(x:10, y:20), e.g. (x=10, y=20)
         //
         // Descending index example: (x=10 AND y<20)
-        // Seek key: start from the first LT(x:10, y:20), e.g. (x=10, y=19), so reversed -> GT(x:10, y:20)
+        // Seek key: start from the first LT(x:10, y:20), e.g. (x=10, y=19) so reversed -> GT(x:10, y:20)
         // Termination key: end at the first LT(x:10), e.g. (x=9, y=usize::MAX), so reversed -> GE(x:10, NULL); i.e. GE the smallest possible (x=10, y) combination (NULL is always LT)
         (IterationDirection::Forwards, ast::Operator::Less) => {
             let (seek_key_len, termination_key_len, seek_op, termination_op) =
@@ -1767,93 +1258,6 @@ fn build_seek_def(
             crate::bail_parse_error!("build_seek_def: invalid operator: {:?}", op,)
         }
     })
-}
-
-pub fn try_extract_rowid_search_expression(
-    cond: &mut WhereTerm,
-    table_index: usize,
-    table_reference: &TableReference,
-    join_order: &[JoinOrderMember],
-) -> Result<Option<Search>> {
-    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
-        *iter_dir
-    } else {
-        return Ok(None);
-    };
-    if !cond.should_eval_at_loop(table_index, join_order) {
-        return Ok(None);
-    }
-    match &mut cond.expr {
-        ast::Expr::Binary(lhs, operator, rhs) => {
-            // If both lhs and rhs refer to columns from this table, we can't perform a rowid seek
-            // Examples:
-            // - WHERE t.x > t.y
-            // - WHERE t.x + 1 > t.y - 5
-            // - WHERE t.x = (t.x)
-            if determine_where_to_eval_expr(lhs, join_order)? == EvalAt::Loop(table_index)
-                && determine_where_to_eval_expr(rhs, join_order)? == EvalAt::Loop(table_index)
-            {
-                return Ok(None);
-            }
-            if lhs.is_rowid_alias_of(table_index) {
-                match operator {
-                    ast::Operator::Equals => {
-                        let rhs_owned = rhs.take_ownership();
-                        return Ok(Some(Search::RowidEq {
-                            cmp_expr: WhereTerm {
-                                expr: rhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                            },
-                        }));
-                    }
-                    ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals => {
-                        let rhs_owned = rhs.take_ownership();
-                        let seek_def =
-                            build_seek_def(*operator, iter_dir, vec![(rhs_owned, SortOrder::Asc)])?;
-                        return Ok(Some(Search::Seek {
-                            index: None,
-                            seek_def,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-
-            if rhs.is_rowid_alias_of(table_index) {
-                match operator {
-                    ast::Operator::Equals => {
-                        let lhs_owned = lhs.take_ownership();
-                        return Ok(Some(Search::RowidEq {
-                            cmp_expr: WhereTerm {
-                                expr: lhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                            },
-                        }));
-                    }
-                    ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals => {
-                        let lhs_owned = lhs.take_ownership();
-                        let op = opposite_cmp_op(*operator);
-                        let seek_def =
-                            build_seek_def(op, iter_dir, vec![(lhs_owned, SortOrder::Asc)])?;
-                        return Ok(Some(Search::Seek {
-                            index: None,
-                            seek_def,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-
-            Ok(None)
-        }
-        _ => Ok(None),
-    }
 }
 
 fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {

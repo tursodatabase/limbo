@@ -64,9 +64,10 @@ impl ResultSetColumn {
 #[derive(Debug, Clone)]
 pub struct GroupBy {
     pub exprs: Vec<ast::Expr>,
+    /// sort order, if a sorter is required (= the columns aren't already in the correct order)
+    pub sort_order: Option<Vec<SortOrder>>,
     /// having clause split into a vec at 'AND' boundaries.
     pub having: Option<Vec<ast::Expr>>,
-    pub sort_order: Option<Vec<SortOrder>>,
 }
 
 /// In a query plan, WHERE clause conditions and JOIN conditions are all folded into a vector of WhereTerm.
