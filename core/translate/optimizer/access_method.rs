@@ -102,6 +102,8 @@ pub fn find_best_access_method_for_join_order<'a>(
         },
     };
     let rowid_column_idx = rhs_table.columns().iter().position(|c| c.is_rowid_alias);
+
+    // Estimate cost for each candidate index (including the rowid index) and replace best_access_method if the cost is lower.
     for candidate in rhs_constraints.candidates.iter() {
         let index_info = match candidate.index.as_ref() {
             Some(index) => IndexInfo {
@@ -127,7 +129,10 @@ pub fn find_best_access_method_for_join_order<'a>(
             input_cardinality,
         );
 
+        // All other things being equal, prefer an access method that satisfies the order target.
         let order_satisfiability_bonus = if let Some(order_target) = maybe_order_target {
+            // If the index delivers rows in the same direction (or the exact reverse direction) as the order target, then it
+            // satisfies the order target.
             let mut all_same_direction = true;
             let mut all_opposite_direction = true;
             for i in 0..order_target.0.len().min(index_info.column_count) {
