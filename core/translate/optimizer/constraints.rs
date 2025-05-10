@@ -308,13 +308,13 @@ pub fn constraints_from_where_clause(
 pub fn usable_constraints_for_join_order<'a>(
     constraints: &'a [Constraint],
     refs: &'a [ConstraintRef],
-    table_index: usize,
     join_order: &[JoinOrderMember],
 ) -> &'a [ConstraintRef] {
+    let table_no = join_order.last().unwrap().table_no;
     let mut usable_until = 0;
     for cref in refs.iter() {
         let constraint = &constraints[cref.constraint_vec_pos];
-        let other_side_refers_to_self = constraint.lhs_mask.contains_table(table_index);
+        let other_side_refers_to_self = constraint.lhs_mask.contains_table(table_no);
         if other_side_refers_to_self {
             break;
         }

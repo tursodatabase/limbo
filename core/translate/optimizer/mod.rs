@@ -234,7 +234,6 @@ fn use_indexes(
                         let usable_constraint_refs = usable_constraints_for_join_order(
                             &table_constraints.constraints,
                             &temp_constraint_refs,
-                            table_number,
                             &best_join_order[..=i],
                         );
                         if usable_constraint_refs.is_empty() {

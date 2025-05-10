@@ -32,9 +32,8 @@ pub struct JoinN {
 /// Join n-1 tables with the n'th table.
 pub fn join_lhs_and_rhs<'a>(
     lhs: Option<&JoinN>,
-    rhs_table_number: usize,
     rhs_table_reference: &TableReference,
-    constraints: &'a TableConstraints,
+    rhs_constraints: &'a TableConstraints,
     join_order: &[JoinOrderMember],
     maybe_order_target: Option<&OrderTarget>,
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
@@ -45,9 +44,8 @@ pub fn join_lhs_and_rhs<'a>(
     let input_cardinality = lhs.map_or(1, |l| l.output_cardinality);
 
     let best_access_method = find_best_access_method_for_join_order(
-        rhs_table_number,
         rhs_table_reference,
-        constraints,
+        rhs_constraints,
         &join_order,
         maybe_order_target,
         input_cardinality as f64,
@@ -56,6 +54,7 @@ pub fn join_lhs_and_rhs<'a>(
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
     let cost = lhs_cost + best_access_method.cost;
 
+    let rhs_table_number = join_order.last().unwrap().table_no;
     let new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
         let mut numbers = l.table_numbers.clone();
         numbers.push(rhs_table_number);
@@ -70,7 +69,7 @@ pub fn join_lhs_and_rhs<'a>(
         TableMask::from_iter(l.table_numbers.iter().cloned())
     });
     // Output cardinality is reduced by the product of the selectivities of the constraints that can be used with this join order.
-    let output_cardinality_multiplier = constraints
+    let output_cardinality_multiplier = rhs_constraints
         .constraints
         .iter()
         .filter(|c| lhs_mask.contains_all(&c.lhs_mask))
@@ -187,7 +186,6 @@ pub fn compute_best_join_order<'a>(
         assert!(join_order.len() == 1);
         let rel = join_lhs_and_rhs(
             None,
-            i,
             table_ref,
             &constraints[i],
             &join_order,
@@ -302,7 +300,6 @@ pub fn compute_best_join_order<'a>(
                 // Calculate the best way to join LHS with RHS.
                 let rel = join_lhs_and_rhs(
                     Some(lhs),
-                    rhs_idx,
                     &table_references[rhs_idx],
                     &constraints[rhs_idx],
                     &join_order,
@@ -405,7 +402,6 @@ pub fn compute_naive_left_deep_plan<'a>(
     // Start with first table
     let mut best_plan = join_lhs_and_rhs(
         None,
-        0,
         &table_references[0],
         &constraints[0],
         &join_order[..1],
@@ -417,10 +413,9 @@ pub fn compute_naive_left_deep_plan<'a>(
     for i in 1..n {
         best_plan = join_lhs_and_rhs(
             Some(&best_plan),
-            i,
             &table_references[i],
             &constraints[i],
-            &join_order[..i + 1],
+            &join_order[..=i],
             maybe_order_target,
             access_methods_arena,
         )?;

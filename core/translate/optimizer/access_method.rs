@@ -85,15 +85,14 @@ pub enum AccessMethodKind<'a> {
 }
 
 /// Return the best [AccessMethod] for a given join order.
-/// table_index and table_reference refer to the rightmost table in the join order.
 pub fn find_best_access_method_for_join_order<'a>(
-    table_index: usize,
-    table_reference: &TableReference,
-    table_constraints: &'a TableConstraints,
+    rhs_table: &TableReference,
+    rhs_constraints: &'a TableConstraints,
     join_order: &[JoinOrderMember],
     maybe_order_target: Option<&OrderTarget>,
     input_cardinality: f64,
 ) -> Result<AccessMethod<'a>> {
+    let table_no = join_order.last().unwrap().table_no;
     let cost_of_full_table_scan = estimate_cost_for_scan_or_seek(None, &[], &[], input_cardinality);
     let mut best_access_method = AccessMethod {
         cost: cost_of_full_table_scan,
@@ -102,15 +101,12 @@ pub fn find_best_access_method_for_join_order<'a>(
             iter_dir: IterationDirection::Forwards,
         },
     };
-    let rowid_column_idx = table_reference
-        .columns()
-        .iter()
-        .position(|c| c.is_rowid_alias);
-    for candidate in table_constraints.candidates.iter() {
+    let rowid_column_idx = rhs_table.columns().iter().position(|c| c.is_rowid_alias);
+    for candidate in rhs_constraints.candidates.iter() {
         let index_info = match candidate.index.as_ref() {
             Some(index) => IndexInfo {
                 unique: index.unique,
-                covering: table_reference.index_is_covering(index),
+                covering: rhs_table.index_is_covering(index),
                 column_count: index.columns.len(),
             },
             None => IndexInfo {
@@ -120,14 +116,13 @@ pub fn find_best_access_method_for_join_order<'a>(
             },
         };
         let usable_constraint_refs = usable_constraints_for_join_order(
-            &table_constraints.constraints,
+            &rhs_constraints.constraints,
             &candidate.refs,
-            table_index,
             join_order,
         );
         let cost = estimate_cost_for_scan_or_seek(
             Some(index_info),
-            &table_constraints.constraints,
+            &rhs_constraints.constraints,
             &usable_constraint_refs,
             input_cardinality,
         );
@@ -136,7 +131,7 @@ pub fn find_best_access_method_for_join_order<'a>(
             let mut all_same_direction = true;
             let mut all_opposite_direction = true;
             for i in 0..order_target.0.len().min(index_info.column_count) {
-                let correct_table = order_target.0[i].table_no == table_index;
+                let correct_table = order_target.0[i].table_no == table_no;
                 let correct_column = {
                     match &candidate.index {
                         Some(index) => index.columns[i].pos_in_table == order_target.0[i].column_no,
@@ -186,7 +181,7 @@ pub fn find_best_access_method_for_join_order<'a>(
         let mut should_use_backwards = true;
         let num_cols = index.map_or(1, |i| i.columns.len());
         for i in 0..order_target.0.len().min(num_cols) {
-            let correct_table = order_target.0[i].table_no == table_index;
+            let correct_table = order_target.0[i].table_no == table_no;
             let correct_column = {
                 match index {
                     Some(index) => index.columns[i].pos_in_table == order_target.0[i].column_no,
