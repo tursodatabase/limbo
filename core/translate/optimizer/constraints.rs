@@ -103,6 +103,8 @@ pub fn constraints_from_where_clause(
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
 ) -> Result<Vec<TableConstraints>> {
     let mut constraints = Vec::new();
+
+    // For each table, collect all the Constraints and all potential index candidates that may use them.
     for (table_no, table_reference) in table_references.iter().enumerate() {
         let rowid_alias_column = table_reference
             .columns()
@@ -124,6 +126,7 @@ pub fn constraints_from_where_clause(
                         .collect()
                 }),
         };
+        // Add a candidate for the rowid index, which is always available when the table has a rowid alias.
         cs.candidates.push(ConstraintUseCandidate {
             index: None,
             refs: Vec::new(),
@@ -133,11 +136,16 @@ pub fn constraints_from_where_clause(
             let Some((lhs, operator, rhs)) = as_binary_components(&term.expr)? else {
                 continue;
             };
+
+            // Constraints originating from a LEFT JOIN must always be evaluated in that join's RHS table's loop,
+            // regardless of which tables the constraint references.
             if let Some(outer_join_tbl) = term.from_outer_join {
                 if outer_join_tbl != table_no {
                     continue;
                 }
             }
+
+            // If either the LHS or RHS of the constraint is a column from the table, add the constraint.
             match lhs {
                 ast::Expr::Column { table, column, .. } => {
                     if *table == table_no {
@@ -152,6 +160,9 @@ pub fn constraints_from_where_clause(
                     }
                 }
                 ast::Expr::RowId { table, .. } => {
+                    // A rowid alias column must exist for the 'rowid' keyword to be considered a valid reference.
+                    // This should be a parse error at an earlier stage of the query compilation, but nevertheless,
+                    // we check it here.
                     if *table == table_no && rowid_alias_column.is_some() {
                         let table_column =
                             &table_reference.table.columns()[rowid_alias_column.unwrap()];
@@ -195,8 +206,9 @@ pub fn constraints_from_where_clause(
                 _ => {}
             };
         }
+        // sort equalities first so that index keys will be properly constructed.
+        // see e.g.: https://www.solarwinds.com/blog/the-left-prefix-index-rule
         cs.constraints.sort_by(|a, b| {
-            // sort equalities first so that index keys will be properly constructed
             if a.operator == ast::Operator::Equals {
                 Ordering::Less
             } else if b.operator == ast::Operator::Equals {
@@ -206,6 +218,7 @@ pub fn constraints_from_where_clause(
             }
         });
 
+        // For each constraint we found, add a reference to it for each index that may be able to use it.
         for (i, constraint) in cs.constraints.iter().enumerate() {
             if rowid_alias_column.map_or(false, |idx| constraint.table_col_pos == idx) {
                 let rowid_usage = cs
@@ -260,7 +273,7 @@ pub fn constraints_from_where_clause(
             // Deduplicate by position, keeping first occurrence (which will be equality if one exists, since the constraints vec is sorted that way)
             usage.refs.dedup_by_key(|uref| uref.index_col_pos);
 
-            // Truncate at first gap in positions
+            // Truncate at first gap in positions -- index columns must be consumed in contiguous order.
             let mut last_pos = 0;
             let mut i = 0;
             for uref in usage.refs.iter() {
@@ -274,7 +287,8 @@ pub fn constraints_from_where_clause(
             }
             usage.refs.truncate(i);
 
-            // Truncate after the first inequality, since the left-prefix rule of indexes requires that all constraints but the last one must be equalities
+            // Truncate after the first inequality, since the left-prefix rule of indexes requires that all constraints but the last one must be equalities;
+            // again see: https://www.solarwinds.com/blog/the-left-prefix-index-rule
             if let Some(first_inequality) = usage.refs.iter().position(|uref| {
                 cs.constraints[uref.constraint_vec_pos].operator != ast::Operator::Equals
             }) {
@@ -287,6 +301,10 @@ pub fn constraints_from_where_clause(
     Ok(constraints)
 }
 
+/// Find which [Constraint]s are usable for a given join order.
+/// Returns a slice of the references to the constraints that are usable.
+/// A constraint is considered usable for a given table if all of the other tables referenced by the constraint
+/// are on the left side in the join order relative to the table.
 pub fn usable_constraints_for_join_order<'a>(
     constraints: &'a [Constraint],
     refs: &'a [ConstraintRef],
