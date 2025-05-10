@@ -13,6 +13,7 @@ use super::{
 };
 
 #[derive(Debug, PartialEq, Clone)]
+/// A convenience struct for representing a (table_no, column_no, [SortOrder]) tuple.
 pub struct ColumnOrder {
     pub table_no: usize,
     pub column_no: usize,
@@ -20,6 +21,7 @@ pub struct ColumnOrder {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+/// If an [OrderTarget] is satisfied, then [EliminatesSort] describes which part of the query no longer requires sorting.
 pub enum EliminatesSort {
     GroupBy,
     OrderBy,
@@ -27,6 +29,9 @@ pub enum EliminatesSort {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+/// An [OrderTarget] is considered in join optimization and index selection,
+/// so that if a given join ordering and its access methods satisfy the [OrderTarget],
+/// then the join ordering and its access methods are preferred, all other things being equal.
 pub struct OrderTarget(pub Vec<ColumnOrder>, pub EliminatesSort);
 
 impl OrderTarget {
