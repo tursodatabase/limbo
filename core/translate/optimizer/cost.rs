@@ -1,5 +1,3 @@
-use limbo_sqlite3_parser::ast;
-
 use super::constraints::{Constraint, ConstraintRef};
 
 /// A simple newtype wrapper over a f64 that represents the cost of an operation.
@@ -54,49 +52,19 @@ pub fn estimate_cost_for_scan_or_seek(
         );
     };
 
-    let final_constraint_is_range = usable_constraint_refs.last().map_or(false, |c| {
-        constraints[c.constraint_vec_pos].operator != ast::Operator::Equals
-    });
-    let equalities_count = constraints
+    let selectivity_multiplier: f64 = usable_constraint_refs
         .iter()
-        .take(if final_constraint_is_range {
-            usable_constraint_refs.len() - 1
-        } else {
-            usable_constraint_refs.len()
+        .map(|cref| {
+            let constraint = &constraints[cref.constraint_vec_pos];
+            constraint.selectivity
         })
-        .count() as f64;
+        .product();
 
-    let cost_multiplier = match (
-        index_info.unique,
-        index_info.column_count as f64,
-        equalities_count,
-    ) {
-        // no equalities: let's assume range query selectivity is 0.4. if final constraint is not range and there are no equalities, it means full table scan incoming
-        (_, _, 0.0) => {
-            if final_constraint_is_range {
-                0.4
-            } else {
-                1.0
-            }
-        }
-        // on an unique index if we have equalities across all index columns, assume very high selectivity
-        (true, index_cols, eq_count) if eq_count == index_cols => 0.01,
-        (false, index_cols, eq_count) if eq_count == index_cols => 0.1,
-        // some equalities: let's assume each equality has a selectivity of 0.1 and range query selectivity is 0.4
-        (_, _, eq_count) => {
-            let mut multiplier = 1.0;
-            for _ in 0..(eq_count as usize) {
-                multiplier *= 0.1;
-            }
-            multiplier * if final_constraint_is_range { 4.0 } else { 1.0 }
-        }
-    };
-
-    // little bonus for covering indexes
+    // little cheeky bonus for covering indexes
     let covering_multiplier = if index_info.covering { 0.9 } else { 1.0 };
 
     estimate_page_io_cost(
-        cost_multiplier
+        selectivity_multiplier
             * ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
             * input_cardinality
             * covering_multiplier,
