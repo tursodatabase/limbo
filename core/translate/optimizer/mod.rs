@@ -55,7 +55,7 @@ fn optimize_select_plan(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
         return Ok(());
     }
 
-    let best_join_order = use_indexes(
+    let best_join_order = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
@@ -79,7 +79,7 @@ fn optimize_delete_plan(plan: &mut DeletePlan, schema: &Schema) -> Result<()> {
         return Ok(());
     }
 
-    let _ = use_indexes(
+    let _ = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
@@ -98,7 +98,7 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
         plan.contains_constant_false_condition = true;
         return Ok(());
     }
-    let _ = use_indexes(
+    let _ = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
@@ -129,7 +129,7 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
 /// - Removes sorting operations if the selected join order and access methods satisfy the [crate::translate::optimizer::order::OrderTarget].
 ///
 /// Returns the join order if it was optimized, or None if the default join order was considered best.
-fn use_indexes(
+fn optimize_table_access(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut Vec<WhereTerm>,
