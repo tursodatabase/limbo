@@ -270,10 +270,11 @@ pub fn constraints_from_where_clause(
         }
 
         for candidate in cs.candidates.iter_mut() {
+            // Sort by index_col_pos, ascending -- index columns must be consumed in contiguous order.
+            candidate.refs.sort_by_key(|cref| cref.index_col_pos);
             // Deduplicate by position, keeping first occurrence (which will be equality if one exists, since the constraints vec is sorted that way)
             candidate.refs.dedup_by_key(|cref| cref.index_col_pos);
-
-            // Truncate at first gap in positions -- index columns must be consumed in contiguous order.
+            // Truncate at first gap in positions -- again, index columns must be consumed in contiguous order.
             let mut last_pos = 0;
             let mut i = 0;
             for cref in candidate.refs.iter() {
