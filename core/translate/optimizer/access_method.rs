@@ -106,8 +106,8 @@ pub fn find_best_access_method_for_join_order<'a>(
         .columns()
         .iter()
         .position(|c| c.is_rowid_alias);
-    for usage in table_constraints.candidates.iter() {
-        let index_info = match usage.index.as_ref() {
+    for candidate in table_constraints.candidates.iter() {
+        let index_info = match candidate.index.as_ref() {
             Some(index) => IndexInfo {
                 unique: index.unique,
                 covering: table_reference.index_is_covering(index),
@@ -121,7 +121,7 @@ pub fn find_best_access_method_for_join_order<'a>(
         };
         let usable_constraint_refs = usable_constraints_for_join_order(
             &table_constraints.constraints,
-            &usage.refs,
+            &candidate.refs,
             table_index,
             join_order,
         );
@@ -138,7 +138,7 @@ pub fn find_best_access_method_for_join_order<'a>(
             for i in 0..order_target.0.len().min(index_info.column_count) {
                 let correct_table = order_target.0[i].table_no == table_index;
                 let correct_column = {
-                    match &usage.index {
+                    match &candidate.index {
                         Some(index) => index.columns[i].pos_in_table == order_target.0[i].column_no,
                         None => {
                             rowid_column_idx.map_or(false, |idx| idx == order_target.0[i].column_no)
@@ -151,7 +151,7 @@ pub fn find_best_access_method_for_join_order<'a>(
                     break;
                 }
                 let correct_order = {
-                    match &usage.index {
+                    match &candidate.index {
                         Some(index) => order_target.0[i].order == index.columns[i].order,
                         None => order_target.0[i].order == SortOrder::Asc,
                     }
@@ -172,7 +172,8 @@ pub fn find_best_access_method_for_join_order<'a>(
         };
         if cost < best_access_method.cost + order_satisfiability_bonus {
             best_access_method.cost = cost;
-            best_access_method.set_constraint_refs(usage.index.clone(), &usable_constraint_refs);
+            best_access_method
+                .set_constraint_refs(candidate.index.clone(), &usable_constraint_refs);
         }
     }
 

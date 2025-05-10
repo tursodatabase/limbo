@@ -268,9 +268,9 @@ fn use_indexes(
                 iter_dir,
             } => {
                 assert!(!constraint_refs.is_empty());
-                for uref in constraint_refs.iter() {
+                for cref in constraint_refs.iter() {
                     let constraint =
-                        &constraints_per_table[table_number].constraints[uref.constraint_vec_pos];
+                        &constraints_per_table[table_number].constraints[cref.constraint_vec_pos];
                     to_remove_from_where_clause.push(constraint.where_clause_pos.0);
                 }
                 if let Some(index) = index {
@@ -797,9 +797,9 @@ pub fn build_seek_def_from_constraints(
     // Extract the key values and operators
     let mut key = Vec::with_capacity(constraint_refs.len());
 
-    for uref in constraint_refs {
+    for cref in constraint_refs {
         // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
-        let constraint = &constraints[uref.constraint_vec_pos];
+        let constraint = &constraints[cref.constraint_vec_pos];
         let (where_idx, side) = constraint.where_clause_pos;
         let where_term = &where_clause[where_idx];
         let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.clone())? else {
@@ -810,7 +810,7 @@ pub fn build_seek_def_from_constraints(
         } else {
             *rhs
         };
-        key.push((cmp_expr, uref.sort_order));
+        key.push((cmp_expr, cref.sort_order));
     }
 
     // We know all but potentially the last term is an equality, so we can use the operator of the last term

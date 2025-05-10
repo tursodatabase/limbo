@@ -221,18 +221,18 @@ pub fn constraints_from_where_clause(
         // For each constraint we found, add a reference to it for each index that may be able to use it.
         for (i, constraint) in cs.constraints.iter().enumerate() {
             if rowid_alias_column.map_or(false, |idx| constraint.table_col_pos == idx) {
-                let rowid_usage = cs
+                let rowid_candidate = cs
                     .candidates
                     .iter_mut()
-                    .find_map(|usage| {
-                        if usage.index.is_none() {
-                            Some(usage)
+                    .find_map(|candidate| {
+                        if candidate.index.is_none() {
+                            Some(candidate)
                         } else {
                             None
                         }
                     })
                     .unwrap();
-                rowid_usage.refs.push(ConstraintRef {
+                rowid_candidate.refs.push(ConstraintRef {
                     constraint_vec_pos: i,
                     index_col_pos: 0,
                     sort_order: SortOrder::Asc,
@@ -245,22 +245,22 @@ pub fn constraints_from_where_clause(
                 if let Some(position_in_index) =
                     index.column_table_pos_to_index_pos(constraint.table_col_pos)
                 {
-                    let index_usage = cs
+                    let index_candidate = cs
                         .candidates
                         .iter_mut()
-                        .find_map(|usage| {
-                            if usage
+                        .find_map(|candidate| {
+                            if candidate
                                 .index
                                 .as_ref()
                                 .map_or(false, |i| Arc::ptr_eq(index, i))
                             {
-                                Some(usage)
+                                Some(candidate)
                             } else {
                                 None
                             }
                         })
                         .unwrap();
-                    index_usage.refs.push(ConstraintRef {
+                    index_candidate.refs.push(ConstraintRef {
                         constraint_vec_pos: i,
                         index_col_pos: position_in_index,
                         sort_order: index.columns[position_in_index].order,
@@ -269,30 +269,30 @@ pub fn constraints_from_where_clause(
             }
         }
 
-        for usage in cs.candidates.iter_mut() {
+        for candidate in cs.candidates.iter_mut() {
             // Deduplicate by position, keeping first occurrence (which will be equality if one exists, since the constraints vec is sorted that way)
-            usage.refs.dedup_by_key(|uref| uref.index_col_pos);
+            candidate.refs.dedup_by_key(|cref| cref.index_col_pos);
 
             // Truncate at first gap in positions -- index columns must be consumed in contiguous order.
             let mut last_pos = 0;
             let mut i = 0;
-            for uref in usage.refs.iter() {
-                if uref.index_col_pos != last_pos {
-                    if uref.index_col_pos != last_pos + 1 {
+            for cref in candidate.refs.iter() {
+                if cref.index_col_pos != last_pos {
+                    if cref.index_col_pos != last_pos + 1 {
                         break;
                     }
-                    last_pos = uref.index_col_pos;
+                    last_pos = cref.index_col_pos;
                 }
                 i += 1;
             }
-            usage.refs.truncate(i);
+            candidate.refs.truncate(i);
 
             // Truncate after the first inequality, since the left-prefix rule of indexes requires that all constraints but the last one must be equalities;
             // again see: https://www.solarwinds.com/blog/the-left-prefix-index-rule
-            if let Some(first_inequality) = usage.refs.iter().position(|uref| {
-                cs.constraints[uref.constraint_vec_pos].operator != ast::Operator::Equals
+            if let Some(first_inequality) = candidate.refs.iter().position(|cref| {
+                cs.constraints[cref.constraint_vec_pos].operator != ast::Operator::Equals
             }) {
-                usage.refs.truncate(first_inequality + 1);
+                candidate.refs.truncate(first_inequality + 1);
             }
         }
         constraints.push(cs);
@@ -312,8 +312,8 @@ pub fn usable_constraints_for_join_order<'a>(
     join_order: &[JoinOrderMember],
 ) -> &'a [ConstraintRef] {
     let mut usable_until = 0;
-    for uref in refs.iter() {
-        let constraint = &constraints[uref.constraint_vec_pos];
+    for cref in refs.iter() {
+        let constraint = &constraints[cref.constraint_vec_pos];
         let other_side_refers_to_self = constraint.lhs_mask.contains_table(table_index);
         if other_side_refers_to_self {
             break;
