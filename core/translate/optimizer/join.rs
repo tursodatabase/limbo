@@ -1,20 +1,17 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use limbo_sqlite3_parser::ast;
-
 use crate::{
     translate::{
-        expr::as_binary_components,
         optimizer::{cost::Cost, order::plan_satisfies_order_target},
-        plan::{EvalAt, JoinOrderMember, TableReference, WhereTerm},
-        planner::{determine_where_to_eval_expr, TableMask},
+        plan::{JoinOrderMember, TableReference},
+        planner::TableMask,
     },
     Result,
 };
 
 use super::{
     access_method::{find_best_access_method_for_join_order, AccessMethod},
-    constraints::Constraints,
+    constraints::TableConstraints,
     cost::ESTIMATED_HARDCODED_ROWS_PER_TABLE,
     order::OrderTarget,
 };
@@ -32,20 +29,12 @@ pub struct JoinN {
     pub cost: Cost,
 }
 
-/// In lieu of statistics, we estimate that an equality filter will reduce the output set to 1% of its size.
-const SELECTIVITY_EQ: f64 = 0.01;
-/// In lieu of statistics, we estimate that a range filter will reduce the output set to 40% of its size.
-const SELECTIVITY_RANGE: f64 = 0.4;
-/// In lieu of statistics, we estimate that other filters will reduce the output set to 90% of its size.
-const SELECTIVITY_OTHER: f64 = 0.9;
-
 /// Join n-1 tables with the n'th table.
 pub fn join_lhs_and_rhs<'a>(
     lhs: Option<&JoinN>,
     rhs_table_number: usize,
     rhs_table_reference: &TableReference,
-    where_clause: &Vec<WhereTerm>,
-    constraints: &'a [Constraints],
+    constraints: &'a TableConstraints,
     join_order: &[JoinOrderMember],
     maybe_order_target: Option<&OrderTarget>,
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
@@ -77,78 +66,15 @@ pub fn join_lhs_and_rhs<'a>(
     let mut best_access_methods = lhs.map_or(vec![], |l| l.best_access_methods.clone());
     best_access_methods.push(access_methods_arena.borrow().len() - 1);
 
-    // Estimate based on the WHERE clause terms how much the different filters will reduce the output set.
-    let output_cardinality_multiplier = where_clause
+    let lhs_mask = lhs.map_or(TableMask::new(), |l| {
+        TableMask::from_iter(l.table_numbers.iter().cloned())
+    });
+    // Output cardinality is reduced by the product of the selectivities of the constraints that can be used with this join order.
+    let output_cardinality_multiplier = constraints
+        .constraints
         .iter()
-        .filter_map(|term| {
-            // Skip terms that are not binary comparisons
-            let Ok(Some((lhs, op, rhs))) = as_binary_components(&term.expr) else {
-                return None;
-            };
-            // Skip terms that cannot be evaluated at this table's loop level
-            if !term.should_eval_at_loop(join_order.len() - 1, join_order) {
-                return None;
-            }
-
-            // If both lhs and rhs refer to columns from this table, we can't use this constraint
-            // because we can't use the index to satisfy the condition.
-            // Examples:
-            // - WHERE t.x > t.y
-            // - WHERE t.x + 1 > t.y - 5
-            // - WHERE t.x = (t.x)
-            let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs, join_order) else {
-                return None;
-            };
-            let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs, join_order) else {
-                return None;
-            };
-            if eval_at_left == EvalAt::Loop(join_order.len() - 1)
-                && eval_at_right == EvalAt::Loop(join_order.len() - 1)
-            {
-                return None;
-            }
-
-            Some((lhs, op, rhs))
-        })
-        .filter_map(|(lhs, op, rhs)| {
-            // Skip terms where neither lhs nor rhs refer to columns from this table
-            if let ast::Expr::Column { table, column, .. } = lhs {
-                if *table != rhs_table_number {
-                    None
-                } else {
-                    let columns = rhs_table_reference.columns();
-                    Some((&columns[*column], op))
-                }
-            } else {
-                None
-            }
-            .or_else(|| {
-                if let ast::Expr::Column { table, column, .. } = rhs {
-                    if *table != rhs_table_number {
-                        None
-                    } else {
-                        let columns = rhs_table_reference.columns();
-                        Some((&columns[*column], op))
-                    }
-                } else {
-                    None
-                }
-            })
-        })
-        .map(|(column, op)| match op {
-            ast::Operator::Equals => {
-                if column.is_rowid_alias || column.primary_key {
-                    1.0 / ESTIMATED_HARDCODED_ROWS_PER_TABLE as f64
-                } else {
-                    SELECTIVITY_EQ
-                }
-            }
-            ast::Operator::Greater => SELECTIVITY_RANGE,
-            ast::Operator::GreaterEquals => SELECTIVITY_RANGE,
-            ast::Operator::Less => SELECTIVITY_RANGE,
-            ast::Operator::LessEquals => SELECTIVITY_RANGE,
-            _ => SELECTIVITY_OTHER,
-        })
+        .filter(|c| lhs_mask.contains_all(&c.lhs_mask))
+        .map(|c| c.selectivity)
         .product::<f64>();
 
     // Produce a number of rows estimated to be returned when this table is filtered by the WHERE clause.
@@ -180,9 +106,8 @@ pub struct BestJoinOrderResult {
 /// Returns the best [JoinN] if one exists, otherwise returns None.
 pub fn compute_best_join_order<'a>(
     table_references: &[TableReference],
-    where_clause: &Vec<WhereTerm>,
     maybe_order_target: Option<&OrderTarget>,
-    constraints: &'a [Constraints],
+    constraints: &'a [TableConstraints],
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
 ) -> Result<Option<BestJoinOrderResult>> {
     // Skip work if we have no tables to consider.
@@ -195,7 +120,6 @@ pub fn compute_best_join_order<'a>(
     // Compute naive left-to-right plan to use as pruning threshold
     let naive_plan = compute_naive_left_deep_plan(
         table_references,
-        where_clause,
         maybe_order_target,
         access_methods_arena,
         &constraints,
@@ -265,8 +189,7 @@ pub fn compute_best_join_order<'a>(
             None,
             i,
             table_ref,
-            where_clause,
-            &constraints,
+            &constraints[i],
             &join_order,
             maybe_order_target,
             access_methods_arena,
@@ -381,8 +304,7 @@ pub fn compute_best_join_order<'a>(
                     Some(lhs),
                     rhs_idx,
                     &table_references[rhs_idx],
-                    where_clause,
-                    &constraints,
+                    &constraints[rhs_idx],
                     &join_order,
                     maybe_order_target,
                     access_methods_arena,
@@ -464,10 +386,9 @@ pub fn compute_best_join_order<'a>(
 /// permutations if they exceed this cost during enumeration.
 pub fn compute_naive_left_deep_plan<'a>(
     table_references: &[TableReference],
-    where_clause: &Vec<WhereTerm>,
     maybe_order_target: Option<&OrderTarget>,
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
-    constraints: &'a [Constraints],
+    constraints: &'a [TableConstraints],
 ) -> Result<JoinN> {
     let n = table_references.len();
     assert!(n > 0);
@@ -486,8 +407,7 @@ pub fn compute_naive_left_deep_plan<'a>(
         None,
         0,
         &table_references[0],
-        where_clause,
-        constraints,
+        &constraints[0],
         &join_order[..1],
         maybe_order_target,
         access_methods_arena,
@@ -499,8 +419,7 @@ pub fn compute_naive_left_deep_plan<'a>(
             Some(&best_plan),
             i,
             &table_references[i],
-            where_clause,
-            constraints,
+            &constraints[i],
             &join_order[..i + 1],
             maybe_order_target,
             access_methods_arena,
@@ -561,7 +480,7 @@ fn generate_join_bitmasks(table_number_max_exclusive: usize, how_many: usize) ->
 mod tests {
     use std::{rc::Rc, sync::Arc};
 
-    use limbo_sqlite3_parser::ast::{Expr, Operator, SortOrder};
+    use limbo_sqlite3_parser::ast::{self, Expr, Operator, SortOrder};
 
     use super::*;
     use crate::{
@@ -571,7 +490,7 @@ mod tests {
                 access_method::AccessMethodKind,
                 constraints::{constraints_from_where_clause, BinaryExprSide},
             },
-            plan::{ColumnUsedMask, IterationDirection, JoinInfo, Operation},
+            plan::{ColumnUsedMask, IterationDirection, JoinInfo, Operation, WhereTerm},
             planner::TableMask,
         },
     };
@@ -595,15 +514,14 @@ mod tests {
         let where_clause = vec![];
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         let result = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -619,7 +537,7 @@ mod tests {
         let where_clause = vec![];
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
@@ -627,9 +545,8 @@ mod tests {
         // expecting best_best_plan() not to do any work due to empty where clause.
         let BestJoinOrderResult { best_plan, .. } = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap()
@@ -656,7 +573,7 @@ mod tests {
 
         let access_methods_arena = RefCell::new(Vec::new());
         let available_indexes = HashMap::new();
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
@@ -664,9 +581,8 @@ mod tests {
         // expecting a RowidEq access method because id is a rowid alias.
         let result = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -679,9 +595,9 @@ mod tests {
                 AccessMethodKind::Search {
                     index: None,
                     iter_dir,
-                    constraints,
+                    constraint_refs,
                 }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].where_clause_pos == (0, BinaryExprSide::Rhs),
+                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[0].constraints[constraint_refs[0].constraint_vec_pos].where_clause_pos == (0, BinaryExprSide::Rhs),
             ),
             "expected rowid eq access method, got {:?}",
             access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
@@ -719,16 +635,15 @@ mod tests {
         });
         available_indexes.insert("test_table".to_string(), vec![index]);
 
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
         // SELECT * FROM test_table WHERE id = 42
         // expecting an IndexScan access method because id is a primary key with an index
         let result = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -741,9 +656,9 @@ mod tests {
                 AccessMethodKind::Search {
                     index: Some(index),
                     iter_dir,
-                    constraints,
+                    constraint_refs,
                 }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.is_empty() && index.name == "sqlite_autoindex_test_table_1"
+                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[0].constraints[constraint_refs[0].constraint_vec_pos].lhs_mask.is_empty() && index.name == "sqlite_autoindex_test_table_1"
             ),
             "expected index search access method, got {:?}",
             access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
@@ -767,6 +682,9 @@ mod tests {
             ),
         ];
 
+        const TABLE1: usize = 0;
+        const TABLE2: usize = 1;
+
         let mut available_indexes = HashMap::new();
         // Index on the outer table (table1)
         let index1 = Arc::new(Index {
@@ -786,21 +704,20 @@ mod tests {
         // SELECT * FROM table1 JOIN table2 WHERE table1.id = table2.id
         // expecting table2 to be chosen first due to the index on table1.id
         let where_clause = vec![_create_binary_expr(
-            _create_column_expr(0, 0, false), // table1.id
+            _create_column_expr(TABLE1, 0, false), // table1.id
             ast::Operator::Equals,
-            _create_column_expr(1, 0, false), // table2.id
+            _create_column_expr(TABLE2, 0, false), // table2.id
         )];
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         let result = compute_best_join_order(
             &mut table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -822,9 +739,9 @@ mod tests {
                 AccessMethodKind::Search {
                     index: Some(index),
                     iter_dir,
-                    constraints,
+                    constraint_refs,
                 }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].where_clause_pos == (0, BinaryExprSide::Rhs) && index.name == "index1",
+                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[TABLE1].constraints[constraint_refs[0].constraint_vec_pos].where_clause_pos == (0, BinaryExprSide::Rhs) && index.name == "index1",
             ),
             "expected Search access method, got {:?}",
             access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind
@@ -960,15 +877,14 @@ mod tests {
         ];
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         let result = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -981,46 +897,98 @@ mod tests {
             vec![TABLE_NO_CUSTOMERS, TABLE_NO_ORDERS, TABLE_NO_ORDER_ITEMS]
         );
 
+        let AccessMethodKind::Search {
+            index: Some(index),
+            iter_dir,
+            constraint_refs,
+        } = &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
+        else {
+            panic!("expected Search access method with index for first table");
+        };
+
+        assert_eq!(
+            index.name, "sqlite_autoindex_customers_1",
+            "wrong index name"
+        );
+        assert_eq!(
+            *iter_dir,
+            IterationDirection::Forwards,
+            "wrong iteration direction"
+        );
+        assert_eq!(
+            constraint_refs.len(),
+            1,
+            "wrong number of constraint references"
+        );
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Search {
-                    index: Some(index),
-                    iter_dir,
-                    constraints,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.is_empty() && index.name == "sqlite_autoindex_customers_1",
-            ),
-            "expected Search access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
+            table_constraints[TABLE_NO_CUSTOMERS].constraints
+                [constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
+                .is_empty(),
+            "wrong lhs mask: {:?}",
+            table_constraints[TABLE_NO_CUSTOMERS].constraints
+                [constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
         );
 
+        let AccessMethodKind::Search {
+            index: Some(index),
+            iter_dir,
+            constraint_refs,
+        } = &access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind
+        else {
+            panic!("expected Search access method with index for second table");
+        };
+
+        assert_eq!(index.name, "orders_customer_id_idx", "wrong index name");
+        assert_eq!(
+            *iter_dir,
+            IterationDirection::Forwards,
+            "wrong iteration direction"
+        );
+        assert_eq!(
+            constraint_refs.len(),
+            1,
+            "wrong number of constraint references"
+        );
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind,
-                AccessMethodKind::Search {
-                    index: Some(index),
-                    iter_dir,
-                    constraints,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.contains_table(TABLE_NO_CUSTOMERS) && index.name == "orders_customer_id_idx",
-            ),
-            "expected Search access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind
+            table_constraints[TABLE_NO_ORDERS].constraints[constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
+                .contains_table(TABLE_NO_CUSTOMERS),
+            "wrong lhs mask: {:?}",
+            table_constraints[TABLE_NO_ORDERS].constraints[constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
         );
 
+        let AccessMethodKind::Search {
+            index: Some(index),
+            iter_dir,
+            constraint_refs,
+        } = &access_methods_arena.borrow()[best_plan.best_access_methods[2]].kind
+        else {
+            panic!("expected Search access method with index for third table");
+        };
+
+        assert_eq!(index.name, "order_items_order_id_idx", "wrong index name");
+        assert_eq!(
+            *iter_dir,
+            IterationDirection::Forwards,
+            "wrong iteration direction"
+        );
+        assert_eq!(
+            constraint_refs.len(),
+            1,
+            "wrong number of constraint references"
+        );
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[2]].kind,
-                AccessMethodKind::Search {
-                    index: Some(index),
-                    iter_dir,
-                    constraints,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.contains_table(TABLE_NO_ORDERS) && index.name == "order_items_order_id_idx",
-            ),
-            "expected Search access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[2]].kind
+            table_constraints[TABLE_NO_ORDER_ITEMS].constraints
+                [constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
+                .contains_table(TABLE_NO_ORDERS),
+            "wrong lhs mask: {:?}",
+            table_constraints[TABLE_NO_ORDER_ITEMS].constraints
+                [constraint_refs[0].constraint_vec_pos]
+                .lhs_mask
         );
     }
 
@@ -1081,15 +1049,14 @@ mod tests {
 
         let available_indexes = HashMap::new();
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         let BestJoinOrderResult { best_plan, .. } = compute_best_join_order(
             &mut table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap()
@@ -1181,15 +1148,14 @@ mod tests {
 
         let access_methods_arena = RefCell::new(Vec::new());
         let available_indexes = HashMap::new();
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         let result = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap();
@@ -1214,20 +1180,33 @@ mod tests {
             "First table (fact) should use table scan due to column filter"
         );
 
-        for i in 1..best_plan.table_numbers.len() {
+        for (i, table_number) in best_plan.table_numbers.iter().enumerate().skip(1) {
+            let AccessMethodKind::Search {
+                index: None,
+                iter_dir,
+                constraint_refs,
+            } = &access_methods_arena.borrow()[best_plan.best_access_methods[i]].kind
+            else {
+                panic!("expected Search access method for table {}", table_number);
+            };
+
+            assert_eq!(
+                *iter_dir,
+                IterationDirection::Forwards,
+                "wrong iteration direction"
+            );
+            assert_eq!(
+                constraint_refs.len(),
+                1,
+                "wrong number of constraint references"
+            );
             assert!(
-                matches!(
-                    &access_methods_arena.borrow()[best_plan.best_access_methods[i]].kind,
-                    AccessMethodKind::Search {
-                        index: None,
-                        iter_dir,
-                        constraints,
-                    }
-                    if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.contains_table(FACT_TABLE_IDX)
-                ),
-                "Table {} should use Search access method, got {:?}",
-                i + 1,
-                &access_methods_arena.borrow()[best_plan.best_access_methods[i]].kind
+                table_constraints[*table_number].constraints[constraint_refs[0].constraint_vec_pos]
+                    .lhs_mask
+                    .contains_table(FACT_TABLE_IDX),
+                "wrong lhs mask: {:?}",
+                table_constraints[*table_number].constraints[constraint_refs[0].constraint_vec_pos]
+                    .lhs_mask
             );
         }
     }
@@ -1268,16 +1247,15 @@ mod tests {
         }
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let constraints =
+        let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
                 .unwrap();
 
         // Run the optimizer
         let BestJoinOrderResult { best_plan, .. } = compute_best_join_order(
             &table_references,
-            &where_clause,
             None,
-            &constraints,
+            &table_constraints,
             &access_methods_arena,
         )
         .unwrap()
@@ -1312,9 +1290,9 @@ mod tests {
                     AccessMethodKind::Search {
                         index: None,
                         iter_dir,
-                        constraints,
+                        constraint_refs,
                     }
-                    if *iter_dir == IterationDirection::Forwards && constraints.len() == 1 && constraints[0].lhs_mask.contains_table(i-1)
+                    if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[i].constraints[constraint_refs[0].constraint_vec_pos].lhs_mask.contains_table(i-1)
                 ),
                 "Table {} should use Search access method, got {:?}",
                 i + 1,

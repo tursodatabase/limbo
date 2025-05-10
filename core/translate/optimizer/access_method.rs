@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    constraints::{usable_constraints_for_join_order, Constraint, ConstraintLookup, Constraints},
+    constraints::{usable_constraints_for_join_order, ConstraintRef, TableConstraints},
     cost::{estimate_cost_for_scan_or_seek, Cost, IndexInfo},
     order::OrderTarget,
 };
@@ -31,39 +31,38 @@ impl<'a> AccessMethod<'a> {
         }
     }
 
-    pub fn set_constraints(&mut self, lookup: &ConstraintLookup, constraints: &'a [Constraint]) {
-        let index = match lookup {
-            ConstraintLookup::Index(index) => Some(index),
-            ConstraintLookup::Rowid => None,
-            ConstraintLookup::EphemeralIndex => panic!("set_constraints called with Lookup::None"),
-        };
-        match (&mut self.kind, constraints.is_empty()) {
+    pub fn set_constraint_refs(
+        &mut self,
+        new_index: Option<Arc<Index>>,
+        new_constraint_refs: &'a [ConstraintRef],
+    ) {
+        match (&mut self.kind, new_constraint_refs.is_empty()) {
             (
                 AccessMethodKind::Search {
-                    constraints,
-                    index: i,
+                    constraint_refs,
+                    index,
                     ..
                 },
                 false,
             ) => {
-                *constraints = constraints;
-                *i = index.cloned();
+                *constraint_refs = new_constraint_refs;
+                *index = new_index;
             }
             (AccessMethodKind::Search { iter_dir, .. }, true) => {
                 self.kind = AccessMethodKind::Scan {
-                    index: index.cloned(),
+                    index: new_index,
                     iter_dir: *iter_dir,
                 };
             }
             (AccessMethodKind::Scan { iter_dir, .. }, false) => {
                 self.kind = AccessMethodKind::Search {
-                    index: index.cloned(),
+                    index: new_index,
                     iter_dir: *iter_dir,
-                    constraints,
+                    constraint_refs: new_constraint_refs,
                 };
             }
-            (AccessMethodKind::Scan { index: i, .. }, true) => {
-                *i = index.cloned();
+            (AccessMethodKind::Scan { index, .. }, true) => {
+                *index = new_index;
             }
         }
     }
@@ -81,7 +80,7 @@ pub enum AccessMethodKind<'a> {
     Search {
         index: Option<Arc<Index>>,
         iter_dir: IterationDirection,
-        constraints: &'a [Constraint],
+        constraint_refs: &'a [ConstraintRef],
     },
 }
 
@@ -90,12 +89,12 @@ pub enum AccessMethodKind<'a> {
 pub fn find_best_access_method_for_join_order<'a>(
     table_index: usize,
     table_reference: &TableReference,
-    constraints: &'a [Constraints],
+    table_constraints: &'a TableConstraints,
     join_order: &[JoinOrderMember],
     maybe_order_target: Option<&OrderTarget>,
     input_cardinality: f64,
 ) -> Result<AccessMethod<'a>> {
-    let cost_of_full_table_scan = estimate_cost_for_scan_or_seek(None, &[], input_cardinality);
+    let cost_of_full_table_scan = estimate_cost_for_scan_or_seek(None, &[], &[], input_cardinality);
     let mut best_access_method = AccessMethod {
         cost: cost_of_full_table_scan,
         kind: AccessMethodKind::Scan {
@@ -107,28 +106,29 @@ pub fn find_best_access_method_for_join_order<'a>(
         .columns()
         .iter()
         .position(|c| c.is_rowid_alias);
-    for csmap in constraints
-        .iter()
-        .filter(|csmap| csmap.table_no == table_index)
-    {
-        let index_info = match &csmap.lookup {
-            ConstraintLookup::Index(index) => IndexInfo {
+    for usage in table_constraints.candidates.iter() {
+        let index_info = match usage.index.as_ref() {
+            Some(index) => IndexInfo {
                 unique: index.unique,
                 covering: table_reference.index_is_covering(index),
                 column_count: index.columns.len(),
             },
-            ConstraintLookup::Rowid => IndexInfo {
+            None => IndexInfo {
                 unique: true, // rowids are always unique
                 covering: false,
                 column_count: 1,
             },
-            ConstraintLookup::EphemeralIndex => continue,
         };
-        let usable_constraints =
-            usable_constraints_for_join_order(&csmap.constraints, table_index, join_order);
+        let usable_constraint_refs = usable_constraints_for_join_order(
+            &table_constraints.constraints,
+            &usage.refs,
+            table_index,
+            join_order,
+        );
         let cost = estimate_cost_for_scan_or_seek(
             Some(index_info),
-            &usable_constraints,
+            &table_constraints.constraints,
+            &usable_constraint_refs,
             input_cardinality,
         );
 
@@ -138,14 +138,11 @@ pub fn find_best_access_method_for_join_order<'a>(
             for i in 0..order_target.0.len().min(index_info.column_count) {
                 let correct_table = order_target.0[i].table_no == table_index;
                 let correct_column = {
-                    match &csmap.lookup {
-                        ConstraintLookup::Index(index) => {
-                            index.columns[i].pos_in_table == order_target.0[i].column_no
-                        }
-                        ConstraintLookup::Rowid => {
+                    match &usage.index {
+                        Some(index) => index.columns[i].pos_in_table == order_target.0[i].column_no,
+                        None => {
                             rowid_column_idx.map_or(false, |idx| idx == order_target.0[i].column_no)
                         }
-                        ConstraintLookup::EphemeralIndex => unreachable!(),
                     }
                 };
                 if !correct_table || !correct_column {
@@ -154,12 +151,9 @@ pub fn find_best_access_method_for_join_order<'a>(
                     break;
                 }
                 let correct_order = {
-                    match &csmap.lookup {
-                        ConstraintLookup::Index(index) => {
-                            order_target.0[i].order == index.columns[i].order
-                        }
-                        ConstraintLookup::Rowid => order_target.0[i].order == SortOrder::Asc,
-                        ConstraintLookup::EphemeralIndex => unreachable!(),
+                    match &usage.index {
+                        Some(index) => order_target.0[i].order == index.columns[i].order,
+                        None => order_target.0[i].order == SortOrder::Asc,
                     }
                 };
                 if correct_order {
@@ -178,7 +172,7 @@ pub fn find_best_access_method_for_join_order<'a>(
         };
         if cost < best_access_method.cost + order_satisfiability_bonus {
             best_access_method.cost = cost;
-            best_access_method.set_constraints(&csmap.lookup, &usable_constraints);
+            best_access_method.set_constraint_refs(usage.index.clone(), &usable_constraint_refs);
         }
     }
 

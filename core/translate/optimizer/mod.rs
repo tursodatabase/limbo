@@ -3,7 +3,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::HashMap, sync::Arc};
 use access_method::AccessMethodKind;
 use constraints::{
     constraints_from_where_clause, usable_constraints_for_join_order, BinaryExprSide, Constraint,
-    ConstraintLookup,
+    ConstraintRef,
 };
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
@@ -127,13 +127,12 @@ fn use_indexes(
 ) -> Result<Option<Vec<JoinOrderMember>>> {
     let access_methods_arena = RefCell::new(Vec::new());
     let maybe_order_target = compute_order_target(order_by, group_by.as_mut());
-    let constraints =
+    let constraints_per_table =
         constraints_from_where_clause(where_clause, table_references, available_indexes)?;
     let Some(best_join_order_result) = compute_best_join_order(
         table_references,
-        where_clause,
         maybe_order_target.as_ref(),
-        &constraints,
+        &constraints_per_table,
         &access_methods_arena,
     )?
     else {
@@ -221,29 +220,38 @@ fn use_indexes(
                     Operation::Scan { iter_dir, index }
                 } else {
                     // Try to construct ephemeral index since it's going to be better than a scan for non-outermost tables.
-                    let unindexable_constraints = constraints.iter().find(|c| {
-                        c.table_no == table_number
-                            && matches!(c.lookup, ConstraintLookup::EphemeralIndex)
-                    });
-                    if let Some(unindexable) = unindexable_constraints {
-                        let usable_constraints = usable_constraints_for_join_order(
-                            &unindexable.constraints,
+                    let table_constraints = constraints_per_table
+                        .iter()
+                        .find(|c| c.table_no == table_number);
+                    if let Some(table_constraints) = table_constraints {
+                        let temp_constraint_refs = (0..table_constraints.constraints.len())
+                            .map(|i| ConstraintRef {
+                                constraint_vec_pos: i,
+                                index_col_pos: table_constraints.constraints[i].table_col_pos,
+                                sort_order: SortOrder::Asc,
+                            })
+                            .collect::<Vec<_>>();
+                        let usable_constraint_refs = usable_constraints_for_join_order(
+                            &table_constraints.constraints,
+                            &temp_constraint_refs,
                             table_number,
                             &best_join_order[..=i],
                         );
-                        if usable_constraints.is_empty() {
+                        if usable_constraint_refs.is_empty() {
                             Operation::Scan { iter_dir, index }
                         } else {
                             let ephemeral_index = ephemeral_index_build(
                                 &table_references[table_number],
                                 table_number,
-                                &usable_constraints,
+                                &table_constraints.constraints,
+                                &usable_constraint_refs,
                             );
                             let ephemeral_index = Arc::new(ephemeral_index);
                             Operation::Search(Search::Seek {
                                 index: Some(ephemeral_index),
                                 seek_def: build_seek_def_from_constraints(
-                                    usable_constraints,
+                                    &table_constraints.constraints,
+                                    &usable_constraint_refs,
                                     iter_dir,
                                     where_clause,
                                 )?,
@@ -256,32 +264,37 @@ fn use_indexes(
             }
             AccessMethodKind::Search {
                 index,
-                constraints,
+                constraint_refs,
                 iter_dir,
             } => {
-                assert!(!constraints.is_empty());
-                for constraint in constraints.iter() {
+                assert!(!constraint_refs.is_empty());
+                for uref in constraint_refs.iter() {
+                    let constraint =
+                        &constraints_per_table[table_number].constraints[uref.constraint_vec_pos];
                     to_remove_from_where_clause.push(constraint.where_clause_pos.0);
                 }
                 if let Some(index) = index {
                     Operation::Search(Search::Seek {
                         index: Some(index),
                         seek_def: build_seek_def_from_constraints(
-                            constraints,
+                            &constraints_per_table[table_number].constraints,
+                            &constraint_refs,
                             iter_dir,
                             where_clause,
                         )?,
                     })
                 } else {
                     assert!(
-                        constraints.len() == 1,
+                        constraint_refs.len() == 1,
                         "expected exactly one constraint for rowid seek, got {:?}",
-                        constraints
+                        constraint_refs
                     );
-                    match constraints[0].operator {
+                    let constraint = &constraints_per_table[table_number].constraints
+                        [constraint_refs[0].constraint_vec_pos];
+                    match constraint.operator {
                         ast::Operator::Equals => Operation::Search(Search::RowidEq {
                             cmp_expr: {
-                                let (idx, side) = constraints[0].where_clause_pos;
+                                let (idx, side) = constraint.where_clause_pos;
                                 let ast::Expr::Binary(lhs, _, rhs) =
                                     unwrap_parens(&where_clause[idx].expr)?
                                 else {
@@ -300,7 +313,8 @@ fn use_indexes(
                         _ => Operation::Search(Search::Seek {
                             index: None,
                             seek_def: build_seek_def_from_constraints(
-                                constraints,
+                                &constraints_per_table[table_number].constraints,
+                                &constraint_refs,
                                 iter_dir,
                                 where_clause,
                             )?,
@@ -722,6 +736,7 @@ fn ephemeral_index_build(
     table_reference: &TableReference,
     table_index: usize,
     constraints: &[Constraint],
+    constraint_refs: &[ConstraintRef],
 ) -> Index {
     let mut ephemeral_columns: Vec<IndexColumn> = table_reference
         .columns()
@@ -737,14 +752,14 @@ fn ephemeral_index_build(
         .collect();
     // sort so that constraints first, then rest in whatever order they were in in the table
     ephemeral_columns.sort_by(|a, b| {
-        let a_constraint = constraints
+        let a_constraint = constraint_refs
             .iter()
             .enumerate()
-            .find(|(_, c)| c.table_col_pos == a.pos_in_table);
-        let b_constraint = constraints
+            .find(|(_, c)| constraints[c.constraint_vec_pos].table_col_pos == a.pos_in_table);
+        let b_constraint = constraint_refs
             .iter()
             .enumerate()
-            .find(|(_, c)| c.table_col_pos == b.pos_in_table);
+            .find(|(_, c)| constraints[c.constraint_vec_pos].table_col_pos == b.pos_in_table);
         match (a_constraint, b_constraint) {
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -771,20 +786,22 @@ fn ephemeral_index_build(
 /// Build a [SeekDef] for a given list of [Constraint]s
 pub fn build_seek_def_from_constraints(
     constraints: &[Constraint],
+    constraint_refs: &[ConstraintRef],
     iter_dir: IterationDirection,
     where_clause: &[WhereTerm],
 ) -> Result<SeekDef> {
     assert!(
-        !constraints.is_empty(),
-        "cannot build seek def from empty list of constraints"
+        !constraint_refs.is_empty(),
+        "cannot build seek def from empty list of constraint refs"
     );
     // Extract the key values and operators
-    let mut key = Vec::with_capacity(constraints.len());
+    let mut key = Vec::with_capacity(constraint_refs.len());
 
-    for constraint in constraints {
+    for uref in constraint_refs {
         // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
-        let (idx, side) = constraint.where_clause_pos;
-        let where_term = &where_clause[idx];
+        let constraint = &constraints[uref.constraint_vec_pos];
+        let (where_idx, side) = constraint.where_clause_pos;
+        let where_term = &where_clause[where_idx];
         let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.clone())? else {
             crate::bail_parse_error!("expected binary expression");
         };
@@ -793,12 +810,12 @@ pub fn build_seek_def_from_constraints(
         } else {
             *rhs
         };
-        key.push((cmp_expr, constraint.sort_order));
+        key.push((cmp_expr, uref.sort_order));
     }
 
     // We know all but potentially the last term is an equality, so we can use the operator of the last term
     // to form the SeekOp
-    let op = constraints.last().unwrap().operator;
+    let op = constraints[constraint_refs.last().unwrap().constraint_vec_pos].operator;
 
     let seek_def = build_seek_def(op, iter_dir, key)?;
     Ok(seek_def)

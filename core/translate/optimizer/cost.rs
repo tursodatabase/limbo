@@ -1,6 +1,6 @@
 use limbo_sqlite3_parser::ast;
 
-use super::constraints::Constraint;
+use super::constraints::{Constraint, ConstraintRef};
 
 /// A simple newtype wrapper over a f64 that represents the cost of an operation.
 ///
@@ -45,6 +45,7 @@ pub fn estimate_page_io_cost(rowcount: f64) -> Cost {
 pub fn estimate_cost_for_scan_or_seek(
     index_info: Option<IndexInfo>,
     constraints: &[Constraint],
+    usable_constraint_refs: &[ConstraintRef],
     input_cardinality: f64,
 ) -> Cost {
     let Some(index_info) = index_info else {
@@ -53,15 +54,15 @@ pub fn estimate_cost_for_scan_or_seek(
         );
     };
 
-    let final_constraint_is_range = constraints
-        .last()
-        .map_or(false, |c| c.operator != ast::Operator::Equals);
+    let final_constraint_is_range = usable_constraint_refs.last().map_or(false, |c| {
+        constraints[c.constraint_vec_pos].operator != ast::Operator::Equals
+    });
     let equalities_count = constraints
         .iter()
         .take(if final_constraint_is_range {
-            constraints.len() - 1
+            usable_constraint_refs.len() - 1
         } else {
-            constraints.len()
+            usable_constraint_refs.len()
         })
         .count() as f64;
 
