@@ -857,6 +857,16 @@ pub enum Insn {
         count: NonZeroUsize,
         affinities: String,
     },
+
+    /// Store the number of entries (an integer value) in the table or index opened by cursor P1 in register P2.
+    ///
+    /// If P3==0, then an exact count is obtained, which involves visiting every btree page of the table.
+    /// But if P3 is non-zero, an estimate is returned based on the current cursor position.
+    Count {
+        cursor_id: CursorID,
+        target_reg: usize,
+        exact: bool,
+    },
 }
 
 impl Insn {
@@ -977,6 +987,7 @@ impl Insn {
             Insn::NotFound { .. } => execute::op_not_found,
             Insn::Affinity { .. } => execute::op_affinity,
             Insn::IdxDelete { .. } => execute::op_idx_delete,
+            Insn::Count { .. } => execute::op_count,
         }
     }
 }

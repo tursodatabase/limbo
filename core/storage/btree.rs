@@ -365,6 +365,8 @@ pub struct BTreeCursor {
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     empty_record: Cell<bool>,
     pub index_key_sort_order: IndexKeySortOrder,
+    /// Maintain count of the number of records in the btree. Used for the `Count` opcode
+    count: usize,
 }
 
 impl BTreeCursor {
@@ -390,6 +392,7 @@ impl BTreeCursor {
             reusable_immutable_record: RefCell::new(None),
             empty_record: Cell::new(true),
             index_key_sort_order: IndexKeySortOrder::default(),
+            count: 0,
         }
     }
 
@@ -4226,6 +4229,112 @@ impl BTreeCursor {
         match self.state {
             CursorState::Write(_) => true,
             _ => false,
+        }
+    }
+
+    /// Count the number of entries in the b-tree
+    ///
+    /// Only supposed to be used in the context of a simple Count Select Statement
+    pub fn count(&mut self) -> Result<CursorResult<usize>> {
+        if self.count == 0 {
+            self.move_to_root();
+        }
+
+        if let Some(_mv_cursor) = &self.mv_cursor {
+            todo!("Implement count for mvcc");
+        }
+
+        let mut mem_page_rc;
+        let mut mem_page;
+        let mut contents;
+
+        loop {
+            mem_page_rc = self.stack.top();
+            return_if_locked_maybe_load!(self.pager, mem_page_rc);
+            mem_page = mem_page_rc.get();
+            contents = mem_page.contents.as_ref().unwrap();
+
+            /* If this is a leaf page or the tree is not an int-key tree, then
+             ** this page contains countable entries. Increment the entry counter
+             ** accordingly.
+             */
+            if !matches!(contents.page_type(), PageType::TableInterior) {
+                self.count += contents.cell_count();
+            }
+
+            let cell_idx = self.stack.current_cell_index() as usize;
+
+            // Second condition is necessary in case we return if the page is locked in the loop below
+            if contents.is_leaf() || cell_idx > contents.cell_count() {
+                loop {
+                    if !self.stack.has_parent() {
+                        // All pages of the b-tree have been visited. Return successfully
+                        self.move_to_root();
+
+                        return Ok(CursorResult::Ok(self.count));
+                    }
+
+                    // Move to parent
+                    self.going_upwards = true;
+                    self.stack.pop();
+
+                    mem_page_rc = self.stack.top();
+                    return_if_locked_maybe_load!(self.pager, mem_page_rc);
+                    mem_page = mem_page_rc.get();
+                    contents = mem_page.contents.as_ref().unwrap();
+
+                    let cell_idx = self.stack.current_cell_index() as usize;
+
+                    if cell_idx <= contents.cell_count() {
+                        break;
+                    }
+                }
+            }
+
+            let cell_idx = self.stack.current_cell_index() as usize;
+
+            assert!(cell_idx <= contents.cell_count(),);
+            assert!(!contents.is_leaf());
+
+            if cell_idx == contents.cell_count() {
+                // Move to right child
+                // should be safe as contents is not a leaf page
+                let right_most_pointer = contents.rightmost_pointer().unwrap();
+                self.stack.advance();
+                let mem_page = self.pager.read_page(right_most_pointer as usize)?;
+                self.going_upwards = false;
+                self.stack.push(mem_page);
+            } else {
+                // Move to child left page
+                let cell = contents.cell_get(
+                    cell_idx,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                )?;
+
+                match cell {
+                    BTreeCell::TableInteriorCell(TableInteriorCell {
+                        _left_child_page: left_child_page,
+                        ..
+                    })
+                    | BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                        left_child_page, ..
+                    }) => {
+                        self.stack.advance();
+                        let mem_page = self.pager.read_page(left_child_page as usize)?;
+                        self.going_upwards = false;
+                        self.stack.push(mem_page);
+                    }
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 }

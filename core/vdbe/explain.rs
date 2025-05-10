@@ -1448,6 +1448,19 @@ pub fn insn_to_str(
                         .join(", ")
                 ),
             ),
+            Insn::Count {
+                cursor_id,
+                target_reg,
+                exact,
+            } => (
+                "Count",
+                *cursor_id as i32,
+                *target_reg as i32,
+                if *exact { 0 } else { 1 },
+                OwnedValue::build_text(""),
+                0,
+                "".to_string(),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",

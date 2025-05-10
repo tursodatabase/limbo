@@ -4749,6 +4749,35 @@ pub fn op_affinity(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_count(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Count {
+        cursor_id,
+        target_reg,
+        exact,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let count = {
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
+        let cursor = cursor.as_btree_mut();
+        let count = return_if_io!(cursor.count());
+        count
+    };
+
+    state.registers[*target_reg] = Register::OwnedValue(OwnedValue::Integer(count as i64));
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),

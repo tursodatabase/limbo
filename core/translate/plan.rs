@@ -308,6 +308,8 @@ pub struct SelectPlan {
     pub contains_constant_false_condition: bool,
     /// query type (top level or subquery)
     pub query_type: SelectQueryType,
+    /// if the query is of the format `SELECT count(*) FROM <tbl>`. This is set after the SelectPlan is create
+    pub is_simple_count: bool,
 }
 
 impl SelectPlan {

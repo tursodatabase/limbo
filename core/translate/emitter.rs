@@ -24,6 +24,7 @@ use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMeta
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
 use super::schema::ParseSchema;
+use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 
 #[derive(Debug)]
@@ -288,6 +289,11 @@ pub fn emit_query<'a>(
         OperationMode::SELECT,
     )?;
 
+    if plan.is_simple_count {
+        emit_simple_count(program, t_ctx, plan)?;
+        return Ok(t_ctx.reg_result_cols_start.unwrap());
+    }
+
     for where_term in plan
         .where_clause
         .iter()
@@ -323,6 +329,7 @@ pub fn emit_query<'a>(
 
     // Clean up and close the main execution loop
     close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;
+
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
