@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use limbo_sqlite3_parser::ast::{self};
 
+use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
 use crate::schema::Index;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::{CursorType, ProgramBuilder};
-use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
+use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -478,6 +479,7 @@ fn emit_delete_insns(
             program.emit_insn(Insn::OpenWrite {
                 cursor_id: index_cursor_id,
                 root_page: RegisterOrLiteral::Literal(index.root_page),
+                name: index.name.clone(),
             });
             let num_regs = index.columns.len() + 1;
             let start_reg = program.alloc_registers(num_regs);
@@ -584,6 +586,7 @@ fn emit_program_for_update(
     // Open indexes for update.
     let mut index_cursors = Vec::with_capacity(plan.indexes_to_update.len());
     // TODO: do not reopen if there is table reference using it.
+
     for index in &plan.indexes_to_update {
         let index_cursor = program.alloc_cursor_id(
             Some(index.table_name.clone()),
@@ -592,8 +595,10 @@ fn emit_program_for_update(
         program.emit_insn(Insn::OpenWrite {
             cursor_id: index_cursor,
             root_page: RegisterOrLiteral::Literal(index.root_page),
+            name: index.name.clone(),
         });
-        index_cursors.push(index_cursor);
+        let record_reg = program.alloc_register();
+        index_cursors.push((index_cursor, record_reg));
     }
     open_loop(
         program,
@@ -634,7 +639,7 @@ fn emit_update_insns(
     plan: &UpdatePlan,
     t_ctx: &TranslateCtx,
     program: &mut ProgramBuilder,
-    index_cursors: Vec<usize>,
+    index_cursors: Vec<(usize, usize)>,
 ) -> crate::Result<()> {
     let table_ref = &plan.table_references.first().unwrap();
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
@@ -693,11 +698,44 @@ fn emit_update_insns(
         cursor_id,
         dest: beg,
     });
-    // if no rowid, we're done
-    program.emit_insn(Insn::IsNull {
-        reg: beg,
-        target_pc: t_ctx.label_main_loop_end.unwrap(),
-    });
+
+    // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
+
+    let rowid_alias_index = {
+        let rowid_alias_index = table_ref.columns().iter().position(|c| c.is_rowid_alias);
+        if let Some(index) = rowid_alias_index {
+            plan.set_clauses.iter().position(|(idx, _)| *idx == index)
+        } else {
+            None
+        }
+    };
+    let rowid_set_clause_reg = if rowid_alias_index.is_some() {
+        Some(program.alloc_register())
+    } else {
+        None
+    };
+    let has_user_provided_rowid = rowid_alias_index.is_some();
+
+    let check_rowid_not_exists_label = if has_user_provided_rowid {
+        Some(program.allocate_label())
+    } else {
+        None
+    };
+
+    if has_user_provided_rowid {
+        program.emit_insn(Insn::NotExists {
+            cursor: cursor_id,
+            rowid_reg: beg,
+            target_pc: check_rowid_not_exists_label.unwrap(),
+        });
+    } else {
+        // if no rowid, we're done
+        program.emit_insn(Insn::IsNull {
+            reg: beg,
+            target_pc: t_ctx.label_main_loop_end.unwrap(),
+        });
+    }
+
     if is_virtual {
         program.emit_insn(Insn::Copy {
             src_reg: beg,
@@ -733,61 +771,40 @@ fn emit_update_insns(
         )?;
     }
 
-    // Update indexes first. Columns that are updated will be translated from an expression and those who aren't modified will be
-    // read from table. Mutiple value index key could be updated partially.
-    for (index, index_cursor) in plan.indexes_to_update.iter().zip(index_cursors) {
-        let index_record_reg_count = index.columns.len() + 1;
-        let index_record_reg_start = program.alloc_registers(index_record_reg_count);
-        for (idx, column) in index.columns.iter().enumerate() {
-            if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
+    // we scan a column at a time, loading either the column's values, or the new value
+    // from the Set expression, into registers so we can emit a MakeRecord and update the row.
+    let start = if is_virtual { beg + 2 } else { beg + 1 };
+    for (idx, table_column) in table_ref.columns().iter().enumerate() {
+        let target_reg = start + idx;
+        if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
+            if has_user_provided_rowid
+                && (table_column.primary_key || table_column.is_rowid_alias)
+                && !is_virtual
+            {
+                let rowid_set_clause_reg = rowid_set_clause_reg.unwrap();
                 translate_expr(
                     program,
                     Some(&plan.table_references),
                     expr,
-                    index_record_reg_start + idx,
+                    rowid_set_clause_reg,
                     &t_ctx.resolver,
                 )?;
-            } else {
-                program.emit_insn(Insn::Column {
-                    cursor_id: cursor_id,
-                    column: column.pos_in_table,
-                    dest: index_record_reg_start + idx,
+
+                program.emit_insn(Insn::MustBeInt {
+                    reg: rowid_set_clause_reg,
                 });
+
+                program.emit_null(target_reg, None);
+            } else {
+                translate_expr(
+                    program,
+                    Some(&plan.table_references),
+                    expr,
+                    target_reg,
+                    &t_ctx.resolver,
+                )?;
             }
-        }
-        program.emit_insn(Insn::RowId {
-            cursor_id: cursor_id,
-            dest: index_record_reg_start + index.columns.len(),
-        });
-        let index_record_reg = program.alloc_register();
-        program.emit_insn(Insn::MakeRecord {
-            start_reg: index_record_reg_start,
-            count: index_record_reg_count,
-            dest_reg: index_record_reg,
-        });
-        program.emit_insn(Insn::IdxInsert {
-            cursor_id: index_cursor,
-            record_reg: index_record_reg,
-            unpacked_start: Some(index_record_reg_start),
-            unpacked_count: Some(index_record_reg_count as u16),
-            flags: IdxInsertFlags::new(),
-        });
-    }
-    // we scan a column at a time, loading either the column's values, or the new value
-    // from the Set expression, into registers so we can emit a MakeRecord and update the row.
-    let start = if is_virtual { beg + 2 } else { beg + 1 };
-    for idx in 0..table_ref.columns().len() {
-        let target_reg = start + idx;
-        if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
-            translate_expr(
-                program,
-                Some(&plan.table_references),
-                expr,
-                target_reg,
-                &t_ctx.resolver,
-            )?;
         } else {
-            let table_column = table_ref.table.columns().get(idx).unwrap();
             let column_idx_in_index = index.as_ref().and_then(|(idx, _)| {
                 idx.columns
                     .iter()
@@ -822,6 +839,84 @@ fn emit_update_insns(
             }
         }
     }
+
+    for (index, (idx_cursor_id, record_reg)) in plan.indexes_to_update.iter().zip(&index_cursors) {
+        if index.unique {
+            let num_cols = index.columns.len();
+            // allocate scratch registers for the index columns plus rowid
+            let idx_start_reg = program.alloc_registers(num_cols + 1);
+
+            let rowid_reg = beg;
+            let idx_cols_start_reg = beg + 1;
+
+            // copy each index column from the table's column registers into these scratch regs
+            for (i, col) in index.columns.iter().enumerate() {
+                // copy from the table's column register over to the index's scratch register
+
+                program.emit_insn(Insn::Copy {
+                    src_reg: idx_cols_start_reg + col.pos_in_table,
+                    dst_reg: idx_start_reg + i,
+                    amount: 0,
+                });
+            }
+            // last register is the rowid
+            program.emit_insn(Insn::Copy {
+                src_reg: rowid_reg,
+                dst_reg: idx_start_reg + num_cols,
+                amount: 0,
+            });
+
+            program.emit_insn(Insn::MakeRecord {
+                start_reg: idx_start_reg,
+                count: num_cols + 1,
+                dest_reg: *record_reg,
+                index_name: Some(index.name.clone()),
+            });
+
+            let constraint_check = program.allocate_label();
+            program.emit_insn(Insn::NoConflict {
+                cursor_id: *idx_cursor_id,
+                target_pc: constraint_check,
+                record_reg: idx_start_reg,
+                num_regs: num_cols,
+            });
+
+            let column_names = index.columns.iter().enumerate().fold(
+                String::with_capacity(50),
+                |mut accum, (idx, col)| {
+                    if idx > 0 {
+                        accum.push_str(", ");
+                    }
+                    accum.push_str(&table_ref.table.get_name());
+                    accum.push('.');
+                    accum.push_str(&col.name);
+
+                    accum
+                },
+            );
+
+            let idx_rowid_reg = program.alloc_register();
+            program.emit_insn(Insn::IdxRowId {
+                cursor_id: *idx_cursor_id,
+                dest: idx_rowid_reg,
+            });
+
+            program.emit_insn(Insn::Eq {
+                lhs: rowid_reg,
+                rhs: idx_rowid_reg,
+                target_pc: constraint_check,
+                flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
+            });
+
+            program.emit_insn(Insn::Halt {
+                err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index for error code
+                description: column_names,
+            });
+
+            program.preassign_label_to_next_insn(constraint_check);
+        }
+    }
+
     if let Some(btree_table) = table_ref.btree() {
         if btree_table.is_strict {
             program.emit_insn(Insn::TypeCheck {
@@ -831,15 +926,102 @@ fn emit_update_insns(
                 table_reference: Rc::clone(&btree_table),
             });
         }
+
+        if has_user_provided_rowid {
+            let record_label = program.allocate_label();
+            let idx = rowid_alias_index.unwrap();
+            let target_reg = rowid_set_clause_reg.unwrap();
+            program.emit_insn(Insn::Eq {
+                lhs: target_reg,
+                rhs: beg,
+                target_pc: record_label,
+                flags: CmpInsFlags::default(),
+            });
+
+            program.emit_insn(Insn::NotExists {
+                cursor: cursor_id,
+                rowid_reg: target_reg,
+                target_pc: record_label,
+            });
+
+            program.emit_insn(Insn::Halt {
+                err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
+                description: format!(
+                    "{}.{}",
+                    table_ref.table.get_name(),
+                    &table_ref
+                        .columns()
+                        .get(idx)
+                        .unwrap()
+                        .name
+                        .as_ref()
+                        .map_or("", |v| v)
+                ),
+            });
+
+            program.preassign_label_to_next_insn(record_label);
+        }
+
         let record_reg = program.alloc_register();
         program.emit_insn(Insn::MakeRecord {
             start_reg: start,
             count: table_ref.columns().len(),
             dest_reg: record_reg,
+            index_name: None,
         });
+
+        if has_user_provided_rowid {
+            program.emit_insn(Insn::NotExists {
+                cursor: cursor_id,
+                rowid_reg: beg,
+                target_pc: check_rowid_not_exists_label.unwrap(),
+            });
+        }
+
+        // For each index -> insert
+        for (index, (idx_cursor_id, record_reg)) in plan.indexes_to_update.iter().zip(index_cursors)
+        {
+            let num_regs = index.columns.len() + 1;
+            let start_reg = program.alloc_registers(num_regs);
+
+            // Emit columns that are part of the index
+            index
+                .columns
+                .iter()
+                .enumerate()
+                .for_each(|(reg_offset, column_index)| {
+                    program.emit_insn(Insn::Column {
+                        cursor_id,
+                        column: column_index.pos_in_table,
+                        dest: start_reg + reg_offset,
+                    });
+                });
+
+            program.emit_insn(Insn::RowId {
+                cursor_id,
+                dest: start_reg + num_regs - 1,
+            });
+
+            program.emit_insn(Insn::IdxDelete {
+                start_reg,
+                num_regs,
+                cursor_id: idx_cursor_id,
+            });
+
+            program.emit_insn(Insn::IdxInsert {
+                cursor_id: idx_cursor_id,
+                record_reg: record_reg,
+                unpacked_start: Some(start),
+                unpacked_count: Some((index.columns.len() + 1) as u16),
+                flags: IdxInsertFlags::new(),
+            });
+        }
+
+        program.emit_insn(Insn::Delete { cursor_id });
+
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
-            key_reg: beg,
+            key_reg: rowid_set_clause_reg.unwrap_or(beg),
             record_reg,
             flag: 0,
             table_name: table_ref.identifier.clone(),
@@ -862,5 +1044,10 @@ fn emit_update_insns(
         })
     }
     // TODO(pthorpe): handle RETURNING clause
+
+    if let Some(label) = check_rowid_not_exists_label {
+        program.preassign_label_to_next_insn(label);
+    }
+
     Ok(())
 }

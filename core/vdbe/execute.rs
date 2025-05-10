@@ -1444,6 +1444,7 @@ pub fn op_make_record(
         start_reg,
         count,
         dest_reg,
+        ..
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)

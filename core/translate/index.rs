@@ -100,6 +100,7 @@ pub fn translate_create_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: RegisterOrLiteral::Literal(sqlite_table.root_page),
+        name: sqlite_table.name.clone(),
     });
     let sql = create_idx_stmt_to_sql(&tbl_name, &idx_name, unique_if_not_exists, &columns);
     emit_schema_entry(
@@ -164,6 +165,7 @@ pub fn translate_create_index(
         start_reg,
         count: columns.len() + 1,
         dest_reg: record_reg,
+        index_name: Some(idx_name.clone()),
     });
     program.emit_insn(Insn::SorterInsert {
         cursor_id: sorter_cursor_id,
@@ -181,6 +183,7 @@ pub fn translate_create_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: btree_cursor_id,
         root_page: RegisterOrLiteral::Register(root_page_reg),
+        name: idx_name.clone(),
     });
 
     let sorted_loop_start = program.allocate_label();

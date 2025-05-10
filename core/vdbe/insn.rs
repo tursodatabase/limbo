@@ -82,7 +82,7 @@ impl IdxInsertFlags {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum RegisterOrLiteral<T: Copy> {
+pub enum RegisterOrLiteral<T: Copy + std::fmt::Display> {
     Register(usize),
     Literal(T),
 }
@@ -90,6 +90,15 @@ pub enum RegisterOrLiteral<T: Copy> {
 impl From<PageIdx> for RegisterOrLiteral<PageIdx> {
     fn from(value: PageIdx) -> Self {
         RegisterOrLiteral::Literal(value)
+    }
+}
+
+impl<T: Copy + std::fmt::Display> std::fmt::Display for RegisterOrLiteral<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Literal(lit) => lit.fmt(f),
+            Self::Register(reg) => reg.fmt(f),
+        }
     }
 }
 
@@ -364,6 +373,7 @@ pub enum Insn {
         start_reg: usize, // P1
         count: usize,     // P2
         dest_reg: usize,  // P3
+        index_name: Option<String>,
     },
 
     /// Emit a row of results.
@@ -699,6 +709,7 @@ pub enum Insn {
     OpenWrite {
         cursor_id: CursorID,
         root_page: RegisterOrLiteral<PageIdx>,
+        name: String,
     },
 
     Copy {

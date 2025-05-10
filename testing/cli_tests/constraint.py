@@ -230,12 +230,24 @@ class Table(BaseModel):
 
         return f"INSERT INTO {self.name} VALUES ({vals});"
 
+    # These statements should always cause a constraint error as there is no where clause here
+    def generate_update(self) -> str:
+        vals = [
+            f"{col.name} = {col.col_type.generate(fake)}"
+            for col in self.columns
+            if col.primary_key
+        ]
+        vals = ", ".join(vals)
+
+        return f"UPDATE {self.name} SET {vals};"
+
 
 class ConstraintTest(BaseModel):
     table: Table
     db_path: str = "testing/constraint.db"
     insert_stmts: list[str]
     insert_errors: list[str]
+    update_errors: list[str]
 
     def run(
         self,
@@ -257,6 +269,14 @@ class ConstraintTest(BaseModel):
             f"SELECT count(*) from {self.table.name};",
             str(len(self.insert_stmts)),
         )
+
+        for update_stmt in self.update_errors:
+            limbo.run_test_fn(
+                update_stmt,
+                lambda val: "Runtime error: UNIQUE constraint failed" in val,
+            )
+
+        # TODO: When we implement rollbacks, have a test here to assure the values did not change
 
 
 def validate_with_expected(result: str, expected: str):
@@ -281,8 +301,17 @@ def generate_test(col_amount: int, primary_keys: int) -> ConstraintTest:
 
     table = Table(columns=cols, name=fake.word())
     insert_stmts = [table.generate_insert() for _ in range(col_amount)]
+
+    update_errors = []
+    if len(insert_stmts) > 1:
+        # TODO: As we have no rollback we just generate one update statement
+        update_errors = [table.generate_update()]
+
     return ConstraintTest(
-        table=table, insert_stmts=insert_stmts, insert_errors=insert_stmts
+        table=table,
+        insert_stmts=insert_stmts,
+        insert_errors=insert_stmts,
+        update_errors=update_errors,
     )
 
 
@@ -296,8 +325,14 @@ def custom_test_1() -> ConstraintTest:
         "INSERT INTO users VALUES (1, 'alice');",
         "INSERT INTO users VALUES (2, 'bob');",
     ]
+    update_stmts = [
+        "UPDATE users SET id = 2, username = 'bob' WHERE id == 1;",
+    ]
     return ConstraintTest(
-        table=table, insert_stmts=insert_stmts, insert_errors=insert_stmts
+        table=table,
+        insert_stmts=insert_stmts,
+        insert_errors=insert_stmts,
+        update_errors=update_stmts,
     )
 
 
