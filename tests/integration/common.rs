@@ -1,6 +1,8 @@
 use limbo_core::{CheckpointStatus, Connection, Database, IO};
 use rand::{rng, RngCore};
-use rusqlite::params;
+use regex::Regex;
+use rusqlite::types::Value;
+use rusqlite::{params, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -29,10 +31,19 @@ impl TempDatabase {
         Self { path, io }
     }
 
-    pub fn new_with_existent(db_path: &Path) -> Self {
+    pub fn new_existent(db_path: &Path) -> Self {
         let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
         Self {
             path: db_path.to_path_buf(),
+            io,
+        }
+    }
+
+    pub fn new_in_memory() -> Self {
+        let io: Arc<dyn IO + Send> = Arc::new(limbo_core::MemoryIO::new());
+        // No path for Memory IO
+        Self {
+            path: "".into(),
             io,
         }
     }
@@ -130,6 +141,254 @@ pub fn maybe_setup_tracing() {
         .try_init();
 }
 
+pub(crate) fn limbo_exec_rows_error(
+    db: &TempDatabase,
+    conn: &Rc<limbo_core::Connection>,
+    query: &str,
+) -> limbo_core::Result<()> {
+    let mut stmt = conn.prepare(query)?;
+    loop {
+        let result = stmt.step()?;
+        match result {
+            limbo_core::StepResult::IO => {
+                db.io.run_once()?;
+                continue;
+            }
+            limbo_core::StepResult::Done => return Ok(()),
+            r => panic!("unexpected result {:?}: expecting single row", r),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum TestMode {
+    Single { sql: &'static str },
+    Many { sql_queries: Vec<&'static str> },
+    MemoryError { sql_queries: Vec<&'static str> },
+    Regex { sql: &'static str, regex: Regex },
+}
+
+#[derive(Debug)]
+pub(crate) struct SqlTester {
+    mode: TestMode,
+    values: Vec<Vec<Value>>,
+    is_random_db: bool,
+}
+
+impl SqlTester {
+    pub(crate) fn single(sql: &'static str, values: Vec<Vec<Value>>) -> Self {
+        Self {
+            mode: TestMode::Single { sql },
+            values,
+            is_random_db: false,
+        }
+    }
+
+    pub(crate) fn many(sql_queries: Vec<&'static str>, values: Vec<Vec<Value>>) -> Self {
+        Self {
+            mode: TestMode::Many { sql_queries },
+            values,
+            is_random_db: false,
+        }
+    }
+
+    pub(crate) fn memory_error(sql_queries: Vec<&'static str>) -> Self {
+        Self {
+            mode: TestMode::MemoryError { sql_queries },
+            values: Vec::new(),
+            is_random_db: false,
+        }
+    }
+
+    pub(crate) fn regex(sql: &'static str, regex: Regex) -> Self {
+        Self {
+            mode: TestMode::Regex { sql, regex },
+            values: Vec::new(),
+            is_random_db: false,
+        }
+    }
+
+    pub(crate) fn with_is_random_db(&mut self, is_random_db: bool) -> &mut Self {
+        self.is_random_db = is_random_db;
+        return self;
+    }
+
+    pub(crate) fn exec_sql(&self, db_path: Option<PathBuf>) {
+        {
+            let sqlite_conn = if let Some(ref db_path) = db_path {
+                if !self.is_random_db {
+                    rusqlite::Connection::open_with_flags(
+                        db_path.clone(),
+                        OpenFlags::SQLITE_OPEN_READ_ONLY,
+                    )
+                    .unwrap()
+                } else {
+                    // This can be a random db_path that was not created yet
+                    rusqlite::Connection::open(db_path.clone()).unwrap()
+                }
+            } else {
+                rusqlite::Connection::open_in_memory().unwrap()
+            };
+            self.exec_sql_sqlite(sqlite_conn, &db_path);
+        }
+
+        {
+            let db = if let Some(ref db_path) = db_path {
+                TempDatabase::new_existent(db_path)
+            } else {
+                TempDatabase::new_in_memory()
+            };
+            let limbo_conn = if self.is_random_db || db_path.is_none() {
+                db.connect_limbo()
+            } else {
+                db.connect_limbo_with_flags(
+                    limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+                )
+            };
+            self.exec_sql_limbo(db, limbo_conn, &db_path);
+        }
+    }
+
+    fn exec_sql_sqlite(&self, sqlite_conn: rusqlite::Connection, db_path: &Option<PathBuf>) {
+        let db_path = db_path.as_ref().map(|db_path| db_path.to_string_lossy());
+        let db_path = db_path.unwrap_or(std::borrow::Cow::Borrowed("memory"));
+
+        let sqlite = match &self.mode {
+            TestMode::Single { sql } => sqlite_exec_rows(&sqlite_conn, sql),
+            TestMode::Many { sql_queries } => {
+                let mut sqlite_values = Vec::with_capacity(sql_queries.len());
+                for sql in sql_queries {
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &sql);
+                    sqlite_values.extend(sqlite);
+                }
+                sqlite_values
+            }
+            TestMode::MemoryError { sql_queries } => {
+                let contains_error = sql_queries
+                    .iter()
+                    .map(|sql| sqlite_exec_rows_error(&sqlite_conn, &sql))
+                    .any(|res| res.is_err());
+                assert!(contains_error, "no error thrown in SQLite");
+                return;
+            }
+            TestMode::Regex { sql, regex } => {
+                let sqlite = sqlite_exec_rows(&sqlite_conn, sql);
+                for values in sqlite.iter() {
+                    for val in values {
+                        match val {
+                            Value::Text(s) => {
+                                assert!(
+                                    regex.is_match(s),
+                                    "regex `{}` did not match in {}
+                                    query: {:#?}, 
+                                    values: {:?}, 
+                                    sqlite: {:?}, 
+                                    db: {}",
+                                    regex,
+                                    s,
+                                    sql,
+                                    values,
+                                    sqlite,
+                                    db_path,
+                                );
+                            }
+                            _ => panic!("only expected Text Value for regex test"),
+                        }
+                    }
+                }
+                return;
+            }
+        };
+
+        let sql = match &self.mode {
+            TestMode::Single { sql } => sql as &dyn std::fmt::Debug,
+            TestMode::Many { sql_queries } => sql_queries as &dyn std::fmt::Debug,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(
+            self.values, sqlite,
+            "query: {:#?}, 
+            values: {:?}, 
+            sqlite: {:?}, 
+            db: {}",
+            sql, self.values, sqlite, db_path
+        );
+    }
+
+    fn exec_sql_limbo(
+        &self,
+        db: TempDatabase,
+        limbo_conn: std::rc::Rc<limbo_core::Connection>,
+        db_path: &Option<PathBuf>,
+    ) {
+        let db_path = db_path.as_ref().map(|db_path| db_path.to_string_lossy());
+        let db_path = db_path.unwrap_or(std::borrow::Cow::Borrowed("memory"));
+
+        let limbo = match &self.mode {
+            TestMode::Single { sql } => limbo_exec_rows(&db, &limbo_conn, sql),
+            TestMode::Many { sql_queries } => {
+                let mut limbo_values = Vec::with_capacity(sql_queries.len());
+                for sql in sql_queries.iter() {
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &sql);
+                    limbo_values.extend(limbo);
+                }
+                limbo_values
+            }
+            TestMode::MemoryError { sql_queries } => {
+                let contains_error = sql_queries
+                    .iter()
+                    .map(|sql| limbo_exec_rows_error(&db, &limbo_conn, &sql))
+                    .any(|res| res.is_err());
+                assert!(contains_error, "no error thrown in Limbo");
+                return;
+            }
+            TestMode::Regex { sql, regex } => {
+                let limbo = limbo_exec_rows(&db, &limbo_conn, sql);
+                for values in limbo.iter() {
+                    for val in values {
+                        match val {
+                            Value::Text(s) => {
+                                assert!(
+                                    regex.is_match(s),
+                                    "regex `{}` did not match in {}
+                                    query: {:#?}, 
+                                    values: {:?}, 
+                                    limbo: {:?}, 
+                                    db: {}",
+                                    regex,
+                                    s,
+                                    sql,
+                                    values,
+                                    limbo,
+                                    db_path,
+                                );
+                            }
+                            _ => panic!("only expected Text Value for regex test"),
+                        }
+                    }
+                }
+                return;
+            }
+        };
+
+        let sql = match &self.mode {
+            TestMode::Single { sql } => sql as &dyn std::fmt::Debug,
+            TestMode::Many { sql_queries } => sql_queries as &dyn std::fmt::Debug,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(
+            self.values, limbo,
+            "query: {:#?}, 
+            values: {:?}, 
+            limbo: {:?}, 
+            db: {}",
+            sql, self.values, limbo, db_path
+        );
+    }
+}
+
 pub(crate) fn sqlite_exec_rows(
     conn: &rusqlite::Connection,
     query: &str,
@@ -151,6 +410,21 @@ pub(crate) fn sqlite_exec_rows(
     }
 
     results
+}
+
+/// Exec sqlite and expect errors
+pub(crate) fn sqlite_exec_rows_error(
+    conn: &rusqlite::Connection,
+    query: &str,
+) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare(&query)?;
+    let mut rows = stmt.query(params![])?;
+    while let Some(row) = rows.next()? {
+        for i in 0.. {
+            let _: rusqlite::types::Value = row.get(i)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn limbo_exec_rows(
@@ -191,25 +465,6 @@ pub(crate) fn limbo_exec_rows(
         rows.push(row);
     }
     rows
-}
-
-pub(crate) fn limbo_exec_rows_error(
-    db: &TempDatabase,
-    conn: &Rc<limbo_core::Connection>,
-    query: &str,
-) -> limbo_core::Result<()> {
-    let mut stmt = conn.prepare(query)?;
-    loop {
-        let result = stmt.step()?;
-        match result {
-            limbo_core::StepResult::IO => {
-                db.io.run_once()?;
-                continue;
-            }
-            limbo_core::StepResult::Done => return Ok(()),
-            r => panic!("unexpected result {:?}: expecting single row", r),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -262,7 +517,7 @@ mod tests {
     #[test]
     fn test_limbo_open_read_only() -> anyhow::Result<()> {
         let path = TempDir::new().unwrap().into_path().join("temp_read_only");
-        let db = TempDatabase::new_with_existent(&path);
+        let db = TempDatabase::new_existent(&path);
         {
             let conn = db.connect_limbo();
             let ret = limbo_exec_rows(&db, &conn, "CREATE table t(a)");
@@ -280,6 +535,12 @@ mod tests {
 
             let err = limbo_exec_rows_error(&db, &conn, "INSERT INTO t values (1)").unwrap_err();
             assert!(matches!(err, limbo_core::LimboError::ReadOnly), "{:?}", err);
+
+            let conn_2 = db.connect_limbo_with_flags(
+                limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+            );
+            let ret = limbo_exec_rows(&db, &conn_2, "SELECT * from t");
+            assert_eq!(ret, vec![vec![Value::Integer(1)]]);
         }
         Ok(())
     }
