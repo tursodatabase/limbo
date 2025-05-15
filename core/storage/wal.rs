@@ -168,6 +168,9 @@ pub trait Wal {
     /// Read a frame from the WAL.
     fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Rc<BufferPool>) -> Result<()>;
 
+    /// Read a frame from the WAL.
+    fn read_frame_raw(&self, frame_id: u64, buffer_pool: Rc<BufferPool>, frame: *mut u8, frame_len: u32) -> Result<Arc<Completion>>;
+
     /// Write a frame to the WAL.
     fn append_frame(
         &mut self,
@@ -441,6 +444,25 @@ impl Wal for WalFile {
             complete,
         )?;
         Ok(())
+    }
+
+    fn read_frame_raw(&self, frame_id: u64, buffer_pool: Rc<BufferPool>, frame: *mut u8, frame_len: u32) -> Result<Arc<Completion>> {
+        debug!("read_frame({})", frame_id);
+        let offset = self.frame_offset(frame_id);
+        let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+            let buf = buf.borrow();
+            let buf_ptr = buf.as_ptr();
+            unsafe {
+                std::ptr::copy_nonoverlapping(buf_ptr, frame, frame_len as usize);
+            }
+        });
+        let c = begin_read_wal_frame(
+            &self.get_shared().file,
+            offset + WAL_FRAME_HEADER_SIZE,
+            buffer_pool,
+            complete,
+        )?;
+        Ok(c)
     }
 
     /// Write a frame to the WAL.

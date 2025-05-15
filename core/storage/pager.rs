@@ -1,3 +1,4 @@
+use crate::Completion;
 use crate::fast_lock::SpinLock;
 use crate::result::LimboResult;
 use crate::storage::buffer_pool::BufferPool;
@@ -407,6 +408,19 @@ impl Pager {
         Ok(frame_count)
     }
 
+    pub fn wal_get_frame(
+        &self,
+        frame_no: u32,
+        p_frame: *mut u8,
+        frame_len: u32,
+    ) -> Result<Arc<Completion>> {
+        let wal = self.wal.clone();
+        if let Some(wal) = &wal {
+            return wal.borrow()
+                .read_frame_raw(frame_no.into(), self.buffer_pool.clone(), p_frame, frame_len);
+        }
+        Err(LimboError::InternalError("Database not in WAL mode".to_string()))
+    }
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
         let mut checkpoint_result = CheckpointResult::default();
         loop {
