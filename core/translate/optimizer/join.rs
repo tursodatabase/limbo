@@ -58,7 +58,7 @@ pub fn join_lhs_and_rhs<'a>(
     let best_access_method = find_best_access_method_for_join_order(
         rhs_table_reference,
         rhs_constraints,
-        &join_order,
+        join_order,
         maybe_order_target,
         input_cardinality as f64,
     )?;
@@ -133,17 +133,17 @@ pub fn compute_best_join_order<'a>(
         table_references,
         maybe_order_target,
         access_methods_arena,
-        &constraints,
+        constraints,
     )?;
 
     // Keep track of both 1. the best plan overall (not considering sorting), and 2. the best ordered plan (which might not be the same).
     // We assign Some Cost (tm) to any required sort operation, so the best ordered plan may end up being
     // the one we choose, if the cost reduction from avoiding sorting brings it below the cost of the overall best one.
     let mut best_ordered_plan: Option<JoinN> = None;
-    let mut best_plan_is_also_ordered = if let Some(ref order_target) = maybe_order_target {
+    let mut best_plan_is_also_ordered = if let Some(order_target) = maybe_order_target {
         plan_satisfies_order_target(
             &naive_plan,
-            &access_methods_arena,
+            access_methods_arena,
             table_references,
             order_target,
         )
@@ -222,12 +222,8 @@ pub fn compute_best_join_order<'a>(
             let mut left_join_illegal_map: HashMap<usize, TableMask> =
                 HashMap::with_capacity(left_join_count);
             for (i, _) in table_references.iter().enumerate() {
-                for j in i + 1..table_references.len() {
-                    if table_references[j]
-                        .join_info
-                        .as_ref()
-                        .map_or(false, |j| j.outer)
-                    {
+                for (j, table) in table_references.iter().enumerate().skip(1) {
+                    if table.join_info.as_ref().map_or(false, |j| j.outer) {
                         // bitwise OR the masks
                         if let Some(illegal_lhs) = left_join_illegal_map.get_mut(&i) {
                             illegal_lhs.add_table(j);
@@ -323,10 +319,10 @@ pub fn compute_best_join_order<'a>(
                     continue;
                 };
 
-                let satisfies_order_target = if let Some(ref order_target) = maybe_order_target {
+                let satisfies_order_target = if let Some(order_target) = maybe_order_target {
                     plan_satisfies_order_target(
                         &rel,
-                        &access_methods_arena,
+                        access_methods_arena,
                         table_references,
                         order_target,
                     )
@@ -620,12 +616,12 @@ mod tests {
         )];
 
         let access_methods_arena = RefCell::new(Vec::new());
-        let mut available_indexes = HashMap::new();
+        let mut available_indexes = HashMap::<Box<str>, Vec<Arc<Index>>>::new();
         let index = Arc::new(Index {
-            name: "sqlite_autoindex_test_table_1".to_string(),
-            table_name: "test_table".to_string(),
+            name: "sqlite_autoindex_test_table_1".into(),
+            table_name: "test_table".into(),
             columns: vec![IndexColumn {
-                name: "id".to_string(),
+                name: "id".into(),
                 order: SortOrder::Asc,
                 pos_in_table: 0,
             }],
@@ -633,7 +629,7 @@ mod tests {
             ephemeral: false,
             root_page: 1,
         });
-        available_indexes.insert("test_table".to_string(), vec![index]);
+        available_indexes.insert("test_table".into(), vec![index]);
 
         let table_constraints =
             constraints_from_where_clause(&where_clause, &table_references, &available_indexes)
@@ -653,7 +649,9 @@ mod tests {
         let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_test_table_1");
+        assert!(
+            access_method.index.as_ref().unwrap().name.as_ref() == "sqlite_autoindex_test_table_1"
+        );
         assert!(access_method.constraint_refs.len() == 1);
         assert!(
             table_constraints[0].constraints[access_method.constraint_refs[0].constraint_vec_pos]
@@ -682,13 +680,13 @@ mod tests {
         const TABLE1: usize = 0;
         const TABLE2: usize = 1;
 
-        let mut available_indexes = HashMap::new();
+        let mut available_indexes = HashMap::<Box<str>, Vec<Arc<Index>>>::new();
         // Index on the outer table (table1)
         let index1 = Arc::new(Index {
-            name: "index1".to_string(),
-            table_name: "table1".to_string(),
+            name: "index1".into(),
+            table_name: "table1".into(),
             columns: vec![IndexColumn {
-                name: "id".to_string(),
+                name: "id".into(),
                 order: SortOrder::Asc,
                 pos_in_table: 0,
             }],
@@ -696,7 +694,7 @@ mod tests {
             ephemeral: false,
             root_page: 1,
         });
-        available_indexes.insert("table1".to_string(), vec![index1]);
+        available_indexes.insert("table1".into(), vec![index1]);
 
         // SELECT * FROM table1 JOIN table2 WHERE table1.id = table2.id
         // expecting table2 to be chosen first due to the index on table1.id
@@ -727,7 +725,7 @@ mod tests {
         let access_method = &access_methods_arena.borrow()[best_plan.data[1].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        assert!(access_method.index.as_ref().unwrap().name == "index1");
+        assert!(access_method.index.as_ref().unwrap().name.as_ref() == "index1");
         assert!(access_method.constraint_refs.len() == 1);
         assert!(
             table_constraints[TABLE1].constraints
@@ -787,17 +785,17 @@ mod tests {
         const TABLE_NO_CUSTOMERS: usize = 1;
         const TABLE_NO_ORDER_ITEMS: usize = 2;
 
-        let mut available_indexes = HashMap::new();
+        let mut available_indexes = HashMap::<Box<str>, Vec<Arc<Index>>>::new();
         ["orders", "customers", "order_items"]
             .iter()
             .for_each(|table_name| {
                 // add primary key index called sqlite_autoindex_<tablename>_1
                 let index_name = format!("sqlite_autoindex_{}_1", table_name);
                 let index = Arc::new(Index {
-                    name: index_name,
-                    table_name: table_name.to_string(),
+                    name: index_name.into(),
+                    table_name: table_name.to_string().into(),
                     columns: vec![IndexColumn {
-                        name: "id".to_string(),
+                        name: "id".into(),
                         order: SortOrder::Asc,
                         pos_in_table: 0,
                     }],
@@ -805,13 +803,13 @@ mod tests {
                     ephemeral: false,
                     root_page: 1,
                 });
-                available_indexes.insert(table_name.to_string(), vec![index]);
+                available_indexes.insert(table_name.to_string().into(), vec![index]);
             });
         let customer_id_idx = Arc::new(Index {
-            name: "orders_customer_id_idx".to_string(),
-            table_name: "orders".to_string(),
+            name: "orders_customer_id_idx".into(),
+            table_name: "orders".into(),
             columns: vec![IndexColumn {
-                name: "customer_id".to_string(),
+                name: "customer_id".into(),
                 order: SortOrder::Asc,
                 pos_in_table: 1,
             }],
@@ -820,10 +818,10 @@ mod tests {
             root_page: 1,
         });
         let order_id_idx = Arc::new(Index {
-            name: "order_items_order_id_idx".to_string(),
-            table_name: "order_items".to_string(),
+            name: "order_items_order_id_idx".into(),
+            table_name: "order_items".into(),
             columns: vec![IndexColumn {
-                name: "order_id".to_string(),
+                name: "order_id".into(),
                 order: SortOrder::Asc,
                 pos_in_table: 1,
             }],
@@ -833,10 +831,10 @@ mod tests {
         });
 
         available_indexes
-            .entry("orders".to_string())
+            .entry("orders".into())
             .and_modify(|v| v.push(customer_id_idx));
         available_indexes
-            .entry("order_items".to_string())
+            .entry("order_items".into())
             .and_modify(|v| v.push(order_id_idx));
 
         // SELECT * FROM orders JOIN customers JOIN order_items
@@ -889,7 +887,9 @@ mod tests {
         let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_customers_1");
+        assert!(
+            access_method.index.as_ref().unwrap().name.as_ref() == "sqlite_autoindex_customers_1"
+        );
         assert!(access_method.constraint_refs.len() == 1);
         let constraint = &table_constraints[TABLE_NO_CUSTOMERS].constraints
             [access_method.constraint_refs[0].constraint_vec_pos];
@@ -898,7 +898,7 @@ mod tests {
         let access_method = &access_methods_arena.borrow()[best_plan.data[1].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        assert!(access_method.index.as_ref().unwrap().name == "orders_customer_id_idx");
+        assert!(access_method.index.as_ref().unwrap().name.as_ref() == "orders_customer_id_idx");
         assert!(access_method.constraint_refs.len() == 1);
         let constraint = &table_constraints[TABLE_NO_ORDERS].constraints
             [access_method.constraint_refs[0].constraint_vec_pos];
@@ -907,7 +907,7 @@ mod tests {
         let access_method = &access_methods_arena.borrow()[best_plan.data[2].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        assert!(access_method.index.as_ref().unwrap().name == "order_items_order_id_idx");
+        assert!(access_method.index.as_ref().unwrap().name.as_ref() == "order_items_order_id_idx");
         assert!(access_method.constraint_refs.len() == 1);
         let constraint = &table_constraints[TABLE_NO_ORDER_ITEMS].constraints
             [access_method.constraint_refs[0].constraint_vec_pos];
@@ -1197,9 +1197,9 @@ mod tests {
 
     fn _create_column(c: &TestColumn) -> Column {
         Column {
-            name: Some(c.name.clone()),
+            name: Some(c.name.clone().into()),
             ty: c.ty,
-            ty_str: c.ty.to_string(),
+            ty_str: c.ty.to_string().into(),
             is_rowid_alias: c.is_rowid_alias,
             primary_key: false,
             notnull: false,
@@ -1234,7 +1234,7 @@ mod tests {
     fn _create_btree_table(name: &str, columns: Vec<Column>) -> Rc<BTreeTable> {
         Rc::new(BTreeTable {
             root_page: 1, // Page number doesn't matter for tests
-            name: name.to_string(),
+            name: name.to_string().into(),
             primary_key_columns: vec![],
             columns,
             has_rowid: true,
@@ -1281,6 +1281,6 @@ mod tests {
 
     /// Creates a numeric literal expression
     fn _create_numeric_literal(value: &str) -> Expr {
-        Expr::Literal(ast::Literal::Numeric(value.to_string()))
+        Expr::Literal(ast::Literal::numeric(value))
     }
 }
