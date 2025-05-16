@@ -927,15 +927,36 @@ pub fn op_open_read(
     let mut cursors = state.cursors.borrow_mut();
     match cursor_type {
         CursorType::BTreeTable(_) => {
-            let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
+            let cursor = BTreeCursor::new_table(mv_cursor, pager.clone(), *root_page);
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::BTreeIndex(index) => {
-            let cursor =
-                BTreeCursor::new_index(mv_cursor, pager.clone(), *root_page, index.as_ref());
+            let table = program.table_references.iter().find_map(|table_ref| {
+                table_ref.btree().and_then(|table| {
+                    if table.name == index.table_name {
+                        Some(table)
+                    } else {
+                        None
+                    }
+                })
+            });
+            let collations = table.map_or(Vec::new(), |table| {
+                table
+                    .columns
+                    .iter()
+                    .map(|column| column.collation.unwrap_or_default())
+                    .collect::<Vec<_>>()
+            });
+            let cursor = BTreeCursor::new_index(
+                mv_cursor,
+                pager.clone(),
+                *root_page,
+                index.as_ref(),
+                collations,
+            );
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
@@ -4220,14 +4241,35 @@ pub fn op_open_write(
         None => None,
     };
     if let Some(index) = maybe_index {
-        let cursor =
-            BTreeCursor::new_index(mv_cursor, pager.clone(), root_page as usize, index.as_ref());
+        let table = program.table_references.iter().find_map(|table_ref| {
+            table_ref.btree().and_then(|table| {
+                if table.name == index.table_name {
+                    Some(table)
+                } else {
+                    None
+                }
+            })
+        });
+        let collations = table.map_or(Vec::new(), |table| {
+            table
+                .columns
+                .iter()
+                .map(|column| column.collation.unwrap_or_default())
+                .collect::<Vec<_>>()
+        });
+        let cursor = BTreeCursor::new_index(
+            mv_cursor,
+            pager.clone(),
+            root_page as usize,
+            index.as_ref(),
+            collations,
+        );
         cursors
             .get_mut(*cursor_id)
             .unwrap()
             .replace(Cursor::new_btree(cursor));
     } else {
-        let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
+        let cursor = BTreeCursor::new_table(mv_cursor, pager.clone(), root_page as usize);
         cursors
             .get_mut(*cursor_id)
             .unwrap()
@@ -4297,7 +4339,8 @@ pub fn op_destroy(
     if *is_temp == 1 {
         todo!("temp databases not implemented yet.");
     }
-    let mut cursor = BTreeCursor::new(None, pager.clone(), *root);
+    // TODO not sure if should be BTreeCursor::new_table or BTreeCursor::new_index here or neither and just pass an emtpy vec
+    let mut cursor = BTreeCursor::new(None, pager.clone(), *root, Vec::new());
     cursor.btree_destroy()?;
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -4671,7 +4714,7 @@ pub fn op_open_ephemeral(
         }
         None => None,
     };
-    let mut cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+    let mut cursor = BTreeCursor::new_table(mv_cursor, pager, root_page as usize);
     cursor.rewind()?; // Will never return io
 
     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
