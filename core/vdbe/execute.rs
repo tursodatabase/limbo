@@ -945,10 +945,10 @@ pub fn op_open_read(
             });
             let collations = table.map_or(Vec::new(), |table| {
                 table
-                    .columns
-                    .iter()
-                    .map(|column| column.collation.unwrap_or_default())
-                    .collect::<Vec<_>>()
+                    .column_collations()
+                    .into_iter()
+                    .map(|c| c.unwrap_or_default())
+                    .collect()
             });
             let cursor = BTreeCursor::new_index(
                 mv_cursor,
@@ -2162,7 +2162,6 @@ pub fn op_idx_ge(
         start_reg,
         num_regs,
         target_pc,
-        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2181,7 +2180,7 @@ pub fn op_idx_ge(
                 &idx_values,
                 &record_values,
                 cursor.index_key_sort_order,
-                collation.unwrap_or_default(),
+                cursor.collations(),
             );
             if ord.is_ge() {
                 target_pc.to_offset_int()
@@ -2227,7 +2226,6 @@ pub fn op_idx_le(
         start_reg,
         num_regs,
         target_pc,
-        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2246,7 +2244,7 @@ pub fn op_idx_le(
                 &idx_values,
                 &record_values,
                 cursor.index_key_sort_order,
-                collation.unwrap_or_default(),
+                cursor.collations(),
             );
             if ord.is_le() {
                 target_pc.to_offset_int()
@@ -2274,7 +2272,6 @@ pub fn op_idx_gt(
         start_reg,
         num_regs,
         target_pc,
-        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2293,7 +2290,7 @@ pub fn op_idx_gt(
                 &idx_values,
                 &record_values,
                 cursor.index_key_sort_order,
-                collation.unwrap_or_default(),
+                cursor.collations(),
             );
             if ord.is_gt() {
                 target_pc.to_offset_int()
@@ -2321,7 +2318,6 @@ pub fn op_idx_lt(
         start_reg,
         num_regs,
         target_pc,
-        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2340,7 +2336,7 @@ pub fn op_idx_lt(
                 &idx_values,
                 &record_values,
                 cursor.index_key_sort_order,
-                collation.unwrap_or_default(),
+                cursor.collations(),
             );
             if ord.is_lt() {
                 target_pc.to_offset_int()
@@ -2810,12 +2806,18 @@ pub fn op_sorter_open(
         cursor_id,
         columns: _,
         order,
-        collation,
+        collations,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let cursor = Sorter::new(order, collation.unwrap_or_default());
+    let cursor = Sorter::new(
+        order,
+        collations
+            .iter()
+            .map(|collation| collation.unwrap_or_default())
+            .collect(),
+    );
     let mut cursors = state.cursors.borrow_mut();
     cursors
         .get_mut(*cursor_id)
@@ -4252,10 +4254,10 @@ pub fn op_open_write(
         });
         let collations = table.map_or(Vec::new(), |table| {
             table
-                .columns
-                .iter()
-                .map(|column| column.collation.unwrap_or_default())
-                .collect::<Vec<_>>()
+                .column_collations()
+                .into_iter()
+                .map(|c| c.unwrap_or_default())
+                .collect()
         });
         let cursor = BTreeCursor::new_index(
             mv_cursor,

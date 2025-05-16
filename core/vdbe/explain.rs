@@ -817,28 +817,24 @@ pub fn insn_to_str(
                 start_reg,
                 num_regs,
                 target_pc,
-                collation,
             }
             | Insn::IdxGE {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
-                collation,
             }
             | Insn::IdxLE {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
-                collation,
             }
             | Insn::IdxLT {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
-                collation,
             } => (
                 match insn {
                     Insn::IdxGT { .. } => "IdxGT",
@@ -850,7 +846,7 @@ pub fn insn_to_str(
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *start_reg as i32,
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(""),
                 0,
                 format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
             ),
@@ -890,20 +886,21 @@ pub fn insn_to_str(
                 cursor_id,
                 columns,
                 order,
-                collation,
+                collations,
             } => {
                 let _p4 = String::new();
                 let to_print: Vec<String> = order
                     .iter()
-                    .enumerate()
-                    .map(|(idx, v)| {
-                        if idx == 0 {
-                            collation.unwrap_or_default().to_string()
+                    .zip(collations.iter())
+                    .map(|(v, collation)| {
+                        let sign = match v {
+                            SortOrder::Asc => "",
+                            SortOrder::Desc => "-",
+                        };
+                        if collation.is_some() {
+                            format!("{sign}{}", collation.unwrap())
                         } else {
-                            match v {
-                                SortOrder::Asc => "B".to_string(),
-                                SortOrder::Desc => "-B".to_string(),
-                            }
+                            format!("{sign}B")
                         }
                     })
                     .collect();

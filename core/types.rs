@@ -1104,11 +1104,12 @@ pub fn compare_immutable(
     l: &[RefValue],
     r: &[RefValue],
     index_key_sort_order: IndexKeySortOrder,
-    collation: CollationSeq,
+    collations: &[CollationSeq],
 ) -> std::cmp::Ordering {
     assert_eq!(l.len(), r.len());
     for (i, (l, r)) in l.iter().zip(r).enumerate() {
         let column_order = index_key_sort_order.get_sort_order_for_col(i);
+        let collation = collations.get(i).copied().unwrap_or_default();
         let cmp = match (l, r) {
             (RefValue::Text(left), RefValue::Text(right)) => {
                 collation.compare_strings(left.as_str(), right.as_str())

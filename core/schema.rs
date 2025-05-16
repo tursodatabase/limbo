@@ -236,6 +236,10 @@ impl BTreeTable {
         sql.push_str(");\n");
         sql
     }
+
+    pub fn column_collations(&self) -> Vec<Option<CollationSeq>> {
+        self.columns.iter().map(|column| column.collation).collect()
+    }
 }
 
 #[derive(Debug, Default)]

@@ -49,13 +49,10 @@ pub fn init_order_by(
      * then the collating sequence of the column is used to determine sort order.
      * If the expression is not a column and has no COLLATE clause, then the BINARY collating sequence is used.
      */
-    let mut collation = None;
-    for (expr, _) in order_by.iter() {
-        match expr {
-            ast::Expr::Collate(_, collation_name) => {
-                collation = Some(CollationSeq::new(collation_name)?);
-                break;
-            }
+    let collations = order_by
+        .iter()
+        .map(|(expr, _)| match expr {
+            ast::Expr::Collate(_, collation_name) => CollationSeq::new(collation_name).map(Some),
             ast::Expr::Column { table, column, .. } => {
                 let table_reference = referenced_tables.get(*table).unwrap();
 
@@ -63,19 +60,16 @@ pub fn init_order_by(
                     crate::bail_parse_error!("column index out of bounds");
                 };
 
-                if table_column.collation.is_some() {
-                    collation = table_column.collation;
-                    break;
-                }
+                Ok(table_column.collation)
             }
-            _ => {}
-        };
-    }
+            _ => Ok(Some(CollationSeq::default())),
+        })
+        .collect::<Result<Vec<_>>>()?;
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sort_cursor,
         columns: order_by.len(),
         order: order_by.iter().map(|(_, direction)| *direction).collect(),
-        collation,
+        collations,
     });
     Ok(())
 }

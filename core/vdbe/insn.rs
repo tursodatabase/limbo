@@ -556,7 +556,6 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
-        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -566,7 +565,6 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
-        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -576,7 +574,6 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
-        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -586,7 +583,6 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
-        collation: Option<CollationSeq>,
     },
 
     /// Decrement the given register and jump to the given PC if the result is zero.
@@ -609,10 +605,10 @@ pub enum Insn {
 
     /// Open a sorter.
     SorterOpen {
-        cursor_id: CursorID,   // P1
-        columns: usize,        // P2
-        order: Vec<SortOrder>, // P4.
-        collation: Option<CollationSeq>,
+        cursor_id: CursorID,                   // P1
+        columns: usize,                        // P2
+        order: Vec<SortOrder>,                 // P4.
+        collations: Vec<Option<CollationSeq>>, // The only reason for using Option<CollationSeq> is so the explain message is the same as in SQLite
     },
 
     /// Insert a row into the sorter.

@@ -10,17 +10,17 @@ pub struct Sorter {
     current: Option<ImmutableRecord>,
     order: IndexKeySortOrder,
     key_len: usize,
-    collation: CollationSeq,
+    collations: Vec<CollationSeq>,
 }
 
 impl Sorter {
-    pub fn new(order: &[SortOrder], collation: CollationSeq) -> Self {
+    pub fn new(order: &[SortOrder], collations: Vec<CollationSeq>) -> Self {
         Self {
             records: Vec::new(),
             current: None,
             key_len: order.len(),
             order: IndexKeySortOrder::from_list(order),
-            collation,
+            collations,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -38,7 +38,7 @@ impl Sorter {
                 &a.values[..self.key_len],
                 &b.values[..self.key_len],
                 self.order,
-                self.collation,
+                &self.collations,
             )
         });
         self.records.reverse();
