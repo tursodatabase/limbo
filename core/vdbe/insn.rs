@@ -556,6 +556,7 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
+        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -565,6 +566,7 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
+        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -574,6 +576,7 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
+        collation: Option<CollationSeq>,
     },
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
@@ -583,6 +586,7 @@ pub enum Insn {
         start_reg: usize,
         num_regs: usize,
         target_pc: BranchOffset,
+        collation: Option<CollationSeq>,
     },
 
     /// Decrement the given register and jump to the given PC if the result is zero.

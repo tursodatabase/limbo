@@ -17,6 +17,7 @@ use crate::{
 
 use super::{
     aggregation::translate_aggregation_step,
+    collate::CollationSeq,
     emitter::{OperationMode, TranslateCtx},
     expr::{
         translate_condition_expr, translate_expr, translate_expr_no_constant_opt,
@@ -1127,24 +1128,28 @@ fn emit_seek_termination(
             start_reg,
             num_regs,
             target_pc: loop_end,
+            collation: Some(CollationSeq::Binary),
         }),
         (true, SeekOp::GT) => program.emit_insn(Insn::IdxGT {
             cursor_id: seek_cursor_id,
             start_reg,
             num_regs,
             target_pc: loop_end,
+            collation: Some(CollationSeq::Binary),
         }),
         (true, SeekOp::LE) => program.emit_insn(Insn::IdxLE {
             cursor_id: seek_cursor_id,
             start_reg,
             num_regs,
             target_pc: loop_end,
+            collation: Some(CollationSeq::Binary),
         }),
         (true, SeekOp::LT) => program.emit_insn(Insn::IdxLT {
             cursor_id: seek_cursor_id,
             start_reg,
             num_regs,
             target_pc: loop_end,
+            collation: Some(CollationSeq::Binary),
         }),
         (false, SeekOp::GE) => program.emit_insn(Insn::Ge {
             lhs: rowid_reg.unwrap(),

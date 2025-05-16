@@ -817,24 +817,28 @@ pub fn insn_to_str(
                 start_reg,
                 num_regs,
                 target_pc,
+                collation,
             }
             | Insn::IdxGE {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
+                collation,
             }
             | Insn::IdxLE {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
+                collation,
             }
             | Insn::IdxLT {
                 cursor_id,
                 start_reg,
                 num_regs,
                 target_pc,
+                collation,
             } => (
                 match insn {
                     Insn::IdxGT { .. } => "IdxGT",
@@ -846,7 +850,7 @@ pub fn insn_to_str(
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *start_reg as i32,
-                Value::build_text(""),
+                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
             ),

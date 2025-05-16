@@ -2141,6 +2141,7 @@ pub fn op_idx_ge(
         start_reg,
         num_regs,
         target_pc,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2155,7 +2156,12 @@ pub fn op_idx_ge(
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
             let record_values = record_from_regs.get_values();
-            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
+            let ord = compare_immutable(
+                &idx_values,
+                &record_values,
+                cursor.index_key_sort_order,
+                collation.unwrap_or_default(),
+            );
             if ord.is_ge() {
                 target_pc.to_offset_int()
             } else {
@@ -2200,6 +2206,7 @@ pub fn op_idx_le(
         start_reg,
         num_regs,
         target_pc,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2214,7 +2221,12 @@ pub fn op_idx_le(
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
             let record_values = record_from_regs.get_values();
-            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
+            let ord = compare_immutable(
+                &idx_values,
+                &record_values,
+                cursor.index_key_sort_order,
+                collation.unwrap_or_default(),
+            );
             if ord.is_le() {
                 target_pc.to_offset_int()
             } else {
@@ -2241,6 +2253,7 @@ pub fn op_idx_gt(
         start_reg,
         num_regs,
         target_pc,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2255,7 +2268,12 @@ pub fn op_idx_gt(
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
             let record_values = record_from_regs.get_values();
-            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
+            let ord = compare_immutable(
+                &idx_values,
+                &record_values,
+                cursor.index_key_sort_order,
+                collation.unwrap_or_default(),
+            );
             if ord.is_gt() {
                 target_pc.to_offset_int()
             } else {
@@ -2282,6 +2300,7 @@ pub fn op_idx_lt(
         start_reg,
         num_regs,
         target_pc,
+        collation,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2296,7 +2315,12 @@ pub fn op_idx_lt(
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
             let record_values = record_from_regs.get_values();
-            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
+            let ord = compare_immutable(
+                &idx_values,
+                &record_values,
+                cursor.index_key_sort_order,
+                collation.unwrap_or_default(),
+            );
             if ord.is_lt() {
                 target_pc.to_offset_int()
             } else {

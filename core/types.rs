@@ -1109,13 +1109,6 @@ pub fn compare_immutable(
     assert_eq!(l.len(), r.len());
     for (i, (l, r)) in l.iter().zip(r).enumerate() {
         let column_order = index_key_sort_order.get_sort_order_for_col(i);
-        let mut l = l;
-        let mut r = r;
-        if !matches!(column_order, SortOrder::Asc) {
-            let tmp = l;
-            l = r;
-            r = tmp;
-        }
         let cmp = match (l, r) {
             (RefValue::Text(left), RefValue::Text(right)) => {
                 collation.compare_strings(left.as_str(), right.as_str())

@@ -15,13 +15,9 @@ test-shell = "cli_tests.cli_test_cases:main"
 test-extensions = "cli_tests.extensions:main"
 test-update = "cli_tests.update:main"
 test-memory = "cli_tests.memory:main"
-<<<<<<< HEAD
 bench-vfs = "cli_tests.vfs_bench:main"
 test-constraint = "cli_tests.constraint:main"
-||||||| parent of b9e03a19 (Removed repeated binary expression translation. Adjusted the set_collation to capture additional context of whether it was set by a Collate expression or not. Added some tests to prove those modifications were necessary.)
-=======
 test-collate = "cli_tests.collate:main"
->>>>>>> b9e03a19 (Removed repeated binary expression translation. Adjusted the set_collation to capture additional context of whether it was set by a Collate expression or not. Added some tests to prove those modifications were necessary.)
 
 [tool.uv]
 package = true
