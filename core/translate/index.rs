@@ -120,6 +120,7 @@ pub fn translate_create_index(
         cursor_id: sorter_cursor_id,
         columns: columns.len(),
         order,
+        collations: tbl.column_collations(),
     });
     let content_reg = program.alloc_register();
     program.emit_insn(Insn::OpenPseudo {
@@ -405,6 +406,7 @@ pub fn translate_drop_index(
         rhs: dest_reg,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
+        collation: program.curr_collation(),
     });
 
     // read type of table
@@ -420,6 +422,7 @@ pub fn translate_drop_index(
         rhs: dest_reg,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
+        collation: program.curr_collation(),
     });
 
     program.emit_insn(Insn::RowId {

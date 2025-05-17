@@ -1,3 +1,4 @@
+use crate::translate::collate::CollationSeq;
 use crate::{util::normalize_ident, Result};
 use crate::{LimboError, VirtualTable};
 use core::fmt;
@@ -235,6 +236,10 @@ impl BTreeTable {
         sql.push_str(");\n");
         sql
     }
+
+    pub fn column_collations(&self) -> Vec<Option<CollationSeq>> {
+        self.columns.iter().map(|column| column.collation).collect()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -261,6 +266,7 @@ impl PseudoTable {
             notnull: false,
             default: None,
             unique: false,
+            collation: None,
         });
     }
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
@@ -418,6 +424,7 @@ fn create_table(
                 let mut notnull = false;
                 let mut order = SortOrder::Asc;
                 let mut unique = false;
+                let mut collation = None;
                 for c_def in &col_def.constraints {
                     match &c_def.constraint {
                         limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
@@ -442,6 +449,10 @@ fn create_table(
                             }
                             unique = true;
                         }
+                        limbo_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
+                            collation = Some(CollationSeq::new(collation_name.0.as_str())?);
+                        }
+                        // Collate
                         _ => {}
                     }
                 }
@@ -464,6 +475,7 @@ fn create_table(
                     notnull,
                     default,
                     unique,
+                    collation,
                 });
             }
             if options.contains(TableOptions::WITHOUT_ROWID) {
@@ -534,6 +546,7 @@ pub struct Column {
     pub notnull: bool,
     pub default: Option<Expr>,
     pub unique: bool,
+    pub collation: Option<CollationSeq>,
 }
 
 impl Column {
@@ -737,6 +750,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             },
             Column {
                 name: Some("name".to_string()),
@@ -747,6 +761,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             },
             Column {
                 name: Some("tbl_name".to_string()),
@@ -757,6 +772,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             },
             Column {
                 name: Some("rootpage".to_string()),
@@ -767,6 +783,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             },
             Column {
                 name: Some("sql".to_string()),
@@ -777,6 +794,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             },
         ],
         unique_sets: None,
@@ -1406,6 +1424,7 @@ mod tests {
                 notnull: false,
                 default: None,
                 unique: false,
+                collation: None,
             }],
             unique_sets: None,
         };

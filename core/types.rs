@@ -7,6 +7,7 @@ use crate::pseudo::PseudoCursor;
 use crate::schema::Index;
 use crate::storage::btree::BTreeCursor;
 use crate::storage::sqlite3_ondisk::write_varint;
+use crate::translate::collate::CollationSeq;
 use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::{Register, VTabOpaqueCursor};
@@ -1103,11 +1104,18 @@ pub fn compare_immutable(
     l: &[RefValue],
     r: &[RefValue],
     index_key_sort_order: IndexKeySortOrder,
+    collations: &[CollationSeq],
 ) -> std::cmp::Ordering {
     assert_eq!(l.len(), r.len());
     for (i, (l, r)) in l.iter().zip(r).enumerate() {
         let column_order = index_key_sort_order.get_sort_order_for_col(i);
-        let cmp = l.partial_cmp(r).unwrap();
+        let collation = collations.get(i).copied().unwrap_or_default();
+        let cmp = match (l, r) {
+            (RefValue::Text(left), RefValue::Text(right)) => {
+                collation.compare_strings(left.as_str(), right.as_str())
+            }
+            _ => l.partial_cmp(r).unwrap(),
+        };
         if !cmp.is_eq() {
             return match column_order {
                 SortOrder::Asc => cmp,

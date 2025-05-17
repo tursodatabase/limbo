@@ -1220,6 +1220,7 @@ mod tests {
             );
             let query = format!("INSERT INTO t VALUES ({}, {}, {})", x, y, z);
             log::info!("insert: {}", query);
+            dbg!(&query);
             assert_eq!(
                 limbo_exec_rows(&db, &limbo_conn, &query),
                 sqlite_exec_rows(&sqlite_conn, &query),

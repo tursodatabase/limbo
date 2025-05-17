@@ -277,7 +277,7 @@ pub fn emit_query<'a>(
 
     // Initialize cursors and other resources needed for query execution
     if let Some(ref mut order_by) = plan.order_by {
-        init_order_by(program, t_ctx, order_by)?;
+        init_order_by(program, t_ctx, order_by, &plan.table_references)?;
     }
 
     if let Some(ref group_by) = plan.group_by {
@@ -916,6 +916,7 @@ fn emit_update_insns(
             rhs: idx_rowid_reg,
             target_pc: constraint_check,
             flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
+            collation: program.curr_collation(),
         });
 
         program.emit_insn(Insn::Halt {
@@ -945,6 +946,7 @@ fn emit_update_insns(
                 rhs: beg,
                 target_pc: record_label,
                 flags: CmpInsFlags::default(),
+                collation: program.curr_collation(),
             });
 
             program.emit_insn(Insn::NotExists {

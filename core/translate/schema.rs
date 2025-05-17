@@ -709,6 +709,7 @@ pub fn translate_drop_table(
         rhs: table_reg,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
+        collation: program.curr_collation(),
     });
     program.emit_insn(Insn::Column {
         cursor_id: sqlite_schema_cursor_id,
@@ -720,6 +721,7 @@ pub fn translate_drop_table(
         rhs: table_type,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
+        collation: program.curr_collation(),
     });
     program.emit_insn(Insn::RowId {
         cursor_id: sqlite_schema_cursor_id,

@@ -193,7 +193,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | ... OVER (...)            | No      | Is incorrectly ignored                   |
 | (expr)                    | Yes     |                                          |
 | CAST (expr AS type)       | Yes     |                                          |
-| COLLATE                   | No      |                                          |
+| COLLATE                   | Partial | Custom Collations not supported          |
 | (NOT) LIKE                | Yes     |                                          |
 | (NOT) GLOB                | Yes     |                                          |
 | (NOT) REGEXP              | No      |                                          |

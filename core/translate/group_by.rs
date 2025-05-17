@@ -5,6 +5,7 @@ use limbo_sqlite3_parser::ast;
 use crate::{
     function::AggFunc,
     schema::{Column, PseudoTable},
+    translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
@@ -117,10 +118,39 @@ pub fn init_group_by(
     let row_source = if let Some(sort_order) = group_by.sort_order.as_ref() {
         let sort_cursor = program.alloc_cursor_id(None, CursorType::Sorter);
         let sorter_column_count = plan.group_by_sorter_column_count();
+        // Should work the same way as Order By
+        /*
+         * Terms of the ORDER BY clause that is part of a SELECT statement may be assigned a collating sequence using the COLLATE operator,
+         * in which case the specified collating function is used for sorting.
+         * Otherwise, if the expression sorted by an ORDER BY clause is a column,
+         * then the collating sequence of the column is used to determine sort order.
+         * If the expression is not a column and has no COLLATE clause, then the BINARY collating sequence is used.
+         */
+        let collations = group_by
+            .exprs
+            .iter()
+            .map(|expr| match expr {
+                ast::Expr::Collate(_, collation_name) => {
+                    CollationSeq::new(collation_name).map(Some)
+                }
+                ast::Expr::Column { table, column, .. } => {
+                    let table_reference = plan.table_references.get(*table).unwrap();
+
+                    let Some(table_column) = table_reference.table.get_column_at(*column) else {
+                        crate::bail_parse_error!("column index out of bounds");
+                    };
+
+                    Ok(table_column.collation)
+                }
+                _ => Ok(Some(CollationSeq::default())),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         program.emit_insn(Insn::SorterOpen {
             cursor_id: sort_cursor,
             columns: sorter_column_count,
             order: sort_order.clone(),
+            collations,
         });
         let pseudo_cursor = group_by_create_pseudo_table(program, sorter_column_count);
         GroupByRowSource::Sorter {
@@ -217,6 +247,7 @@ pub fn group_by_create_pseudo_table(
             notnull: false,
             default: None,
             unique: false,
+            collation: None,
         })
         .collect::<Vec<_>>();
 
@@ -461,6 +492,7 @@ pub fn group_by_process_single_group(
         start_reg_a: registers.reg_group_exprs_cmp,
         start_reg_b: groups_start_reg,
         count: group_by.exprs.len(),
+        collation: program.curr_collation(),
     });
 
     program.add_comment(
