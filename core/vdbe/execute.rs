@@ -934,15 +934,11 @@ pub fn op_open_read(
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::BTreeIndex(index) => {
-            let table = program.table_references.iter().find_map(|table_ref| {
-                table_ref.btree().and_then(|table| {
-                    if table.name == index.table_name {
-                        Some(table)
-                    } else {
-                        None
-                    }
-                })
-            });
+            let conn = program.connection.upgrade().unwrap();
+            let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+            let table = schema
+                .get_table(&index.table_name)
+                .map_or(None, |table| table.btree());
             let collations = table.map_or(Vec::new(), |table| {
                 table
                     .column_collations()
@@ -4243,15 +4239,11 @@ pub fn op_open_write(
         None => None,
     };
     if let Some(index) = maybe_index {
-        let table = program.table_references.iter().find_map(|table_ref| {
-            table_ref.btree().and_then(|table| {
-                if table.name == index.table_name {
-                    Some(table)
-                } else {
-                    None
-                }
-            })
-        });
+        let conn = program.connection.upgrade().unwrap();
+        let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+        let table = schema
+            .get_table(&index.table_name)
+            .map_or(None, |table| table.btree());
         let collations = table.map_or(Vec::new(), |table| {
             table
                 .column_collations()

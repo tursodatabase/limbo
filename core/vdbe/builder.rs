@@ -611,10 +611,6 @@ impl ProgramBuilder {
         self.collation = None;
     }
 
-    // pub fn pop_collation(&mut self) -> Option<CollationSeq> {
-    //     self.collations.pop()
-    // }
-
     pub fn build(
         mut self,
         database_header: Arc<SpinLock<DatabaseHeader>>,
