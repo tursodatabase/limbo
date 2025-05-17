@@ -1418,16 +1418,30 @@ pub fn insn_to_str(
                 target_pc,
                 record_reg,
                 ..
+            }
+            | Insn::Found {
+                cursor_id,
+                target_pc,
+                record_reg,
+                ..
             } => (
-                "NotFound",
+                if matches!(insn, Insn::NotFound { .. }) {
+                    "NotFound"
+                } else {
+                    "Found"
+                },
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *record_reg as i32,
                 Value::build_text(""),
                 0,
                 format!(
-                    "if (r[{}] != NULL) goto {}",
-                    record_reg,
+                    "if {}found goto {}",
+                    if matches!(insn, Insn::NotFound { .. }) {
+                        "not "
+                    } else {
+                        ""
+                    },
                     target_pc.to_debug_int()
                 ),
             ),

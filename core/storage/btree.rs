@@ -5068,9 +5068,12 @@ fn debug_validate_cells_core(page: &PageContent, usable_space: u16) {
             usable_space as usize,
         );
         let buf = &page.as_ptr()[offset..offset + size];
+        // E.g. the following table btree cell may just have two bytes:
+        // Payload size 0 (stored as SerialTypeKind::ConstInt0)
+        // Rowid 1 (stored as SerialTypeKind::ConstInt1)
         assert!(
-            size >= 4,
-            "cell size should be at least 4 bytes idx={}, cell={:?}, offset={}",
+            size >= 2,
+            "cell size should be at least 2 bytes idx={}, cell={:?}, offset={}",
             i,
             buf,
             offset

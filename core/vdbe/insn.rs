@@ -849,6 +849,15 @@ pub enum Insn {
     Once {
         target_pc_when_reentered: BranchOffset,
     },
+    /// Search for a record in the index cursor.
+    /// If any entry for which the key is a prefix exists, jump to target_pc.
+    /// Otherwise, continue to the next instruction.
+    Found {
+        cursor_id: CursorID,
+        target_pc: BranchOffset,
+        record_reg: usize,
+        num_regs: usize,
+    },
     /// Search for record in the index cusor, if any entry for which the key is a prefix exists
     /// is a no-op, otherwise go to target_pc
     /// Example =>
@@ -995,7 +1004,7 @@ impl Insn {
             Insn::ReadCookie { .. } => execute::op_read_cookie,
             Insn::OpenEphemeral { .. } | Insn::OpenAutoindex { .. } => execute::op_open_ephemeral,
             Insn::Once { .. } => execute::op_once,
-            Insn::NotFound { .. } => execute::op_not_found,
+            Insn::Found { .. } | Insn::NotFound { .. } => execute::op_found,
             Insn::Affinity { .. } => execute::op_affinity,
             Insn::IdxDelete { .. } => execute::op_idx_delete,
             Insn::Count { .. } => execute::op_count,

@@ -791,11 +791,53 @@ pub enum Search {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+
+pub enum AggDistinctness {
+    /// The aggregate is not a DISTINCT aggregate.
+    NonDistinct,
+    /// The aggregate is a DISTINCT aggregate.
+    Distinct { ctx: Option<DistinctAggCtx> },
+}
+
+impl AggDistinctness {
+    pub fn from_ast(distinctness: Option<&ast::Distinctness>) -> Self {
+        match distinctness {
+            Some(ast::Distinctness::Distinct) => Self::Distinct { ctx: None },
+            Some(ast::Distinctness::All) => Self::NonDistinct,
+            None => Self::NonDistinct,
+        }
+    }
+    pub fn is_distinct(&self) -> bool {
+        matches!(self, AggDistinctness::Distinct { .. })
+    }
+}
+
+/// Translation context for handling distinct aggregates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DistinctAggCtx {
+    /// The cursor ID for the ephemeral index opened for the distinct aggregate.
+    /// This is used to track the distinct values and avoid duplicates.
+    pub cursor_id: usize,
+    /// The index name for the ephemeral index opened for the distinct aggregate.
+    pub ephemeral_index_name: String,
+    /// The label for the on conflict branch.
+    /// When a duplicate is found, the program will jump to the offset this label points to.
+    pub label_on_conflict: BranchOffset,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aggregate {
     pub func: AggFunc,
     pub args: Vec<ast::Expr>,
     pub original_expr: ast::Expr,
+    pub distinctness: AggDistinctness,
+}
+
+impl Aggregate {
+    pub fn is_distinct(&self) -> bool {
+        self.distinctness.is_distinct()
+    }
 }
 
 impl Display for Aggregate {

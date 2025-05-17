@@ -1,14 +1,17 @@
 use limbo_ext::VTabKind;
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 
 use std::sync::Arc;
 
 use crate::{
-    schema::{Index, Table},
-    translate::result_row::emit_select_result,
+    schema::{Index, IndexColumn, Table},
+    translate::{
+        plan::{AggDistinctness, DistinctAggCtx},
+        result_row::emit_select_result,
+    },
     types::SeekOp,
     vdbe::{
-        builder::ProgramBuilder,
+        builder::{CursorType, ProgramBuilder},
         insn::{CmpInsFlags, IdxInsertFlags, Insn},
         BranchOffset, CursorID,
     },
@@ -26,8 +29,8 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        convert_where_to_vtab_constraint, IterationDirection, JoinOrderMember, Operation, Search,
-        SeekDef, SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        convert_where_to_vtab_constraint, Aggregate, GroupBy, IterationDirection, JoinOrderMember,
+        Operation, Search, SeekDef, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
 };
 
@@ -68,12 +71,57 @@ pub fn init_loop(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
+    aggregates: &mut [Aggregate],
+    group_by: Option<&GroupBy>,
     mode: OperationMode,
 ) -> Result<()> {
     assert!(
         t_ctx.meta_left_joins.len() == tables.len(),
         "meta_left_joins length does not match tables length"
     );
+    // Initialize ephemeral indexes for distinct aggregates
+    for (i, agg) in aggregates
+        .iter_mut()
+        .enumerate()
+        .filter(|(_, agg)| agg.is_distinct())
+    {
+        assert!(
+            agg.args.len() == 1,
+            "DISTINCT aggregate functions must have exactly one argument"
+        );
+        let index_name = format!("distinct_agg_{}_{}", i, agg.args[0]);
+        let index = Arc::new(Index {
+            name: index_name.clone(),
+            table_name: String::new(),
+            ephemeral: true,
+            root_page: 0,
+            columns: vec![IndexColumn {
+                name: agg.args[0].to_string(),
+                order: SortOrder::Asc,
+                pos_in_table: 0,
+            }],
+            unique: false,
+        });
+        let cursor_id = program.alloc_cursor_id(
+            Some(index_name.clone()),
+            CursorType::BTreeIndex(index.clone()),
+        );
+        if group_by.is_none() {
+            // In GROUP BY, the ephemeral index is reinitialized for every group
+            // in the clear accumulator subroutine, so we only do it here if there is no GROUP BY.
+            program.emit_insn(Insn::OpenEphemeral {
+                cursor_id,
+                is_table: false,
+            });
+        }
+        agg.distinctness = AggDistinctness::Distinct {
+            ctx: Some(DistinctAggCtx {
+                cursor_id,
+                ephemeral_index_name: index_name,
+                label_on_conflict: program.allocate_label(),
+            }),
+        };
+    }
     for (table_index, table) in tables.iter().enumerate() {
         // Initialize bookkeeping for OUTER JOIN
         if let Some(join_info) = table.join_info.as_ref() {
@@ -721,6 +769,12 @@ fn emit_loop_source<'a>(
                     reg,
                     &t_ctx.resolver,
                 )?;
+                if let AggDistinctness::Distinct { ctx } = &agg.distinctness {
+                    let ctx = ctx
+                        .as_ref()
+                        .expect("distinct aggregate context not populated");
+                    program.preassign_label_to_next_insn(ctx.label_on_conflict);
+                }
             }
 
             let label_emit_nonagg_only_once = if let Some(flag) = t_ctx.reg_nonagg_emit_once_flag {

@@ -1,5 +1,7 @@
 use super::emitter::{emit_program, TranslateCtx};
-use super::plan::{select_star, JoinOrderMember, Operation, Search, SelectQueryType};
+use super::plan::{
+    select_star, AggDistinctness, JoinOrderMember, Operation, Search, SelectQueryType,
+};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
 use crate::translate::optimizer::optimize_plan;
@@ -159,7 +161,7 @@ pub fn prepare_select_plan<'a>(
                         match expr {
                             ast::Expr::FunctionCall {
                                 name,
-                                distinctness: _,
+                                distinctness,
                                 args,
                                 filter_over: _,
                                 order_by: _,
@@ -169,6 +171,10 @@ pub fn prepare_select_plan<'a>(
                                 } else {
                                     0
                                 };
+                                let distinctness = AggDistinctness::from_ast(distinctness.as_ref());
+                                if distinctness.is_distinct() && args_count != 1 {
+                                    crate::bail_parse_error!("DISTINCT aggregate functions must have exactly one argument");
+                                }
                                 match Func::resolve_function(
                                     normalize_ident(name.0.as_str()).as_str(),
                                     args_count,
@@ -192,6 +198,7 @@ pub fn prepare_select_plan<'a>(
                                             func: f,
                                             args: agg_args.clone(),
                                             original_expr: expr.clone(),
+                                            distinctness,
                                         };
                                         aggregate_expressions.push(agg.clone());
                                         plan.result_columns.push(ResultSetColumn {
@@ -205,7 +212,7 @@ pub fn prepare_select_plan<'a>(
                                     }
                                     Ok(_) => {
                                         let contains_aggregates =
-                                            resolve_aggregates(expr, &mut aggregate_expressions);
+                                            resolve_aggregates(expr, &mut aggregate_expressions)?;
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {
                                                 ast::As::Elided(alias) => alias.0.clone(),
@@ -222,7 +229,7 @@ pub fn prepare_select_plan<'a>(
                                                 let contains_aggregates = resolve_aggregates(
                                                     expr,
                                                     &mut aggregate_expressions,
-                                                );
+                                                )?;
                                                 plan.result_columns.push(ResultSetColumn {
                                                     alias: maybe_alias.as_ref().map(|alias| {
                                                         match alias {
@@ -240,6 +247,7 @@ pub fn prepare_select_plan<'a>(
                                                     func: AggFunc::External(f.func.clone().into()),
                                                     args: args.as_ref().unwrap().clone(),
                                                     original_expr: expr.clone(),
+                                                    distinctness,
                                                 };
                                                 aggregate_expressions.push(agg.clone());
                                                 plan.result_columns.push(ResultSetColumn {
@@ -276,6 +284,7 @@ pub fn prepare_select_plan<'a>(
                                             "1".to_string(),
                                         ))],
                                         original_expr: expr.clone(),
+                                        distinctness: AggDistinctness::NonDistinct,
                                     };
                                     aggregate_expressions.push(agg.clone());
                                     plan.result_columns.push(ResultSetColumn {
@@ -295,7 +304,7 @@ pub fn prepare_select_plan<'a>(
                             }
                             expr => {
                                 let contains_aggregates =
-                                    resolve_aggregates(expr, &mut aggregate_expressions);
+                                    resolve_aggregates(expr, &mut aggregate_expressions)?;
                                 plan.result_columns.push(ResultSetColumn {
                                     alias: maybe_alias.as_ref().map(|alias| match alias {
                                         ast::As::Elided(alias) => alias.0.clone(),
@@ -341,7 +350,7 @@ pub fn prepare_select_plan<'a>(
                                 Some(&plan.result_columns),
                             )?;
                             let contains_aggregates =
-                                resolve_aggregates(expr, &mut aggregate_expressions);
+                                resolve_aggregates(expr, &mut aggregate_expressions)?;
                             if !contains_aggregates {
                                 // TODO: sqlite allows HAVING clauses with non aggregate expressions like
                                 // HAVING id = 5. We should support this too eventually (I guess).
@@ -376,7 +385,7 @@ pub fn prepare_select_plan<'a>(
                         &mut plan.table_references,
                         Some(&plan.result_columns),
                     )?;
-                    resolve_aggregates(&o.expr, &mut plan.aggregates);
+                    resolve_aggregates(&o.expr, &mut plan.aggregates)?;
 
                     key.push((o.expr, o.order.unwrap_or(ast::SortOrder::Asc)));
                 }

@@ -4641,22 +4641,30 @@ pub fn op_once(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_not_found(
+pub fn op_found(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NotFound {
-        cursor_id,
-        target_pc,
-        record_reg,
-        num_regs,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
+    let (cursor_id, target_pc, record_reg, num_regs) = match insn {
+        Insn::NotFound {
+            cursor_id,
+            target_pc,
+            record_reg,
+            num_regs,
+        } => (cursor_id, target_pc, record_reg, num_regs),
+        Insn::Found {
+            cursor_id,
+            target_pc,
+            record_reg,
+            num_regs,
+        } => (cursor_id, target_pc, record_reg, num_regs),
+        _ => unreachable!("unexpected Insn {:?}", insn),
     };
+
+    let not = matches!(insn, Insn::NotFound { .. });
 
     let found = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -4679,10 +4687,11 @@ pub fn op_not_found(
         }
     };
 
-    if found {
-        state.pc += 1;
-    } else {
+    let do_jump = (!found && not) || (found && !not);
+    if do_jump {
         state.pc = target_pc.to_offset_int();
+    } else {
+        state.pc += 1;
     }
 
     Ok(InsnFunctionStepResult::Step)

@@ -1,7 +1,8 @@
 use super::{
     plan::{
-        Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo, JoinOrderMember,
-        Operation, Plan, ResultSetColumn, SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        AggDistinctness, Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo,
+        JoinOrderMember, Operation, Plan, ResultSetColumn, SelectPlan, SelectQueryType,
+        TableReference, WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -19,15 +20,20 @@ use limbo_sqlite3_parser::ast::{
 
 pub const ROWID: &str = "rowid";
 
-pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> bool {
+pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> Result<bool> {
     if aggs
         .iter()
         .any(|a| exprs_are_equivalent(&a.original_expr, expr))
     {
-        return true;
+        return Ok(true);
     }
     match expr {
-        Expr::FunctionCall { name, args, .. } => {
+        Expr::FunctionCall {
+            name,
+            args,
+            distinctness,
+            ..
+        } => {
             let args_count = if let Some(args) = &args {
                 args.len()
             } else {
@@ -35,21 +41,29 @@ pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> bool {
             };
             match Func::resolve_function(normalize_ident(name.0.as_str()).as_str(), args_count) {
                 Ok(Func::Agg(f)) => {
+                    let distinctness = AggDistinctness::from_ast(distinctness.as_ref());
+                    let num_args = args.as_ref().map_or(0, |args| args.len());
+                    if distinctness.is_distinct() && num_args != 1 {
+                        crate::bail_parse_error!(
+                            "DISTINCT aggregate functions must have exactly one argument"
+                        );
+                    }
                     aggs.push(Aggregate {
                         func: f,
                         args: args.clone().unwrap_or_default(),
                         original_expr: expr.clone(),
+                        distinctness,
                     });
-                    true
+                    Ok(true)
                 }
                 _ => {
                     let mut contains_aggregates = false;
                     if let Some(args) = args {
                         for arg in args.iter() {
-                            contains_aggregates |= resolve_aggregates(arg, aggs);
+                            contains_aggregates |= resolve_aggregates(arg, aggs)?;
                         }
                     }
-                    contains_aggregates
+                    Ok(contains_aggregates)
                 }
             }
         }
@@ -61,25 +75,26 @@ pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> bool {
                     func: f,
                     args: vec![],
                     original_expr: expr.clone(),
+                    distinctness: AggDistinctness::NonDistinct,
                 });
-                true
+                Ok(true)
             } else {
-                false
+                Ok(false)
             }
         }
         Expr::Binary(lhs, _, rhs) => {
             let mut contains_aggregates = false;
-            contains_aggregates |= resolve_aggregates(lhs, aggs);
-            contains_aggregates |= resolve_aggregates(rhs, aggs);
-            contains_aggregates
+            contains_aggregates |= resolve_aggregates(lhs, aggs)?;
+            contains_aggregates |= resolve_aggregates(rhs, aggs)?;
+            Ok(contains_aggregates)
         }
         Expr::Unary(_, expr) => {
             let mut contains_aggregates = false;
-            contains_aggregates |= resolve_aggregates(expr, aggs);
-            contains_aggregates
+            contains_aggregates |= resolve_aggregates(expr, aggs)?;
+            Ok(contains_aggregates)
         }
         // TODO: handle other expressions that may contain aggregates
-        _ => false,
+        _ => Ok(false),
     }
 }
 

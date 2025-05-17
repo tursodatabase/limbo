@@ -569,6 +569,12 @@ impl ProgramBuilder {
                 Insn::NoConflict { target_pc, .. } => {
                     resolve(target_pc, "NoConflict");
                 }
+                Insn::Found { target_pc, .. } => {
+                    resolve(target_pc, "Found");
+                }
+                Insn::NotFound { target_pc, .. } => {
+                    resolve(target_pc, "NotFound");
+                }
                 _ => {}
             }
         }
