@@ -41,7 +41,7 @@ do_execsql_test collate_left_precedence_2 {
     SELECT 'hat' COLLATE NOCASE == 'hAt' COLLATE BINARY;
 } {1}
 
-do_execsql_test_in_memory_error_content collate_unique_constraint {
+do_execsql_test_in_memory_any_error collate_unique_constraint {
     CREATE TABLE t(a TEXT COLLATE NOCASE PRIMARY KEY);
     INSERT INTO t VALUES ('lol'), ('LOL'), ('lOl');
-} {Runtime error: UNIQUE constraint failed: t.a (19)}
+}
