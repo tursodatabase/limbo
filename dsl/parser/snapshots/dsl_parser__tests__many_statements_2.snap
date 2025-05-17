@@ -1,0 +1,19 @@
+---
+source: dsl/parser/lib.rs
+description: "input: test(test_many, [\"SELECT\", \"INSERT\", \"DELETE\"])"
+expression: res
+---
+Test {
+    kind: Default,
+    mode: Normal,
+    ident: "test_many",
+    statement: Many(
+        [
+            "SELECT",
+            "INSERT",
+            "DELETE",
+        ],
+    ),
+    values: [],
+    options: None,
+}

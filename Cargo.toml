@@ -10,10 +10,12 @@ members = [
     "bindings/rust",
     "bindings/wasm",
     "cli",
-    "core", 
+    "core",
+    "dsl/parser",
+    "dsl/test_runner",
     "extensions/completion",
     "extensions/core",
-    "extensions/crypto", 
+    "extensions/crypto",
     "extensions/percentile",
     "extensions/regexp",
     "extensions/series",
@@ -50,6 +52,8 @@ limbo_series = { path = "extensions/series", version = "0.0.20" }
 limbo_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.0.20" }
 limbo_time = { path = "extensions/time", version = "0.0.20" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.20" }
+rusqlite = { version = "0.34", features = ["bundled"] }
+dsl_parser = { path = "dsl/parser" }
 
 [profile.release]
 debug = "line-tables-only"
@@ -71,3 +75,7 @@ debug = true
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3

@@ -1,0 +1,68 @@
+---
+source: dsl/parser/lib.rs
+description: "input: \n            test(test_many, [\"SELECT\", \"INSERT\", \"DELETE\"], [Null, 1])\n            test(test_many_2, [\"SELECT\",], [[Null, 1], [\"hi\"]])\n            test(test_single, \"SELECT\", 1.234)\n        "
+expression: res
+---
+[
+    Test {
+        kind: Default,
+        mode: Normal,
+        ident: "test_many",
+        statement: Many(
+            [
+                "SELECT",
+                "INSERT",
+                "DELETE",
+            ],
+        ),
+        values: [
+            [
+                Null,
+                Integer(
+                    1,
+                ),
+            ],
+        ],
+        options: None,
+    },
+    Test {
+        kind: Default,
+        mode: Normal,
+        ident: "test_many_2",
+        statement: Many(
+            [
+                "SELECT",
+            ],
+        ),
+        values: [
+            [
+                Null,
+                Integer(
+                    1,
+                ),
+            ],
+            [
+                Text(
+                    "hi",
+                ),
+            ],
+        ],
+        options: None,
+    },
+    Test {
+        kind: Default,
+        mode: Normal,
+        ident: "test_single",
+        statement: Single(
+            "SELECT",
+        ),
+        values: [
+            [
+                Real(
+                    1.234,
+                ),
+            ],
+        ],
+        options: None,
+    },
+]
