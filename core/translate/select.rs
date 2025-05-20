@@ -37,7 +37,7 @@ pub fn translate_select(
         approx_num_labels: estimate_num_labels(select),
     };
     program.extend(&opts);
-    emit_program(&mut program, select_plan, syms)?;
+    emit_program(&mut program, select_plan, syms, |_| {})?;
     Ok(program)
 }
 

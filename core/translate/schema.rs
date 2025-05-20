@@ -24,12 +24,6 @@ use crate::{bail_parse_error, Result};
 use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
-#[derive(Debug, Clone, Copy)]
-pub enum ParseSchema {
-    None,
-    Reload,
-}
-
 pub fn translate_create_table(
     query_mode: QueryMode,
     tbl_name: ast::QualifiedName,

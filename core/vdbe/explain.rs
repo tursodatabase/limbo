@@ -486,7 +486,7 @@ pub fn insn_to_str(
                 let (table_identifier, cursor_type) = &program.cursor_ref[*cursor_id];
                 let column_name: Option<&String> = match cursor_type {
                     CursorType::BTreeTable(table) => {
-                        let name = table.columns.get(*column).unwrap().name.as_ref();
+                        let name = table.columns.get(*column).and_then(|v| v.name.as_ref());
                         name
                     }
                     CursorType::BTreeIndex(index) => {

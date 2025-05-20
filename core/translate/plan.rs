@@ -21,7 +21,7 @@ use crate::{
 };
 use crate::{schema::Type, types::SeekOp, util::can_pushdown_predicate};
 
-use super::{emitter::OperationMode, planner::determine_where_to_eval_term, schema::ParseSchema};
+use super::{emitter::OperationMode, planner::determine_where_to_eval_term};
 
 #[derive(Debug, Clone)]
 pub struct ResultSetColumn {
@@ -507,7 +507,6 @@ pub struct UpdatePlan {
     // whether the WHERE clause is always false
     pub contains_constant_false_condition: bool,
     pub indexes_to_update: Vec<Arc<Index>>,
-    pub parse_schema: ParseSchema,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
