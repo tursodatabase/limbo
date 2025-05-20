@@ -9,3 +9,40 @@ do_execsql_test_on_specific_db {:memory:} alter-table-rename-table {
     ALTER TABLE t1 RENAME TO t2;
     SELECT tbl_name FROM sqlite_schema;
 } { "t2" }
+
+# ALTER TABLE _ RENAME _ TO _
+do_execsql_test_on_specific_db {:memory:} alter-table-rename-column {
+    CREATE TABLE t(a);
+    ALTER TABLE t RENAME a TO b;
+    SELECT sql FROM sqlite_schema;
+} { "CREATE TABLE t(b)" }
+
+# ALTER TABLE _ ADD _
+do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
+    CREATE TABLE t(a);
+    INSERT INTO t VALUES (1);
+    SELECT * FROM t;
+
+    ALTER TABLE t ADD b;
+    SELECT sql FROM sqlite_schema;
+    SELECT * FROM t;
+} {
+  "1"
+  "CREATE TABLE t(a, b)"
+  "1|"
+}
+
+# ALTER TABLE _ DROP _
+do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
+    CREATE TABLE t(a, b);
+    INSERT INTO t VALUES (1, 2);
+    SELECT * FROM t;
+
+    ALTER TABLE t DROP b;
+    SELECT sql FROM sqlite_schema;
+    SELECT * FROM t;
+} {
+  "1|2"
+  "CREATE TABLE t(a)"
+  "1"
+}
