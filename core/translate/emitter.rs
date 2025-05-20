@@ -18,7 +18,6 @@ use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{
     JoinOrderMember, Operation, QueryDestination, SelectPlan, TableReferences, UpdatePlan,
 };
-use super::schema::ParseSchema;
 use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
@@ -180,11 +179,12 @@ pub fn emit_program(
     plan: Plan,
     schema: &Schema,
     syms: &SymbolTable,
+    after: impl FnOnce(&mut ProgramBuilder),
 ) -> Result<()> {
     match plan {
         Plan::Select(plan) => emit_program_for_select(program, plan, schema, syms),
         Plan::Delete(plan) => emit_program_for_delete(program, plan, schema, syms),
-        Plan::Update(plan) => emit_program_for_update(program, plan, schema, syms),
+        Plan::Update(plan) => emit_program_for_update(program, plan, schema, syms, after),
         Plan::CompoundSelect { .. } => {
             emit_program_for_compound_select(program, plan, schema, syms)
         }
@@ -810,6 +810,7 @@ fn emit_program_for_update(
     mut plan: UpdatePlan,
     schema: &Schema,
     syms: &SymbolTable,
+    after: impl FnOnce(&mut ProgramBuilder),
 ) -> Result<()> {
     let mut t_ctx = TranslateCtx::new(
         program,
@@ -867,16 +868,6 @@ fn emit_program_for_update(
     )?;
     emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
 
-    match plan.parse_schema {
-        ParseSchema::None => {}
-        ParseSchema::Reload => {
-            program.emit_insn(crate::vdbe::insn::Insn::ParseSchema {
-                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                where_clause: None,
-            });
-        }
-    }
-
     close_loop(
         program,
         &mut t_ctx,
@@ -885,6 +876,8 @@ fn emit_program_for_update(
     )?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
+
+    after(program);
 
     // Finalize program
     program.epilogue(TransactionMode::Write);
