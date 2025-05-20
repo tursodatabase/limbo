@@ -147,16 +147,13 @@ pub fn translate_inner(
                         )));
                     }
 
-                    if col.unique {
-                        return Err(LimboError::ParseError(format!(
-                            "cannot drop column \"{column}\": UNIQUE"
-                        )));
-                    }
-
-                    if btree.unique_sets.as_ref().is_some_and(|set| {
-                        set.iter()
-                            .any(|set| set.iter().any(|(column_name, _)| column_name == &column))
-                    }) {
+                    if col.unique
+                        || btree.unique_sets.as_ref().is_some_and(|set| {
+                            set.iter().any(|set| {
+                                set.iter().any(|(column_name, _)| column_name == &column)
+                            })
+                        })
+                    {
                         return Err(LimboError::ParseError(format!(
                             "cannot drop column \"{column}\": UNIQUE"
                         )));
