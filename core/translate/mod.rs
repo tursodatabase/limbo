@@ -170,7 +170,7 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{sql}'
-                            WHERE tbl_name = '{table_name}'
+                            WHERE name = '{table_name}' AND type = 'table'
                         "#,
                     );
 
@@ -284,7 +284,7 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{sql}'
-                            WHERE tbl_name = '{table_name}'
+                            WHERE name = '{table_name}' AND type = 'table'
                         "#,
                     );
 
@@ -323,7 +323,7 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{sql}'
-                            WHERE tbl_name = '{table_name}'
+                            WHERE name = '{table_name}' AND type = 'table'
                         "#,
                     );
 
@@ -364,7 +364,7 @@ pub fn translate_inner(
                             SET name = '{rename}'
                               , tbl_name = '{rename}'
                               , sql = '{sql}'
-                            WHERE tbl_name = '{table_name}'
+                            WHERE name = '{table_name}' AND type = 'table'
                         "#,
                         rename = &btree.name,
                     );
