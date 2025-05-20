@@ -3,21 +3,18 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
-# ALTER TABLE _ RENAME TO _
 do_execsql_test_on_specific_db {:memory:} alter-table-rename-table {
     CREATE TABLE t1(x INTEGER PRIMARY KEY);
     ALTER TABLE t1 RENAME TO t2;
     SELECT tbl_name FROM sqlite_schema;
 } { "t2" }
 
-# ALTER TABLE _ RENAME _ TO _
 do_execsql_test_on_specific_db {:memory:} alter-table-rename-column {
     CREATE TABLE t(a);
     ALTER TABLE t RENAME a TO b;
     SELECT sql FROM sqlite_schema;
 } { "CREATE TABLE t(b)" }
 
-# ALTER TABLE _ ADD _
 do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
     CREATE TABLE t(a);
     INSERT INTO t VALUES (1);
@@ -32,8 +29,7 @@ do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
   "1|"
 }
 
-# ALTER TABLE _ DROP _
-do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
+do_execsql_test_on_specific_db {:memory:} alter-table-drop-column {
     CREATE TABLE t(a, b);
     INSERT INTO t VALUES (1, 2);
     SELECT * FROM t;
@@ -45,4 +41,24 @@ do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
   "1|2"
   "CREATE TABLE t(a)"
   "1"
+}
+
+do_execsql_test_in_memory_any_error fail-alter-table-drop-unique-column {
+    CREATE TABLE t(a, b UNIQUE);
+    ALTER TABLE t DROP b;
+}
+
+do_execsql_test_in_memory_any_error fail-alter-table-drop-unique-column-constraint {
+    CREATE TABLE t(a, b, UNIQUE (b));
+    ALTER TABLE t DROP b;
+}
+
+do_execsql_test_in_memory_any_error fail-alter-table-drop-primary-key-column {
+    CREATE TABLE t(a PRIMARY KEY, b);
+    ALTER TABLE t DROP a;
+}
+
+do_execsql_test_in_memory_any_error fail-alter-table-drop-primary-key-column-constrait {
+    CREATE TABLE t(a, b, PRIMARY KEY (a));
+    ALTER TABLE t DROP a;
 }
