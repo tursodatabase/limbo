@@ -153,6 +153,15 @@ pub fn translate_inner(
                         )));
                     }
 
+                    if btree.unique_sets.as_ref().is_some_and(|set| {
+                        set.iter()
+                            .any(|set| set.iter().any(|(column_name, _)| column_name == &column))
+                    }) {
+                        return Err(LimboError::ParseError(format!(
+                            "cannot drop column \"{column}\": UNIQUE"
+                        )));
+                    }
+
                     btree.columns.remove(dropped_col);
 
                     let sql = btree.to_sql();
