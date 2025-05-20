@@ -820,7 +820,7 @@ pub fn begin_read_page(
     Ok(())
 }
 
-fn finish_read_page(
+pub fn finish_read_page(
     page_idx: usize,
     buffer_ref: Arc<RefCell<Buffer>>,
     page: PageRef,
@@ -1391,13 +1391,9 @@ pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     buffer_pool: Rc<BufferPool>,
-    page: PageRef,
+    complete: Box<dyn Fn(Arc<RefCell<Buffer>>) -> ()>,
 ) -> Result<()> {
-    trace!(
-        "begin_read_wal_frame(offset={}, page={})",
-        offset,
-        page.get().id
-    );
+    trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
         let buffer_pool = buffer_pool.clone();
@@ -1405,11 +1401,6 @@ pub fn begin_read_wal_frame(
     });
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
-    let frame = page.clone();
-    let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
-        let frame = frame.clone();
-        finish_read_page(page.get().id, buf, frame).unwrap();
-    });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
     io.pread(offset, c)?;
     Ok(())

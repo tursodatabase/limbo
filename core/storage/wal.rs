@@ -10,7 +10,8 @@ use crate::fast_lock::SpinLock;
 use crate::io::{File, SyncCompletion, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
-    begin_read_wal_frame, begin_write_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
+    WAL_HEADER_SIZE,
 };
 use crate::{Buffer, LimboError, Result};
 use crate::{Completion, Page};
@@ -428,11 +429,16 @@ impl Wal for WalFile {
         debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         page.set_locked();
+        let frame = page.clone();
+        let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+            let frame = frame.clone();
+            finish_read_page(page.get().id, buf, frame).unwrap();
+        });
         begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
             buffer_pool,
-            page,
+            complete,
         )?;
         Ok(())
     }
