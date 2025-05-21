@@ -29,6 +29,15 @@ do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
   "1|"
 }
 
+do_execsql_test_on_specific_db {:memory:} alter-table-add-column-typed {
+    CREATE TABLE t(a);
+    ALTER TABLE t ADD b TEXT;
+    ALTER TABLE t ADD c INTEGER DEFAULT(0);
+    SELECT sql FROM sqlite_schema;
+} {
+  "CREATE TABLE t(a, b TEXT, c INTEGER DEFAULT(0))"
+}
+
 do_execsql_test_on_specific_db {:memory:} alter-table-drop-column {
     CREATE TABLE t(a, b);
     INSERT INTO t VALUES (1, 2);
