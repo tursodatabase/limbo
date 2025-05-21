@@ -4,7 +4,7 @@ use crate::{util::normalize_ident, Result};
 use crate::{LimboError, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
-use limbo_sqlite3_parser::ast::{Expr, Literal, SortOrder, TableOptions};
+use limbo_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
 use limbo_sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
@@ -575,6 +575,80 @@ pub struct Column {
 impl Column {
     pub fn affinity(&self) -> Affinity {
         affinity(&self.ty_str)
+    }
+}
+
+// TODO: This might replace some of util::columns_from_create_table_body
+impl From<ColumnDefinition> for Column {
+    fn from(value: ColumnDefinition) -> Self {
+        let ast::Name(name) = value.col_name;
+
+        let mut default = None;
+        let mut notnull = false;
+        let mut primary_key = false;
+        let mut unique = false;
+        let mut collation = None;
+
+        for ast::NamedColumnConstraint { constraint, .. } in value.constraints {
+            match constraint {
+                ast::ColumnConstraint::PrimaryKey { .. } => primary_key = true,
+                ast::ColumnConstraint::NotNull { .. } => notnull = true,
+                ast::ColumnConstraint::Unique(..) => unique = true,
+                ast::ColumnConstraint::Default(expr) => {
+                    default.replace(expr);
+                }
+                ast::ColumnConstraint::Collate { collation_name } => {
+                    collation.replace(
+                        CollationSeq::new(&collation_name.0)
+                            .expect("collation should have been set correctly in create table"),
+                    );
+                }
+                _ => {}
+            };
+        }
+
+        let ty = match value.col_type {
+            Some(ref data_type) => {
+                // https://www.sqlite.org/datatype3.html
+                let type_name = data_type.name.clone().to_uppercase();
+
+                if type_name.contains("INT") {
+                    Type::Integer
+                } else if type_name.contains("CHAR")
+                    || type_name.contains("CLOB")
+                    || type_name.contains("TEXT")
+                {
+                    Type::Text
+                } else if type_name.contains("BLOB") || type_name.is_empty() {
+                    Type::Blob
+                } else if type_name.contains("REAL")
+                    || type_name.contains("FLOA")
+                    || type_name.contains("DOUB")
+                {
+                    Type::Real
+                } else {
+                    Type::Numeric
+                }
+            }
+            None => Type::Null,
+        };
+
+        let ty_str = value
+            .col_type
+            .map(|t| t.name.to_string())
+            .unwrap_or_default();
+
+        Column {
+            name: Some(name),
+            ty,
+            default,
+            notnull,
+            ty_str,
+            primary_key,
+            is_rowid_alias: false,
+            unique,
+            collation,
+        }
     }
 }
 

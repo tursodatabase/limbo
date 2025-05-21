@@ -265,16 +265,7 @@ pub fn translate_inner(
                     )?
                 }
                 ast::AlterTableBody::AddColumn(col_def) => {
-                    btree.columns.push(Column {
-                        name: Some(col_def.col_name.0),
-                        ty: crate::schema::Type::Null,
-                        ty_str: "".to_string(),
-                        primary_key: false,
-                        is_rowid_alias: false,
-                        notnull: false,
-                        default: None,
-                        unique: false,
-                    });
+                    btree.columns.push(Column::from(col_def));
 
                     let sql = btree.to_sql();
 
