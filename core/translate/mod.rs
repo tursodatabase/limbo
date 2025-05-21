@@ -186,9 +186,6 @@ pub fn translate_inner(
                         syms,
                         program,
                         |program| {
-                            let loop_start = program.allocate_label();
-                            let loop_end = program.allocate_label();
-
                             let column_count = btree.columns.len();
                             let root_page = btree.root_page;
                             let table_name = btree.name.clone();
@@ -203,61 +200,49 @@ pub fn translate_inner(
                                 name: table_name.clone(),
                             });
 
-                            program.emit_insn(Insn::Rewind {
-                                cursor_id,
-                                pc_if_empty: loop_end,
-                            });
+                            program.cursor_loop(cursor_id, |program| {
+                                let rowid = program.alloc_register();
 
-                            let rowid = program.alloc_register();
-
-                            program.emit_insn(Insn::RowId {
-                                cursor_id,
-                                dest: rowid,
-                            });
-
-                            program.preassign_label_to_next_insn(loop_start);
-
-                            let first_column = program.alloc_registers(column_count);
-
-                            let mut iter = first_column;
-
-                            for i in 0..(column_count + 1) {
-                                if i == dropped_col {
-                                    continue;
-                                }
-
-                                program.emit_insn(Insn::Column {
+                                program.emit_insn(Insn::RowId {
                                     cursor_id,
-                                    column: i,
-                                    dest: iter,
+                                    dest: rowid,
                                 });
 
-                                iter += 1;
-                            }
+                                let first_column = program.alloc_registers(column_count);
 
-                            let record = program.alloc_register();
+                                let mut iter = first_column;
 
-                            program.emit_insn(Insn::MakeRecord {
-                                start_reg: first_column,
-                                count: column_count,
-                                dest_reg: record,
-                                index_name: None,
+                                for i in 0..(column_count + 1) {
+                                    if i == dropped_col {
+                                        continue;
+                                    }
+
+                                    program.emit_insn(Insn::Column {
+                                        cursor_id,
+                                        column: i,
+                                        dest: iter,
+                                    });
+
+                                    iter += 1;
+                                }
+
+                                let record = program.alloc_register();
+
+                                program.emit_insn(Insn::MakeRecord {
+                                    start_reg: first_column,
+                                    count: column_count,
+                                    dest_reg: record,
+                                    index_name: None,
+                                });
+
+                                program.emit_insn(Insn::Insert {
+                                    cursor: cursor_id,
+                                    key_reg: rowid,
+                                    record_reg: record,
+                                    flag: 0,
+                                    table_name: table_name.clone(),
+                                });
                             });
-
-                            program.emit_insn(Insn::Insert {
-                                cursor: cursor_id,
-                                key_reg: rowid,
-                                record_reg: record,
-                                flag: 0,
-                                table_name: table_name.clone(),
-                            });
-
-                            program.emit_insn(Insn::Next {
-                                cursor_id,
-                                pc_if_next: loop_start,
-                            });
-
-                            program.preassign_label_to_next_insn(loop_end);
 
                             program.emit_insn(Insn::ParseSchema {
                                 db: usize::MAX, // TODO: This value is unused, change when we do something with it
@@ -289,6 +274,7 @@ pub fn translate_inner(
                         schema,
                         &mut update,
                         syms,
+                        program,
                         |program| {
                             program.emit_insn(Insn::ParseSchema {
                                 db: usize::MAX, // TODO: This value is unused, change when we do something with it
@@ -328,6 +314,7 @@ pub fn translate_inner(
                         schema,
                         &mut update,
                         syms,
+                        program,
                         |program| {
                             program.emit_insn(Insn::ParseSchema {
                                 db: usize::MAX, // TODO: This value is unused, change when we do something with it

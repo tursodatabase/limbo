@@ -32,24 +32,36 @@ do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
 do_execsql_test_on_specific_db {:memory:} alter-table-add-column-typed {
     CREATE TABLE t(a);
     ALTER TABLE t ADD b TEXT;
-    ALTER TABLE t ADD c INTEGER DEFAULT(0);
+    ALTER TABLE t ADD c INTEGER DEFAULT 0;
+
     SELECT sql FROM sqlite_schema;
+
+    INSERT INTO t VALUES (1, 'a');
+    SELECT * FROM t;
 } {
   "CREATE TABLE t(a, b TEXT, c INTEGER DEFAULT(0))"
+  "1|a|0"
 }
 
 do_execsql_test_on_specific_db {:memory:} alter-table-drop-column {
     CREATE TABLE t(a, b);
-    INSERT INTO t VALUES (1, 2);
+    INSERT INTO t VALUES (1, 1), (2, 2), (3, 3);
     SELECT * FROM t;
 
     ALTER TABLE t DROP b;
     SELECT sql FROM sqlite_schema;
+
     SELECT * FROM t;
 } {
-  "1|2"
+  "1|1"
+  "2|2"
+  "3|3"
+
   "CREATE TABLE t(a)"
+
   "1"
+  "2"
+  "3"
 }
 
 do_execsql_test_in_memory_any_error fail-alter-table-drop-unique-column {
