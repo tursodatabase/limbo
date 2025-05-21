@@ -104,7 +104,7 @@ impl Stmt {
     pub fn check(&self) -> Result<(), ParserError> {
         match self {
             Self::AlterTable(alter_table) => {
-                let (old_name, body) = &**alter_table;
+                let (_, body) = &**alter_table;
                 match body {
                     AlterTableBody::AddColumn(cd) => {
                         for c in cd {
