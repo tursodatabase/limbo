@@ -663,6 +663,26 @@ impl ProgramBuilder {
         }
     }
 
+    #[inline]
+    pub fn cursor_loop(&mut self, cursor_id: CursorID, f: impl Fn(&mut ProgramBuilder)) {
+        let loop_start = self.allocate_label();
+        let loop_end = self.allocate_label();
+
+        self.emit_insn(Insn::Rewind {
+            cursor_id,
+            pc_if_empty: loop_end,
+        });
+        self.preassign_label_to_next_insn(loop_start);
+
+        f(self);
+
+        self.emit_insn(Insn::Next {
+            cursor_id,
+            pc_if_next: loop_start,
+        });
+        self.preassign_label_to_next_insn(loop_end);
+    }
+
     pub fn build(
         mut self,
         database_header: Arc<SpinLock<DatabaseHeader>>,
