@@ -21,6 +21,7 @@ pub fn emit_values(
         SelectQueryType::Subquery { yield_reg, .. } => {
             emit_values_in_subquery(program, plan, resolver, yield_reg)?
         }
+        SelectQueryType::UnionArm { .. } => unreachable!(),
     };
     Ok(reg_result_cols_start)
 }
@@ -56,6 +57,7 @@ fn emit_values_when_single_row(
                 end_offset: BranchOffset::Offset(0),
             });
         }
+        SelectQueryType::UnionArm { .. } => unreachable!(),
     }
     Ok(start_reg)
 }
