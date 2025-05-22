@@ -268,10 +268,10 @@ impl IO for UnixIO {
 }
 
 enum CompletionCallback {
-    Read(Arc<RefCell<std::fs::File>>, Completion, usize),
+    Read(Arc<RefCell<std::fs::File>>, Arc<Completion>, usize),
     Write(
         Arc<RefCell<std::fs::File>>,
-        Completion,
+        Arc<Completion>,
         Arc<RefCell<crate::Buffer>>,
         usize,
     ),
@@ -326,7 +326,7 @@ impl File for UnixFile<'_> {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Completion) -> Result<()> {
+    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<()> {
         let file = self.file.borrow();
         let result = {
             let r = c.as_read();
@@ -358,7 +358,7 @@ impl File for UnixFile<'_> {
         }
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Arc<Completion>) -> Result<()> {
         let file = self.file.borrow();
         let result = {
             let buf = buffer.borrow();
@@ -387,7 +387,7 @@ impl File for UnixFile<'_> {
         }
     }
 
-    fn sync(&self, c: Completion) -> Result<()> {
+    fn sync(&self, c: Arc<Completion>) -> Result<()> {
         let file = self.file.borrow();
         let result = fs::fsync(file.as_fd());
         match result {

@@ -1364,7 +1364,7 @@ pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<SpinLock<WalHeade
         let header = header.clone();
         finish_read_wal_header(buf, header).unwrap();
     });
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
     io.pread(0, c)?;
     Ok(result)
 }
@@ -1401,7 +1401,7 @@ pub fn begin_read_wal_frame(
     });
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
     io.pread(offset, c)?;
     Ok(())
 }
@@ -1485,7 +1485,7 @@ pub fn begin_write_wal_frame(
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(offset, buffer.clone(), c)?;
     trace!("Frame written and synced at offset={offset}");
     Ok(checksums)
@@ -1520,7 +1520,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }
