@@ -42,6 +42,8 @@ pub trait IO: Clock + Send + Sync {
 
     fn run_once(&self) -> Result<()>;
 
+    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()>;
+
     fn generate_random_number(&self) -> i64;
 
     fn get_memory_io(&self) -> Arc<MemoryIO>;
@@ -60,9 +62,18 @@ pub enum Completion {
 pub struct ReadCompletion {
     pub buf: Arc<RefCell<Buffer>>,
     pub complete: Box<Complete>,
+    pub is_completed: RefCell<bool>,
 }
 
 impl Completion {
+    pub fn is_completed(&self) -> bool {
+        match self {
+            Self::Read(r) => *r.is_completed.borrow(),
+            Self::Write(w) => *w.is_completed.borrow(),
+            Self::Sync(s) => *s.is_completed.borrow(),
+        }
+    }
+
     pub fn complete(&self, result: i32) {
         match self {
             Self::Read(r) => r.complete(),
@@ -83,15 +94,17 @@ impl Completion {
 
 pub struct WriteCompletion {
     pub complete: Box<WriteComplete>,
+    pub is_completed: RefCell<bool>,
 }
 
 pub struct SyncCompletion {
     pub complete: Box<SyncComplete>,
+    pub is_completed: RefCell<bool>,
 }
 
 impl ReadCompletion {
     pub fn new(buf: Arc<RefCell<Buffer>>, complete: Box<Complete>) -> Self {
-        Self { buf, complete }
+        Self { buf, complete, is_completed: RefCell::new(false) }
     }
 
     pub fn buf(&self) -> Ref<'_, Buffer> {
@@ -104,26 +117,29 @@ impl ReadCompletion {
 
     pub fn complete(&self) {
         (self.complete)(self.buf.clone());
+        *self.is_completed.borrow_mut() = true;
     }
 }
 
 impl WriteCompletion {
     pub fn new(complete: Box<WriteComplete>) -> Self {
-        Self { complete }
+        Self { complete, is_completed: RefCell::new(false) }
     }
 
     pub fn complete(&self, bytes_written: i32) {
         (self.complete)(bytes_written);
+        *self.is_completed.borrow_mut() = true;
     }
 }
 
 impl SyncCompletion {
     pub fn new(complete: Box<SyncComplete>) -> Self {
-        Self { complete }
+        Self { complete, is_completed: RefCell::new(false) }
     }
 
     pub fn complete(&self, res: i32) {
         (self.complete)(res);
+        *self.is_completed.borrow_mut() = true;
     }
 }
 

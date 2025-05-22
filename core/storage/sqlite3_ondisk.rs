@@ -885,6 +885,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         complete: Box::new(move |_| {
             *syncing.borrow_mut() = false;
         }),
+        is_completed: RefCell::new(false),
     });
     db_file.sync(completion)?;
     Ok(())
