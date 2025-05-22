@@ -657,6 +657,7 @@ impl Wal for WalFile {
                             debug!("wal_sync finish");
                             *syncing.borrow_mut() = false;
                         }),
+                        is_completed: RefCell::new(false),
                     });
                     shared.file.sync(Arc::new(completion))?;
                 }
