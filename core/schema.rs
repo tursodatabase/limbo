@@ -241,6 +241,10 @@ impl BTreeTable {
             sql.push_str(column.name.as_ref().expect("column name is None"));
             sql.push(' ');
             sql.push_str(&column.ty.to_string());
+            if let Some(default) = &column.default {
+                sql.push_str(" DEFAULT ");
+                sql.push_str(&default.to_string());
+            }
         }
         sql.push_str(");\n");
         sql
