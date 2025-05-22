@@ -93,8 +93,8 @@ impl File for VfsFileImpl {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Completion) -> Result<()> {
-        let r = match &c {
+    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<()> {
+        let r = match &*c {
             Completion::Read(ref r) => r,
             _ => unreachable!(),
         };
@@ -112,7 +112,7 @@ impl File for VfsFileImpl {
         }
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Arc<Completion>) -> Result<()> {
         let buf = buffer.borrow();
         let count = buf.as_slice().len();
         if self.vfs.is_null() {
@@ -136,7 +136,7 @@ impl File for VfsFileImpl {
         }
     }
 
-    fn sync(&self, c: Completion) -> Result<()> {
+    fn sync(&self, c: Arc<Completion>) -> Result<()> {
         let vfs = unsafe { &*self.vfs };
         let result = unsafe { (vfs.sync)(self.file) };
         if result < 0 {

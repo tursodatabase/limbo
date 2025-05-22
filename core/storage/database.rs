@@ -38,7 +38,7 @@ impl DatabaseStorage for DatabaseFile {
             return Err(LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
-        self.file.pread(pos, c)?;
+        self.file.pread(pos, Arc::new(c))?;
         Ok(())
     }
 
@@ -54,12 +54,12 @@ impl DatabaseStorage for DatabaseFile {
         assert!(buffer_size <= 65536);
         assert_eq!(buffer_size & (buffer_size - 1), 0);
         let pos = (page_idx - 1) * buffer_size;
-        self.file.pwrite(pos, buffer, c)?;
+        self.file.pwrite(pos, buffer, Arc::new(c))?;
         Ok(())
     }
 
     fn sync(&self, c: Completion) -> Result<()> {
-        self.file.sync(c)
+        self.file.sync(Arc::new(c))
     }
 }
 
@@ -89,7 +89,7 @@ impl DatabaseStorage for FileMemoryStorage {
             return Err(LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
-        self.file.pread(pos, c)?;
+        self.file.pread(pos, Arc::new(c))?;
         Ok(())
     }
 
@@ -104,12 +104,12 @@ impl DatabaseStorage for FileMemoryStorage {
         assert!(buffer_size <= 65536);
         assert_eq!(buffer_size & (buffer_size - 1), 0);
         let pos = (page_idx - 1) * buffer_size;
-        self.file.pwrite(pos, buffer, c)?;
+        self.file.pwrite(pos, buffer, Arc::new(c))?;
         Ok(())
     }
 
     fn sync(&self, c: Completion) -> Result<()> {
-        self.file.sync(c)
+        self.file.sync(Arc::new(c))
     }
 }
 
