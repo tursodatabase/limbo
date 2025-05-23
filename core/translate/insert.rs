@@ -27,12 +27,12 @@ use super::optimizer::rewrite_expr;
 pub fn translate_insert(
     query_mode: QueryMode,
     schema: &Schema,
-    with: &Option<With>,
-    on_conflict: &Option<ResolveType>,
-    tbl_name: &QualifiedName,
-    columns: &Option<DistinctNames>,
-    body: &mut InsertBody,
-    _returning: &Option<Vec<ResultColumn>>,
+    with: Option<With>,
+    on_conflict: Option<ResolveType>,
+    tbl_name: QualifiedName,
+    columns: Option<DistinctNames>,
+    body: InsertBody,
+    _returning: Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
@@ -451,16 +451,11 @@ struct ColumnMapping<'a> {
 fn resolve_columns_for_insert<'a>(
     table: &'a Table,
     columns: &Option<DistinctNames>,
-    values: &[Vec<Expr>],
+    num_values: usize,
 ) -> Result<Vec<ColumnMapping<'a>>> {
-    if values.is_empty() {
-        crate::bail_parse_error!("no values to insert");
-    }
-
     let table_columns = &table.columns();
     // Case 1: No columns specified - map values to columns in order
     if columns.is_none() {
-        let num_values = values[0].len();
         if num_values > table_columns.len() {
             crate::bail_parse_error!(
                 "table {} has {} columns but {} values were supplied",
@@ -468,13 +463,6 @@ fn resolve_columns_for_insert<'a>(
                 table_columns.len(),
                 num_values
             );
-        }
-
-        // Verify all value tuples have same length
-        for value in values.iter().skip(1) {
-            if value.len() != num_values {
-                crate::bail_parse_error!("all VALUES must have the same number of terms");
-            }
         }
 
         // Map each column to either its corresponding value index or None
