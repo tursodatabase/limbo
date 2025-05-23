@@ -396,6 +396,7 @@ fn get_union_dedupe_index(
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred
+                default: None,
             })
             .collect(),
         name: "union_dedupe".to_string(),
