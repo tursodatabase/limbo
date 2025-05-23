@@ -513,6 +513,7 @@ pub fn insn_to_str(
                 cursor_id,
                 column,
                 dest,
+                default,
             } => {
                 let cursor_type = &program.cursor_ref[*cursor_id].1;
                 let column_name: Option<&String> = match cursor_type {
@@ -536,7 +537,7 @@ pub fn insn_to_str(
                     *cursor_id as i32,
                     *column as i32,
                     *dest as i32,
-                    Value::build_text(""),
+                    default.clone().unwrap_or_else(|| Value::build_text("")),
                     0,
                     format!(
                         "r[{}]={}.{}",

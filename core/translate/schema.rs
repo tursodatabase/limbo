@@ -665,11 +665,11 @@ pub fn translate_drop_table(
     program.preassign_label_to_next_insn(metadata_loop);
 
     //  start loop on schema table
-    program.emit_insn(Insn::Column {
-        cursor_id: sqlite_schema_cursor_id_0,
-        column: 2,
-        dest: table_name_and_root_page_register,
-    });
+    program.emit_column(
+        sqlite_schema_cursor_id_0,
+        2,
+        table_name_and_root_page_register,
+    );
     let next_label = program.allocate_label();
     program.emit_insn(Insn::Ne {
         lhs: table_name_and_root_page_register,
@@ -678,11 +678,11 @@ pub fn translate_drop_table(
         flags: CmpInsFlags::default(),
         collation: program.curr_collation(),
     });
-    program.emit_insn(Insn::Column {
-        cursor_id: sqlite_schema_cursor_id_0,
-        column: 0,
-        dest: table_name_and_root_page_register,
-    });
+    program.emit_column(
+        sqlite_schema_cursor_id_0,
+        0,
+        table_name_and_root_page_register,
+    );
     program.emit_insn(Insn::Eq {
         lhs: table_name_and_root_page_register,
         rhs: table_type,
@@ -815,11 +815,7 @@ pub fn translate_drop_table(
         });
         program.preassign_label_to_next_insn(copy_schema_to_temp_table_loop);
         //  start loop on schema table
-        program.emit_insn(Insn::Column {
-            cursor_id: sqlite_schema_cursor_id_1,
-            column: 3,
-            dest: prev_root_page_register,
-        });
+        program.emit_column(sqlite_schema_cursor_id_1, 3, prev_root_page_register);
         //  The label and Insn::Ne are used to skip over any rows in the schema table that don't have the root page that was moved
         let next_label = program.allocate_label();
         program.emit_insn(Insn::Ne {
@@ -878,21 +874,9 @@ pub fn translate_drop_table(
             rowid_reg: schema_row_id_register,
             target_pc: next_label,
         });
-        program.emit_insn(Insn::Column {
-            cursor_id: sqlite_schema_cursor_id_1,
-            column: 0,
-            dest: schema_column_0_register,
-        });
-        program.emit_insn(Insn::Column {
-            cursor_id: sqlite_schema_cursor_id_1,
-            column: 1,
-            dest: schema_column_1_register,
-        });
-        program.emit_insn(Insn::Column {
-            cursor_id: sqlite_schema_cursor_id_1,
-            column: 2,
-            dest: schema_column_2_register,
-        });
+        program.emit_column(sqlite_schema_cursor_id_1, 0, schema_column_0_register);
+        program.emit_column(sqlite_schema_cursor_id_1, 1, schema_column_1_register);
+        program.emit_column(sqlite_schema_cursor_id_1, 2, schema_column_2_register);
         let root_page = table
             .get_root_page()
             .try_into()
@@ -901,11 +885,7 @@ pub fn translate_drop_table(
             value: root_page,
             dest: moved_to_root_page_register,
         });
-        program.emit_insn(Insn::Column {
-            cursor_id: sqlite_schema_cursor_id_1,
-            column: 4,
-            dest: schema_column_4_register,
-        });
+        program.emit_column(sqlite_schema_cursor_id_1, 4, schema_column_4_register);
         program.emit_insn(Insn::MakeRecord {
             start_reg: schema_column_0_register,
             count: 5,
