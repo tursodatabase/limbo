@@ -714,7 +714,7 @@ fn translate_virtual_table_insert(
 ) -> Result<ProgramBuilder> {
     let (num_values, value) = match &mut body {
         InsertBody::Select(select, None) => match select.body.select.as_mut() {
-            OneSelect::Values(values) => (1, values.pop().unwrap()),
+            OneSelect::Values(values) => (values[0].len(), values.pop().unwrap()),
             _ => crate::bail_parse_error!("Virtual tables only support VALUES clause in INSERT"),
         },
         InsertBody::DefaultValues => (0, vec![]),
