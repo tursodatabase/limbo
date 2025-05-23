@@ -57,6 +57,7 @@ pub fn translate_create_index(
                 order: *order,
                 pos_in_table: *pos_in_table,
                 collation: col.collation,
+                default: col.default.clone(),
             })
             .collect(),
         unique: unique_if_not_exists.0,
