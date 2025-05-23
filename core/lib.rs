@@ -76,6 +76,7 @@ use translate::select::prepare_select_plan;
 pub use types::RefValue;
 pub use types::Value;
 use util::{columns_from_create_table_body, parse_schema_rows};
+use vdbe::builder::TableRefIdCounter;
 use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
@@ -403,6 +404,7 @@ impl Connection {
                 Ok(Some(stmt))
             }
             Cmd::ExplainQueryPlan(stmt) => {
+                let mut table_ref_counter = TableRefIdCounter::new();
                 match stmt {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
@@ -413,6 +415,7 @@ impl Connection {
                             *select,
                             &syms,
                             None,
+                            &mut table_ref_counter,
                         )?;
                         optimize_plan(
                             &mut plan,
