@@ -17,13 +17,18 @@ use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
 use limbo_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
 use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
+pub struct TranslateSelectResult {
+    pub program: ProgramBuilder,
+    pub num_result_cols: usize,
+}
+
 pub fn translate_select(
     query_mode: QueryMode,
     schema: &Schema,
     select: ast::Select,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
-) -> Result<ProgramBuilder> {
+) -> Result<TranslateSelectResult> {
     let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
     optimize_plan(&mut select_plan, schema)?;
     let opts = match &select_plan {
@@ -55,8 +60,12 @@ pub fn translate_select(
     };
 
     program.extend(&opts);
+    let num_result_cols = select.result_columns.len();
     emit_program(&mut program, select_plan, syms)?;
-    Ok(program)
+    Ok(TranslateSelectResult {
+        program,
+        num_result_cols,
+    })
 }
 
 pub fn prepare_select_plan<'a>(

@@ -99,6 +99,15 @@ pub fn translate_insert(
         })
         .collect::<Vec<(&String, usize, usize)>>();
     let root_page = btree_table.root_page;
+
+    let inserting_multiple_rows = match body {
+        InsertBody::Select(select, _) => match select.body.select.as_ref() {
+            OneSelect::Values(values) => values.len() > 1,
+            OneSelect::Select(..) => true,
+        },
+        InsertBody::DefaultValues => false,
+    };
+
     let values = match body {
         InsertBody::Select(ref mut select, _) => match select.body.select.as_mut() {
             OneSelect::Values(ref mut values) => values,
@@ -140,8 +149,6 @@ pub fn translate_insert(
     let record_register = program.alloc_register();
     let halt_label = program.allocate_label();
     let loop_start_label = program.allocate_label();
-
-    let inserting_multiple_rows = values.len() > 1;
 
     // Multiple rows - use coroutine for value population
     if inserting_multiple_rows {
