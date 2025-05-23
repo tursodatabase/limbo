@@ -116,3 +116,7 @@ harness = false
 [[bench]]
 name = "json_benchmark"
 harness = false
+
+[[bench]]
+name = "tpc_h_benchmark"
+harness = false

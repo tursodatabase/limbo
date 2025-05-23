@@ -115,3 +115,14 @@ bench-vfs: uv-sync
 clickbench:
 	./perf/clickbench/benchmark.sh
 .PHONY: clickbench
+
+
+bench-exclude-tpc-h:
+	@benchmarks=$$(cargo bench --bench 2>&1 | grep -A 1000 '^Available bench targets:' | grep -v '^Available bench targets:' | grep -v '^ *$$' | grep -v 'tpc_h_benchmark' | xargs -I {} printf -- "--bench %s " {}); \
+	if [ -z "$$benchmarks" ]; then \
+		echo "No benchmarks found (excluding tpc_h_benchmark)."; \
+		exit 1; \
+	else \
+		cargo bench $$benchmarks; \
+	fi
+.PHONY: bench-exclude-tpc-h
