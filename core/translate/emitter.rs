@@ -471,11 +471,11 @@ fn emit_delete_insns(
                 .iter()
                 .enumerate()
                 .for_each(|(reg_offset, column_index)| {
-                    program.emit_insn(Insn::Column {
-                        cursor_id: main_table_cursor_id,
-                        column: column_index.pos_in_table,
-                        dest: start_reg + reg_offset,
-                    });
+                    program.emit_column(
+                        main_table_cursor_id,
+                        column_index.pos_in_table,
+                        start_reg + reg_offset,
+                    );
                 });
             program.emit_insn(Insn::RowId {
                 cursor_id: main_table_cursor_id,
@@ -798,20 +798,17 @@ fn emit_update_insns(
                     dest: target_reg,
                 });
             } else {
-                program.emit_insn(Insn::Column {
-                    cursor_id: *index
-                        .as_ref()
-                        .and_then(|(_, id)| {
-                            if column_idx_in_index.is_some() {
-                                Some(id)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(&cursor_id),
-                    column: column_idx_in_index.unwrap_or(idx),
-                    dest: target_reg,
-                });
+                let cursor_id = *index
+                    .as_ref()
+                    .and_then(|(_, id)| {
+                        if column_idx_in_index.is_some() {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(&cursor_id);
+                program.emit_column(cursor_id, column_idx_in_index.unwrap_or(idx), target_reg);
             }
         }
     }
@@ -970,11 +967,11 @@ fn emit_update_insns(
                 .iter()
                 .enumerate()
                 .for_each(|(reg_offset, column_index)| {
-                    program.emit_insn(Insn::Column {
+                    program.emit_column(
                         cursor_id,
-                        column: column_index.pos_in_table,
-                        dest: start_reg + reg_offset,
-                    });
+                        column_index.pos_in_table,
+                        start_reg + reg_offset,
+                    );
                 });
 
             program.emit_insn(Insn::RowId {

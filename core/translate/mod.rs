@@ -116,8 +116,10 @@ pub fn translate_inner(
                 )));
             };
 
-            let Some(btree) = table.btree() else { todo!() };
-            let mut btree = (*btree).clone();
+            let Some(original_btree) = table.btree() else {
+                todo!()
+            };
+            let mut btree = (*original_btree).clone();
 
             match alter_table {
                 ast::AlterTableBody::DropColumn(column) => {
@@ -189,7 +191,7 @@ pub fn translate_inner(
 
                             let cursor_id = program.alloc_cursor_id(
                                 Some(table_name.clone()),
-                                crate::vdbe::builder::CursorType::BTreeTable(Rc::new(btree)),
+                                crate::vdbe::builder::CursorType::BTreeTable(original_btree),
                             );
 
                             program.emit_insn(Insn::OpenWrite {
@@ -201,6 +203,7 @@ pub fn translate_inner(
                             program.cursor_loop(cursor_id, |program| {
                                 let rowid = program.alloc_register();
 
+                                // FIXME: Handle tables without rowid.
                                 program.emit_insn(Insn::RowId {
                                     cursor_id,
                                     dest: rowid,
@@ -215,11 +218,7 @@ pub fn translate_inner(
                                         continue;
                                     }
 
-                                    program.emit_insn(Insn::Column {
-                                        cursor_id,
-                                        column: i,
-                                        dest: iter,
-                                    });
+                                    program.emit_column(cursor_id, i, iter);
 
                                     iter += 1;
                                 }
