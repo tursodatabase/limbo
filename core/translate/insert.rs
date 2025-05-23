@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use std::rc::Rc;
 
 use limbo_sqlite3_parser::ast::{
@@ -22,6 +21,8 @@ use crate::{Result, SymbolTable, VirtualTable};
 use super::emitter::Resolver;
 use super::expr::{translate_expr_no_constant_opt, NoConstantOptReason};
 use super::optimizer::rewrite_expr;
+use super::plan::SelectQueryType;
+use super::select::translate_select;
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
@@ -59,8 +60,8 @@ pub fn translate_insert(
     let resolver = Resolver::new(syms);
 
     if let Some(virtual_table) = &table.virtual_table() {
-        translate_virtual_table_insert(
-            &mut program,
+        program = translate_virtual_table_insert(
+            program,
             virtual_table.clone(),
             columns,
             body,
@@ -100,7 +101,7 @@ pub fn translate_insert(
         .collect::<Vec<(&String, usize, usize)>>();
     let root_page = btree_table.root_page;
 
-    let inserting_multiple_rows = match body {
+    let inserting_multiple_rows = match &body {
         InsertBody::Select(select, _) => match select.body.select.as_ref() {
             OneSelect::Values(values) => values.len() > 1,
             OneSelect::Select(..) => true,
@@ -108,20 +109,74 @@ pub fn translate_insert(
         InsertBody::DefaultValues => false,
     };
 
-    let values = match body {
-        InsertBody::Select(ref mut select, _) => match select.body.select.as_mut() {
-            OneSelect::Values(ref mut values) => values,
-            _ => todo!(),
-        },
-        InsertBody::DefaultValues => &mut vec![vec![]],
-    };
-    let mut param_idx = 1;
-    for expr in values.iter_mut().flat_map(|v| v.iter_mut()) {
-        rewrite_expr(expr, &mut param_idx)?;
-    }
+    let halt_label = program.allocate_label();
+    let loop_start_label = program.allocate_label();
 
-    let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
-    let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
+    let (num_values, value) = match body {
+        // TODO: upsert
+        InsertBody::Select(select, _) => {
+            // Simple Common case of INSERT INTO <table> VALUES (...)
+            if matches!(select.body.select.as_ref(),  OneSelect::Values(values) if values.len() <= 1)
+            {
+                let OneSelect::Values(mut values) = *select.body.select else {
+                    unreachable!();
+                };
+                if values.is_empty() {
+                    crate::bail_parse_error!("no values to insert");
+                }
+                let mut param_idx = 1;
+                for expr in values.iter_mut().flat_map(|v| v.iter_mut()) {
+                    rewrite_expr(expr, &mut param_idx)?;
+                }
+
+                (values[0].len(), values.pop())
+            } else {
+                let yield_reg = program.alloc_register();
+                let jump_on_definition_label = program.allocate_label();
+                let start_offset_label = program.allocate_label();
+                program.emit_insn(Insn::InitCoroutine {
+                    yield_reg,
+                    jump_on_definition: jump_on_definition_label,
+                    start_offset: start_offset_label,
+                });
+
+                program.preassign_label_to_next_insn(start_offset_label);
+
+                let query_type = SelectQueryType::Subquery {
+                    yield_reg,
+                    coroutine_implementation_start: halt_label,
+                };
+                program.incr_nesting();
+                let result =
+                    translate_select(query_mode, schema, *select, syms, program, query_type)?;
+                program = result.program;
+                program.decr_nesting();
+
+                program.emit_insn(Insn::EndCoroutine { yield_reg });
+                program.preassign_label_to_next_insn(jump_on_definition_label);
+
+                program.emit_insn(Insn::OpenWrite {
+                    cursor_id,
+                    root_page: RegisterOrLiteral::Literal(root_page),
+                    name: table_name.0.clone(),
+                });
+
+                // Main loop
+                // FIXME: rollback is not implemented. E.g. if you insert 2 rows and one fails to unique constraint violation,
+                // the other row will still be inserted.
+                program.resolve_label(loop_start_label, program.offset());
+                program.emit_insn(Insn::Yield {
+                    yield_reg,
+                    end_offset: halt_label,
+                });
+
+                (result.num_result_cols, None)
+            }
+        }
+        InsertBody::DefaultValues => (0, None),
+    };
+
+    let column_mappings = resolve_columns_for_insert(&table, &columns, num_values)?;
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
     let rowid_alias_index = btree_table.columns.iter().position(|c| c.is_rowid_alias);
     let has_user_provided_rowid = {
@@ -147,55 +202,9 @@ pub fn translate_insert(
     };
 
     let record_register = program.alloc_register();
-    let halt_label = program.allocate_label();
-    let loop_start_label = program.allocate_label();
 
     // Multiple rows - use coroutine for value population
-    if inserting_multiple_rows {
-        let yield_reg = program.alloc_register();
-        let jump_on_definition_label = program.allocate_label();
-        let start_offset_label = program.allocate_label();
-        program.emit_insn(Insn::InitCoroutine {
-            yield_reg,
-            jump_on_definition: jump_on_definition_label,
-            start_offset: start_offset_label,
-        });
-
-        program.preassign_label_to_next_insn(start_offset_label);
-
-        for value in values.iter() {
-            populate_column_registers(
-                &mut program,
-                value,
-                &column_mappings,
-                column_registers_start,
-                true,
-                rowid_reg,
-                &resolver,
-            )?;
-            program.emit_insn(Insn::Yield {
-                yield_reg,
-                end_offset: halt_label,
-            });
-        }
-        program.emit_insn(Insn::EndCoroutine { yield_reg });
-        program.preassign_label_to_next_insn(jump_on_definition_label);
-
-        program.emit_insn(Insn::OpenWrite {
-            cursor_id,
-            root_page: RegisterOrLiteral::Literal(root_page),
-            name: table_name.0.clone(),
-        });
-
-        // Main loop
-        // FIXME: rollback is not implemented. E.g. if you insert 2 rows and one fails to unique constraint violation,
-        // the other row will still be inserted.
-        program.resolve_label(loop_start_label, program.offset());
-        program.emit_insn(Insn::Yield {
-            yield_reg,
-            end_offset: halt_label,
-        });
-    } else {
+    if !inserting_multiple_rows {
         // Single row - populate registers directly
         program.emit_insn(Insn::OpenWrite {
             cursor_id,
@@ -205,7 +214,7 @@ pub fn translate_insert(
 
         populate_column_registers(
             &mut program,
-            &values[0],
+            &value.unwrap(),
             &column_mappings,
             column_registers_start,
             false,
@@ -299,6 +308,7 @@ pub fn translate_insert(
         _ => (),
     }
 
+    let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
     for index_col_mapping in index_col_mappings {
         // find which cursor we opened earlier for this index
         let idx_cursor_id = idx_cursors
@@ -640,24 +650,25 @@ fn populate_column_registers(
     Ok(())
 }
 
+// TODO: comeback here later to apply the same improvements on select
 fn translate_virtual_table_insert(
-    program: &mut ProgramBuilder,
+    mut program: ProgramBuilder,
     virtual_table: Rc<VirtualTable>,
-    columns: &Option<DistinctNames>,
-    body: &InsertBody,
-    on_conflict: &Option<ResolveType>,
+    columns: Option<DistinctNames>,
+    mut body: InsertBody,
+    on_conflict: Option<ResolveType>,
     resolver: &Resolver,
-) -> Result<()> {
-    let values = match body {
-        InsertBody::Select(select, None) => match &select.body.select.deref() {
-            OneSelect::Values(values) => values,
+) -> Result<ProgramBuilder> {
+    let (num_values, value) = match &mut body {
+        InsertBody::Select(select, None) => match select.body.select.as_mut() {
+            OneSelect::Values(values) => (1, values.pop().unwrap()),
             _ => crate::bail_parse_error!("Virtual tables only support VALUES clause in INSERT"),
         },
-        InsertBody::DefaultValues => &vec![],
+        InsertBody::DefaultValues => (0, vec![]),
         _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
     };
     let table = Table::Virtual(virtual_table.clone());
-    let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
+    let column_mappings = resolve_columns_for_insert(&table, &columns, num_values)?;
     let registers_start = program.alloc_registers(2);
 
     /* *
@@ -674,8 +685,8 @@ fn translate_virtual_table_insert(
 
     let values_reg = program.alloc_registers(column_mappings.len());
     populate_column_registers(
-        program,
-        &values[0],
+        &mut program,
+        &value,
         &column_mappings,
         values_reg,
         false,
@@ -699,5 +710,5 @@ fn translate_virtual_table_insert(
     let halt_label = program.allocate_label();
     program.resolve_label(halt_label, program.offset());
 
-    Ok(())
+    Ok(program)
 }

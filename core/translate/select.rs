@@ -28,8 +28,9 @@ pub fn translate_select(
     select: ast::Select,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    query_type: SelectQueryType,
 ) -> Result<TranslateSelectResult> {
-    let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
+    let mut select_plan = prepare_select_plan(schema, select, syms, None, query_type)?;
     optimize_plan(&mut select_plan, schema)?;
     let opts = match &select_plan {
         Plan::Select(select) => ProgramBuilderOpts {
@@ -73,6 +74,7 @@ pub fn prepare_select_plan<'a>(
     mut select: ast::Select,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
+    query_type: SelectQueryType,
 ) -> Result<Plan> {
     let compounds = select.body.compounds.take();
     match compounds {
@@ -214,7 +216,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_type,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -529,7 +531,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_type,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };

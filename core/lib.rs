@@ -413,6 +413,7 @@ impl Connection {
                             *select,
                             &syms,
                             None,
+                            translate::plan::SelectQueryType::TopLevel,
                         )?;
                         optimize_plan(
                             &mut plan,

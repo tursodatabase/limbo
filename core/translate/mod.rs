@@ -233,7 +233,15 @@ pub fn translate_inner(
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => {
-            translate_select(query_mode, schema, *select, syms, program)?.program
+            translate_select(
+                query_mode,
+                schema,
+                *select,
+                syms,
+                program,
+                plan::SelectQueryType::TopLevel,
+            )?
+            .program
         }
         ast::Stmt::Update(mut update) => translate_update(
             query_mode,

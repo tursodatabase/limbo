@@ -277,14 +277,14 @@ fn parse_from_clause_table<'a>(
             crate::bail_parse_error!("Table {} not found", normalized_qualified_name);
         }
         ast::SelectTable::Select(subselect, maybe_alias) => {
-            let Plan::Select(mut subplan) =
-                prepare_select_plan(schema, *subselect, syms, Some(scope))?
-            else {
-                crate::bail_parse_error!("Only non-compound SELECT queries are currently supported in FROM clause subqueries");
-            };
-            subplan.query_type = SelectQueryType::Subquery {
+            let query_type = SelectQueryType::Subquery {
                 yield_reg: usize::MAX, // will be set later in bytecode emission
                 coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
+            };
+            let Plan::Select(subplan) =
+                prepare_select_plan(schema, *subselect, syms, Some(scope), query_type)?
+            else {
+                crate::bail_parse_error!("Only non-compound SELECT queries are currently supported in FROM clause subqueries");
             };
             let cur_table_index = scope.tables.len();
             let identifier = maybe_alias
@@ -428,15 +428,16 @@ pub fn parse_from<'a>(
                 crate::bail_parse_error!("duplicate WITH table name {}", cte.tbl_name.0);
             }
 
-            // CTE can refer to other CTEs that came before it, plus any schema tables or tables in the outer scope.
-            let cte_plan = prepare_select_plan(schema, *cte.select, syms, Some(&scope))?;
-            let Plan::Select(mut cte_plan) = cte_plan else {
-                crate::bail_parse_error!("Only SELECT queries are currently supported in CTEs");
-            };
             // CTE can be rewritten as a subquery.
-            cte_plan.query_type = SelectQueryType::Subquery {
+            let query_type = SelectQueryType::Subquery {
                 yield_reg: usize::MAX, // will be set later in bytecode emission
                 coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
+            };
+            // CTE can refer to other CTEs that came before it, plus any schema tables or tables in the outer scope.
+            let cte_plan =
+                prepare_select_plan(schema, *cte.select, syms, Some(&scope), query_type)?;
+            let Plan::Select(cte_plan) = cte_plan else {
+                crate::bail_parse_error!("Only SELECT queries are currently supported in CTEs");
             };
             scope.ctes.push(Cte {
                 name: cte_name_normalized,
