@@ -721,11 +721,11 @@ fn populate_columns_multiple_rows(
             // Decrement as we have now seen a value index instead
             other_values_seen -= 1;
             if let Some(temp_table_ctx) = temp_table_ctx {
-                program.emit_insn(Insn::Column {
-                    cursor_id: temp_table_ctx.cursor_id,
-                    column: value_index_seen,
-                    dest: column_registers_start + i,
-                });
+                program.emit_column(
+                    temp_table_ctx.cursor_id,
+                    value_index_seen,
+                    column_registers_start + i,
+                );
             } else {
                 program.emit_insn(Insn::Copy {
                     src_reg: yield_reg + value_index_seen,
