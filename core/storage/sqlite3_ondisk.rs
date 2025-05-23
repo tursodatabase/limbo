@@ -820,7 +820,7 @@ pub fn begin_read_page(
     Ok(())
 }
 
-fn finish_read_page(
+pub fn finish_read_page(
     page_idx: usize,
     buffer_ref: Arc<RefCell<Buffer>>,
     page: PageRef,
@@ -885,6 +885,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         complete: Box::new(move |_| {
             *syncing.borrow_mut() = false;
         }),
+        is_completed: RefCell::new(false),
     });
     db_file.sync(completion)?;
     Ok(())
@@ -1364,7 +1365,7 @@ pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<SpinLock<WalHeade
         let header = header.clone();
         finish_read_wal_header(buf, header).unwrap();
     });
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
     io.pread(0, c)?;
     Ok(result)
 }
@@ -1391,13 +1392,9 @@ pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     buffer_pool: Rc<BufferPool>,
-    page: PageRef,
-) -> Result<()> {
-    trace!(
-        "begin_read_wal_frame(offset={}, page={})",
-        offset,
-        page.get().id
-    );
+    complete: Box<dyn Fn(Arc<RefCell<Buffer>>) -> ()>,
+) -> Result<Arc<Completion>> {
+    trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
         let buffer_pool = buffer_pool.clone();
@@ -1405,14 +1402,9 @@ pub fn begin_read_wal_frame(
     });
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
-    let frame = page.clone();
-    let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
-        let frame = frame.clone();
-        finish_read_page(page.get().id, buf, frame).unwrap();
-    });
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
-    io.pread(offset, c)?;
-    Ok(())
+    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
+    io.pread(offset, c.clone())?;
+    Ok(c)
 }
 
 pub fn begin_write_wal_frame(
@@ -1494,7 +1486,7 @@ pub fn begin_write_wal_frame(
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(offset, buffer.clone(), c)?;
     trace!("Frame written and synced at offset={offset}");
     Ok(checksums)
@@ -1529,7 +1521,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }

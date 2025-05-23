@@ -10,7 +10,8 @@ use crate::fast_lock::SpinLock;
 use crate::io::{File, SyncCompletion, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
-    begin_read_wal_frame, begin_write_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
+    WAL_HEADER_SIZE,
 };
 use crate::{Buffer, LimboError, Result};
 use crate::{Completion, Page};
@@ -166,6 +167,9 @@ pub trait Wal {
 
     /// Read a frame from the WAL.
     fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Rc<BufferPool>) -> Result<()>;
+
+    /// Read a frame from the WAL.
+    fn read_frame_raw(&self, frame_id: u64, buffer_pool: Rc<BufferPool>, frame: *mut u8, frame_len: u32) -> Result<Arc<Completion>>;
 
     /// Write a frame to the WAL.
     fn append_frame(
@@ -428,13 +432,37 @@ impl Wal for WalFile {
         debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         page.set_locked();
+        let frame = page.clone();
+        let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+            let frame = frame.clone();
+            finish_read_page(page.get().id, buf, frame).unwrap();
+        });
         begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
             buffer_pool,
-            page,
+            complete,
         )?;
         Ok(())
+    }
+
+    fn read_frame_raw(&self, frame_id: u64, buffer_pool: Rc<BufferPool>, frame: *mut u8, frame_len: u32) -> Result<Arc<Completion>> {
+        debug!("read_frame({})", frame_id);
+        let offset = self.frame_offset(frame_id);
+        let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+            let buf = buf.borrow();
+            let buf_ptr = buf.as_ptr();
+            unsafe {
+                std::ptr::copy_nonoverlapping(buf_ptr, frame, frame_len as usize);
+            }
+        });
+        let c = begin_read_wal_frame(
+            &self.get_shared().file,
+            offset + WAL_FRAME_HEADER_SIZE,
+            buffer_pool,
+            complete,
+        )?;
+        Ok(c)
     }
 
     /// Write a frame to the WAL.
@@ -651,8 +679,9 @@ impl Wal for WalFile {
                             debug!("wal_sync finish");
                             *syncing.borrow_mut() = false;
                         }),
+                        is_completed: RefCell::new(false),
                     });
-                    shared.file.sync(completion)?;
+                    shared.file.sync(Arc::new(completion))?;
                 }
                 self.sync_state.replace(SyncState::Syncing);
                 Ok(CheckpointStatus::IO)

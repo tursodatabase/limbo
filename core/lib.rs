@@ -297,7 +297,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 let completion = Completion::Write(WriteCompletion::new(Box::new(move |_| {
                     *flag_complete.borrow_mut() = true;
                 })));
-                file.pwrite(0, contents.buffer.clone(), completion)?;
+                file.pwrite(0, contents.buffer.clone(), Arc::new(completion))?;
             }
             let mut limit = 100;
             loop {
@@ -494,6 +494,15 @@ impl Connection {
 
     pub fn wal_frame_count(&self) -> Result<u64> {
         self.pager.wal_frame_count()
+    }
+
+    pub fn wal_get_frame(
+        &self,
+        frame_no: u32,
+        p_frame: *mut u8,
+        frame_len: u32,
+    ) -> Result<Arc<Completion>> {
+        self.pager.wal_get_frame(frame_no, p_frame, frame_len)
     }
 
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
