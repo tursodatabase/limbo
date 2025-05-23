@@ -931,6 +931,7 @@ pub struct IndexColumn {
     /// b.pos_in_table == 1
     pub pos_in_table: usize,
     pub collation: Option<CollationSeq>,
+    pub default: Option<Expr>,
 }
 
 impl Index {
@@ -955,12 +956,13 @@ impl Index {
                             name, index_name, table.name
                         )));
                     };
-                    let collation = table.get_column(&name).unwrap().1.collation;
+                    let (_, column) = table.get_column(&name).unwrap();
                     index_columns.push(IndexColumn {
                         name,
                         order: col.order.unwrap_or(SortOrder::Asc),
                         pos_in_table,
-                        collation,
+                        collation: column.collation,
+                        default: column.default.clone(),
                     });
                 }
                 Ok(Index {
@@ -1017,11 +1019,14 @@ impl Index {
                         );
                     };
 
+                    let (_, column) = table.get_column(col_name).unwrap();
+
                     IndexColumn {
                         name: normalize_ident(col_name),
                         order: order.clone(),
                         pos_in_table,
-                        collation: table.get_column(col_name).unwrap().1.collation,
+                        collation: column.collation,
+                        default: column.default.clone(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -1053,6 +1058,7 @@ impl Index {
                             return None;
                     }
                     let (index_name, root_page) = auto_indices.next().expect("number of auto_indices in schema should be same number of indices calculated");
+                    let (_, column) = table.get_column(col_name).unwrap();
                     Some(Index {
                         name: normalize_ident(index_name.as_str()),
                         table_name: table.name.clone(),
@@ -1061,7 +1067,8 @@ impl Index {
                             name: normalize_ident(col_name),
                             order: SortOrder::Asc, // Default Sort Order
                             pos_in_table,
-                            collation: table.get_column(col_name).unwrap().1.collation,
+                            collation: column.collation,
+                            default: column.default.clone(),
                         }],
                         unique: true,
                         ephemeral: false,
@@ -1123,11 +1130,13 @@ impl Index {
                                 col_name, index_name, table.name
                             );
                         };
+                        let (_, column) = table.get_column(col_name).unwrap();
                         IndexColumn {
                             name: normalize_ident(col_name),
                             order: *order,
                             pos_in_table,
-                            collation: table.get_column(col_name).unwrap().1.collation,
+                            collation: column.collation,
+                            default: column.default.clone(),
                         }
                     });
                     Index {

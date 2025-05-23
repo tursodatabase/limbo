@@ -5,7 +5,7 @@ use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::storage::wal::DummyWAL;
-use crate::types::ImmutableRecord;
+use crate::types::{ImmutableRecord, Text};
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -52,6 +52,7 @@ use super::{
     insn::{Cookie, RegisterOrLiteral},
     CommitState,
 };
+use limbo_sqlite3_parser::ast;
 use parking_lot::RwLock;
 use rand::thread_rng;
 
@@ -1391,38 +1392,86 @@ pub fn op_column(
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     match cursor_type {
         CursorType::BTreeTable(_) | CursorType::BTreeIndex(_) => {
-            let value = {
+            let value = 'value: {
                 let mut cursor =
                     must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Column");
                 let cursor = cursor.as_btree_mut();
                 let record = cursor.record();
-                let value = if let Some(record) = record.as_ref() {
-                    if cursor.get_null_flag() {
-                        RefValue::Null
-                    } else {
-                        match record.get_value_opt(*column) {
-                            Some(val) => val.clone(),
-                            None => RefValue::Null,
-                        }
-                    }
-                } else {
-                    RefValue::Null
+
+                let Some(record) = record.as_ref() else {
+                    break 'value Value::Null;
                 };
-                value
+
+                if cursor.get_null_flag() {
+                    break 'value Value::Null;
+                }
+
+                if let Some(value) = record.get_value_opt(*column) {
+                    break 'value value.to_owned();
+                }
+
+                // WARNING(levy): Work-around for the P4 parameter. This should be reworked to be
+                // more similar to sqlite: when emiting a OP_Column, also add a pre-computed
+                // contant default value from the schema.'
+
+                let literal = {
+                    match cursor_type {
+                        CursorType::BTreeIndex(index) => {
+                            let Some(ast::Expr::Literal(literal)) = &index.columns[*column].default
+                            else {
+                                panic!("column added by ALTER TABLE should be constant")
+                            };
+                            literal
+                        }
+                        CursorType::BTreeTable(btree) => {
+                            let Some(ast::Expr::Literal(literal)) = &btree.columns[*column].default
+                            else {
+                                panic!("column added by ALTER TABLE should be constant")
+                            };
+                            literal
+                        }
+                        _ => unreachable!(),
+                    }
+                };
+
+                use crate::translate::expr::sanitize_string;
+
+                match literal {
+                    ast::Literal::Numeric(s) => match Numeric::from(s) {
+                        Numeric::Null => Value::Null,
+                        Numeric::Integer(v) => Value::Integer(v),
+                        Numeric::Float(v) => Value::Float(v.into()),
+                    },
+                    ast::Literal::Null => Value::Null,
+                    ast::Literal::String(s) => Value::Text(Text::from_str(sanitize_string(s))),
+                    ast::Literal::Blob(s) => Value::Blob(
+                        // Taken from `translate_expr`
+                        s.as_bytes()
+                            .chunks_exact(2)
+                            .map(|pair| {
+                                // We assume that sqlite3-parser has already validated that
+                                // the input is valid hex string, thus unwrap is safe.
+                                let hex_byte = std::str::from_utf8(pair).unwrap();
+                                u8::from_str_radix(hex_byte, 16).unwrap()
+                            })
+                            .collect(),
+                    ),
+                    _ => panic!("column added by ALTER TABLE should be constant"),
+                }
             };
             // If we are copying a text/blob, let's try to simply update size of text if we need to allocate more and reuse.
             match (&value, &mut state.registers[*dest]) {
-                (RefValue::Text(text_ref), Register::Value(Value::Text(text_reg))) => {
+                (Value::Text(text_ref), Register::Value(Value::Text(text_reg))) => {
                     text_reg.value.clear();
-                    text_reg.value.extend_from_slice(text_ref.value.to_slice());
+                    text_reg.value.extend_from_slice(text_ref.value.as_slice());
                 }
-                (RefValue::Blob(raw_slice), Register::Value(Value::Blob(blob_reg))) => {
+                (Value::Blob(raw_slice), Register::Value(Value::Blob(blob_reg))) => {
                     blob_reg.clear();
-                    blob_reg.extend_from_slice(raw_slice.to_slice());
+                    blob_reg.extend_from_slice(raw_slice.as_slice());
                 }
                 _ => {
                     let reg = &mut state.registers[*dest];
-                    *reg = Register::Value(value.to_owned());
+                    *reg = Register::Value(value);
                 }
             }
         }

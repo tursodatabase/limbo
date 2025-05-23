@@ -249,7 +249,27 @@ pub fn translate_inner(
                     )?
                 }
                 ast::AlterTableBody::AddColumn(col_def) => {
-                    btree.columns.push(Column::from(col_def));
+                    let column = Column::from(col_def);
+
+                    if let Some(default) = &column.default {
+                        if !matches!(
+                            default,
+                            ast::Expr::Literal(
+                                ast::Literal::Null
+                                    | ast::Literal::Blob(_)
+                                    | ast::Literal::Numeric(_)
+                                    | ast::Literal::String(_)
+                            )
+                        ) {
+                            // TODO: This is slightly inaccurate since sqlite returns a `Runtime
+                            // error`.
+                            return Err(LimboError::ParseError(
+                                "Cannot add a column with non-constant default".to_string(),
+                            ));
+                        }
+                    }
+
+                    btree.columns.push(column);
 
                     let sql = btree.to_sql();
 

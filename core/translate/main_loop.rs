@@ -87,6 +87,7 @@ pub fn init_distinct(program: &mut ProgramBuilder, plan: &mut SelectPlan) {
                     order: SortOrder::Asc,
                     pos_in_table: i,
                     collation: None, // FIXME: this should be determined based on the result column expression!
+                    default: None, // FIXME: this should be determined based on the result column expression!
                 })
                 .collect(),
             unique: false,
@@ -140,6 +141,7 @@ pub fn init_loop(
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred from the expression
+                default: None,   // FIXME: this should be inferred from the expression
             }],
             has_rowid: false,
             unique: false,
