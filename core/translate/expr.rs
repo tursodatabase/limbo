@@ -1790,7 +1790,12 @@ pub fn translate_expr(
             column,
             is_rowid_alias,
         } => {
-            let table_reference = referenced_tables.as_ref().unwrap().get(*table).unwrap();
+            let table_reference = referenced_tables
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|t| t.internal_id == *table)
+                .unwrap();
             let index = table_reference.op.index();
             let use_covering_index = table_reference.utilizes_covering_index();
 
@@ -1883,7 +1888,12 @@ pub fn translate_expr(
             }
         }
         ast::Expr::RowId { database: _, table } => {
-            let table_reference = referenced_tables.as_ref().unwrap().get(*table).unwrap();
+            let table_reference = referenced_tables
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|t| t.internal_id == *table)
+                .unwrap();
             let index = table_reference.op.index();
             let use_covering_index = table_reference.utilizes_covering_index();
             if use_covering_index {

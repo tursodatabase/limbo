@@ -54,7 +54,10 @@ pub fn init_order_by(
         .map(|(expr, _)| match expr {
             ast::Expr::Collate(_, collation_name) => CollationSeq::new(collation_name).map(Some),
             ast::Expr::Column { table, column, .. } => {
-                let table_reference = referenced_tables.get(*table).unwrap();
+                let table_reference = referenced_tables
+                    .iter()
+                    .find(|t| t.internal_id == *table)
+                    .unwrap();
 
                 let Some(table_column) = table_reference.table.get_column_at(*column) else {
                     crate::bail_parse_error!("column index out of bounds");

@@ -10,7 +10,7 @@ use crate::translate::planner::{
     parse_where, resolve_aggregates,
 };
 use crate::util::normalize_ident;
-use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
+use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode, TableRefIdCounter};
 use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
@@ -24,7 +24,13 @@ pub fn translate_select(
     syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
-    let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
+    let mut select_plan = prepare_select_plan(
+        schema,
+        select,
+        syms,
+        None,
+        &mut program.table_reference_counter,
+    )?;
     optimize_plan(&mut select_plan, schema)?;
     let Plan::Select(ref select) = select_plan else {
         panic!("select_plan is not a SelectPlan");
@@ -46,6 +52,7 @@ pub fn prepare_select_plan<'a>(
     select: ast::Select,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
+    table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<Plan> {
     match *select.body.select {
         ast::OneSelect::Select(select_inner) => {
@@ -67,8 +74,15 @@ pub fn prepare_select_plan<'a>(
             let with = select.with;
 
             // Parse the FROM clause into a vec of TableReferences. Fold all the join conditions expressions into the WHERE clause.
-            let table_references =
-                parse_from(schema, from, syms, with, &mut where_predicates, outer_scope)?;
+            let table_references = parse_from(
+                schema,
+                from,
+                syms,
+                with,
+                &mut where_predicates,
+                outer_scope,
+                table_ref_counter,
+            )?;
 
             // Preallocate space for the result columns
             let result_columns = Vec::with_capacity(
@@ -96,7 +110,8 @@ pub fn prepare_select_plan<'a>(
                     .iter()
                     .enumerate()
                     .map(|(i, t)| JoinOrderMember {
-                        table_no: i,
+                        table_id: t.internal_id,
+                        original_idx: i,
                         is_outer: t.join_info.as_ref().map_or(false, |j| j.outer),
                     })
                     .collect(),
@@ -130,13 +145,12 @@ pub fn prepare_select_plan<'a>(
                         let referenced_table = plan
                             .table_references
                             .iter_mut()
-                            .enumerate()
-                            .find(|(_, t)| t.identifier == name_normalized);
+                            .find(|t| t.identifier == name_normalized);
 
                         if referenced_table.is_none() {
                             crate::bail_parse_error!("Table {} not found", name.0);
                         }
-                        let (table_index, table) = referenced_table.unwrap();
+                        let table = referenced_table.unwrap();
                         let num_columns = table.columns().len();
                         for idx in 0..num_columns {
                             let is_rowid_alias = {
@@ -146,7 +160,7 @@ pub fn prepare_select_plan<'a>(
                             plan.result_columns.push(ResultSetColumn {
                                 expr: ast::Expr::Column {
                                     database: None, // TODO: support different databases
-                                    table: table_index,
+                                    table: table.internal_id,
                                     column: idx,
                                     is_rowid_alias,
                                 },

@@ -204,7 +204,8 @@ fn optimize_table_access(
     let best_join_order: Vec<JoinOrderMember> = best_table_numbers
         .into_iter()
         .map(|table_number| JoinOrderMember {
-            table_no: table_number,
+            table_id: table_references[table_number].internal_id,
+            original_idx: table_number,
             is_outer: table_references[table_number]
                 .join_info
                 .as_ref()
@@ -213,20 +214,20 @@ fn optimize_table_access(
         .collect();
     // Mutate the Operations in `table_references` to use the selected access methods.
     for (i, join_order_member) in best_join_order.iter().enumerate() {
-        let table_number = join_order_member.table_no;
+        let table_idx = join_order_member.original_idx;
         let access_method = &access_methods_arena.borrow()[best_access_methods[i]];
         if access_method.is_scan() {
             let is_leftmost_table = i == 0;
             let uses_index = access_method.index.is_some();
             let source_table_is_from_clause_subquery = matches!(
-                &table_references[table_number].table,
+                &table_references[table_idx].table,
                 Table::FromClauseSubquery(_)
             );
 
             let try_to_build_ephemeral_index =
                 !is_leftmost_table && !uses_index && !source_table_is_from_clause_subquery;
             if !try_to_build_ephemeral_index {
-                table_references[table_number].op = Operation::Scan {
+                table_references[table_idx].op = Operation::Scan {
                     iter_dir: access_method.iter_dir,
                     index: access_method.index.clone(),
                 };
@@ -236,9 +237,9 @@ fn optimize_table_access(
             // Try to construct an ephemeral index since it's going to be better than a scan.
             let table_constraints = constraints_per_table
                 .iter()
-                .find(|c| c.table_no == table_number);
+                .find(|c| c.table_id == join_order_member.table_id);
             let Some(table_constraints) = table_constraints else {
-                table_references[table_number].op = Operation::Scan {
+                table_references[table_idx].op = Operation::Scan {
                     iter_dir: access_method.iter_dir,
                     index: access_method.index.clone(),
                 };
@@ -257,20 +258,19 @@ fn optimize_table_access(
                 &best_join_order[..=i],
             );
             if usable_constraint_refs.is_empty() {
-                table_references[table_number].op = Operation::Scan {
+                table_references[table_idx].op = Operation::Scan {
                     iter_dir: access_method.iter_dir,
                     index: access_method.index.clone(),
                 };
                 continue;
             }
             let ephemeral_index = ephemeral_index_build(
-                &table_references[table_number],
-                table_number,
+                &table_references[table_idx],
                 &table_constraints.constraints,
                 &usable_constraint_refs,
             );
             let ephemeral_index = Arc::new(ephemeral_index);
-            table_references[table_number].op = Operation::Search(Search::Seek {
+            table_references[table_idx].op = Operation::Search(Search::Seek {
                 index: Some(ephemeral_index),
                 seek_def: build_seek_def_from_constraints(
                     &table_constraints.constraints,
@@ -284,7 +284,7 @@ fn optimize_table_access(
             assert!(!constraint_refs.is_empty());
             for cref in constraint_refs.iter() {
                 let constraint =
-                    &constraints_per_table[table_number].constraints[cref.constraint_vec_pos];
+                    &constraints_per_table[table_idx].constraints[cref.constraint_vec_pos];
                 assert!(
                     !where_clause[constraint.where_clause_pos.0].consumed,
                     "trying to consume a where clause term twice: {:?}",
@@ -293,10 +293,10 @@ fn optimize_table_access(
                 where_clause[constraint.where_clause_pos.0].consumed = true;
             }
             if let Some(index) = &access_method.index {
-                table_references[table_number].op = Operation::Search(Search::Seek {
+                table_references[table_idx].op = Operation::Search(Search::Seek {
                     index: Some(index.clone()),
                     seek_def: build_seek_def_from_constraints(
-                        &constraints_per_table[table_number].constraints,
+                        &constraints_per_table[table_idx].constraints,
                         &constraint_refs,
                         access_method.iter_dir,
                         where_clause,
@@ -309,16 +309,16 @@ fn optimize_table_access(
                 "expected exactly one constraint for rowid seek, got {:?}",
                 constraint_refs
             );
-            let constraint = &constraints_per_table[table_number].constraints
+            let constraint = &constraints_per_table[table_idx].constraints
                 [constraint_refs[0].constraint_vec_pos];
-            table_references[table_number].op = match constraint.operator {
+            table_references[table_idx].op = match constraint.operator {
                 ast::Operator::Equals => Operation::Search(Search::RowidEq {
                     cmp_expr: constraint.get_constraining_expr(where_clause),
                 }),
                 _ => Operation::Search(Search::Seek {
                     index: None,
                     seek_def: build_seek_def_from_constraints(
-                        &constraints_per_table[table_number].constraints,
+                        &constraints_per_table[table_idx].constraints,
                         &constraint_refs,
                         access_method.iter_dir,
                         where_clause,
@@ -498,7 +498,7 @@ impl Optimizable for ast::Expr {
                     return true;
                 }
 
-                let table_ref = &tables[*table];
+                let table_ref = tables.iter().find(|t| t.internal_id == *table).unwrap();
                 let columns = table_ref.columns();
                 let column = &columns[*column];
                 return column.primary_key || column.notnull;
@@ -740,7 +740,6 @@ impl Optimizable for ast::Expr {
 
 fn ephemeral_index_build(
     table_reference: &TableReference,
-    table_index: usize,
     constraints: &[Constraint],
     constraint_refs: &[ConstraintRef],
 ) -> Index {
@@ -778,7 +777,7 @@ fn ephemeral_index_build(
         name: format!(
             "ephemeral_{}_{}",
             table_reference.table.get_name(),
-            table_index
+            table_reference.internal_id
         ),
         columns: ephemeral_columns,
         unique: false,

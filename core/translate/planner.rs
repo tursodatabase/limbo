@@ -13,11 +13,11 @@ use crate::{
     schema::{Schema, Table},
     translate::expr::walk_expr_mut,
     util::{exprs_are_equivalent, normalize_ident, vtable_args},
-    vdbe::BranchOffset,
+    vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
 use limbo_sqlite3_parser::ast::{
-    self, Expr, FromClause, JoinType, Limit, Materialized, UnaryOperator, With,
+    self, Expr, FromClause, JoinType, Limit, Materialized, TableInternalId, UnaryOperator, With,
 };
 
 pub const ROWID: &str = "rowid";
@@ -110,7 +110,9 @@ pub fn bind_column_references(
 
                 if !referenced_tables.is_empty() {
                     if let Some(row_id_expr) =
-                        parse_row_id(&normalized_id, 0, || referenced_tables.len() != 1)?
+                        parse_row_id(&normalized_id, referenced_tables[0].internal_id, || {
+                            referenced_tables.len() != 1
+                        })?
                     {
                         *expr = row_id_expr;
 
@@ -135,7 +137,7 @@ pub fn bind_column_references(
                 if let Some((tbl_idx, col_idx, is_rowid_alias)) = match_result {
                     *expr = Expr::Column {
                         database: None, // TODO: support different databases
-                        table: tbl_idx,
+                        table: referenced_tables[tbl_idx].internal_id,
                         column: col_idx,
                         is_rowid_alias,
                     };
@@ -167,7 +169,11 @@ pub fn bind_column_references(
                 let tbl_idx = matching_tbl_idx.unwrap();
                 let normalized_id = normalize_ident(id.0.as_str());
 
-                if let Some(row_id_expr) = parse_row_id(&normalized_id, tbl_idx, || false)? {
+                if let Some(row_id_expr) = parse_row_id(
+                    &normalized_id,
+                    referenced_tables[tbl_idx].internal_id,
+                    || false,
+                )? {
                     *expr = row_id_expr;
 
                     return Ok(());
@@ -186,7 +192,7 @@ pub fn bind_column_references(
                     .unwrap();
                 *expr = Expr::Column {
                     database: None, // TODO: support different databases
-                    table: tbl_idx,
+                    table: referenced_tables[tbl_idx].internal_id,
                     column: col_idx.unwrap(),
                     is_rowid_alias: col.is_rowid_alias,
                 };
@@ -203,6 +209,7 @@ fn parse_from_clause_table<'a>(
     table: ast::SelectTable,
     scope: &mut Scope<'a>,
     syms: &SymbolTable,
+    table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<()> {
     match table {
         ast::SelectTable::Table(qualified_name, maybe_alias, _) => {
@@ -215,8 +222,12 @@ fn parse_from_clause_table<'a>(
             {
                 // CTE can be rewritten as a subquery.
                 // TODO: find a way not to clone the CTE plan here.
-                let cte_table =
-                    TableReference::new_subquery(cte.name.clone(), cte.plan.clone(), None);
+                let cte_table = TableReference::new_subquery(
+                    cte.name.clone(),
+                    cte.plan.clone(),
+                    None,
+                    table_ref_counter.next(),
+                );
                 scope.tables.push(cte_table);
                 return Ok(());
             };
@@ -244,6 +255,7 @@ fn parse_from_clause_table<'a>(
                     },
                     table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
+                    internal_id: table_ref_counter.next(),
                     join_info: None,
                     col_used_mask: ColumnUsedMask::new(),
                 });
@@ -267,8 +279,12 @@ fn parse_from_clause_table<'a>(
                     .find(|cte| cte.name == normalized_qualified_name)
                 {
                     // TODO: avoid cloning the CTE plan here.
-                    let cte_table =
-                        TableReference::new_subquery(cte.name.clone(), cte.plan.clone(), None);
+                    let cte_table = TableReference::new_subquery(
+                        cte.name.clone(),
+                        cte.plan.clone(),
+                        None,
+                        table_ref_counter.next(),
+                    );
                     scope.tables.push(cte_table);
                     return Ok(());
                 }
@@ -278,7 +294,7 @@ fn parse_from_clause_table<'a>(
         }
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(mut subplan) =
-                prepare_select_plan(schema, *subselect, syms, Some(scope))?
+                prepare_select_plan(schema, *subselect, syms, Some(scope), table_ref_counter)?
             else {
                 unreachable!();
             };
@@ -293,9 +309,12 @@ fn parse_from_clause_table<'a>(
                     ast::As::Elided(id) => id.0.clone(),
                 })
                 .unwrap_or(format!("subquery_{}", cur_table_index));
-            scope
-                .tables
-                .push(TableReference::new_subquery(identifier, subplan, None));
+            scope.tables.push(TableReference::new_subquery(
+                identifier,
+                subplan,
+                None,
+                table_ref_counter.next(),
+            ));
             Ok(())
         }
         ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
@@ -328,6 +347,7 @@ fn parse_from_clause_table<'a>(
                 join_info: None,
                 table: Table::Virtual(vtab),
                 identifier: alias,
+                internal_id: table_ref_counter.next(),
                 col_used_mask: ColumnUsedMask::new(),
             });
 
@@ -384,6 +404,7 @@ pub fn parse_from<'a>(
     with: Option<With>,
     out_where_clause: &mut Vec<WhereTerm>,
     outer_scope: Option<&'a Scope<'a>>,
+    table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<Vec<TableReference>> {
     if from.as_ref().and_then(|f| f.select.as_ref()).is_none() {
         return Ok(vec![]);
@@ -429,7 +450,8 @@ pub fn parse_from<'a>(
             }
 
             // CTE can refer to other CTEs that came before it, plus any schema tables or tables in the outer scope.
-            let cte_plan = prepare_select_plan(schema, *cte.select, syms, Some(&scope))?;
+            let cte_plan =
+                prepare_select_plan(schema, *cte.select, syms, Some(&scope), table_ref_counter)?;
             let Plan::Select(mut cte_plan) = cte_plan else {
                 crate::bail_parse_error!("Only SELECT queries are currently supported in CTEs");
             };
@@ -448,10 +470,17 @@ pub fn parse_from<'a>(
     let mut from_owned = std::mem::take(&mut from).unwrap();
     let select_owned = *std::mem::take(&mut from_owned.select).unwrap();
     let joins_owned = std::mem::take(&mut from_owned.joins).unwrap_or_default();
-    parse_from_clause_table(schema, select_owned, &mut scope, syms)?;
+    parse_from_clause_table(schema, select_owned, &mut scope, syms, table_ref_counter)?;
 
     for join in joins_owned.into_iter() {
-        parse_join(schema, join, syms, &mut scope, out_where_clause)?;
+        parse_join(
+            schema,
+            join,
+            syms,
+            &mut scope,
+            out_where_clause,
+            table_ref_counter,
+        )?;
     }
 
     Ok(scope.tables)
@@ -493,11 +522,11 @@ pub fn determine_where_to_eval_term(
     term: &WhereTerm,
     join_order: &[JoinOrderMember],
 ) -> Result<EvalAt> {
-    if let Some(table_no) = term.from_outer_join {
+    if let Some(table_id) = term.from_outer_join {
         return Ok(EvalAt::Loop(
             join_order
                 .iter()
-                .position(|t| t.table_no == table_no)
+                .position(|t| t.table_id == table_id)
                 .unwrap_or(usize::MAX),
         ));
     }
@@ -523,6 +552,11 @@ pub fn determine_where_to_eval_term(
 /// [TableMask] helps determine:
 /// - Which tables are referenced in a constraint
 /// - When a constraint can be applied as a join condition (all referenced tables must be on the left side of the table being joined)
+///
+/// Note that although [TableReference]s contain an internal ID as well, in join order optimization
+/// the [TableMask] refers to the index of the table in the original join order, not the internal ID.
+/// This is simply because we want to represent the tables as a contiguous set of bits, and the internal ID
+/// might not be contiguous after e.g. subquery unnesting or other transformations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TableMask(pub u128);
 
@@ -597,12 +631,19 @@ impl TableMask {
 
 /// Returns a [TableMask] representing the tables referenced in the given expression.
 /// Used in the optimizer for constraint analysis.
-pub fn table_mask_from_expr(top_level_expr: &Expr) -> Result<TableMask> {
+pub fn table_mask_from_expr(
+    top_level_expr: &Expr,
+    table_references: &[TableReference],
+) -> Result<TableMask> {
     let mut mask = TableMask::new();
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<()> {
         match expr {
             Expr::Column { table, .. } | Expr::RowId { table, .. } => {
-                mask.add_table(*table);
+                let table_idx = table_references
+                    .iter()
+                    .position(|t| t.internal_id == *table)
+                    .expect("table not found in table_references");
+                mask.add_table(table_idx);
             }
             _ => {}
         }
@@ -622,7 +663,7 @@ pub fn determine_where_to_eval_expr<'a>(
             Expr::Column { table, .. } | Expr::RowId { table, .. } => {
                 let join_idx = join_order
                     .iter()
-                    .position(|t| t.table_no == *table)
+                    .position(|t| t.table_id == *table)
                     .unwrap_or(usize::MAX);
                 eval_at = eval_at.max(EvalAt::Loop(join_idx));
             }
@@ -640,6 +681,7 @@ fn parse_join<'a>(
     syms: &SymbolTable,
     scope: &mut Scope<'a>,
     out_where_clause: &mut Vec<WhereTerm>,
+    table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<()> {
     let ast::JoinedSelectTable {
         operator: join_operator,
@@ -647,7 +689,7 @@ fn parse_join<'a>(
         constraint,
     } = join;
 
-    parse_from_clause_table(schema, table, scope, syms)?;
+    parse_from_clause_table(schema, table, scope, syms, table_ref_counter)?;
 
     let (outer, natural) = match join_operator {
         ast::JoinOperator::TypedJoin(Some(join_type)) => {
@@ -717,7 +759,7 @@ fn parse_join<'a>(
                     out_where_clause.push(WhereTerm {
                         expr: pred,
                         from_outer_join: if outer {
-                            Some(scope.tables.len() - 1)
+                            Some(scope.tables.last().unwrap().internal_id)
                         } else {
                             None
                         },
@@ -744,7 +786,7 @@ fn parse_join<'a>(
                                     .as_ref()
                                     .map_or(false, |name| *name == name_normalized)
                             })
-                            .map(|(idx, col)| (left_table_idx, idx, col));
+                            .map(|(idx, col)| (left_table_idx, left_table.internal_id, idx, col));
                         if left_col.is_some() {
                             break;
                         }
@@ -766,19 +808,19 @@ fn parse_join<'a>(
                             distinct_name.0
                         );
                     }
-                    let (left_table_idx, left_col_idx, left_col) = left_col.unwrap();
+                    let (left_table_idx, left_table_id, left_col_idx, left_col) = left_col.unwrap();
                     let (right_col_idx, right_col) = right_col.unwrap();
                     let expr = Expr::Binary(
                         Box::new(Expr::Column {
                             database: None,
-                            table: left_table_idx,
+                            table: left_table_id,
                             column: left_col_idx,
                             is_rowid_alias: left_col.is_rowid_alias,
                         }),
                         ast::Operator::Equals,
                         Box::new(Expr::Column {
                             database: None,
-                            table: cur_table_idx,
+                            table: right_table.internal_id,
                             column: right_col_idx,
                             is_rowid_alias: right_col.is_rowid_alias,
                         }),
@@ -790,7 +832,11 @@ fn parse_join<'a>(
                     right_table.mark_column_used(right_col_idx);
                     out_where_clause.push(WhereTerm {
                         expr,
-                        from_outer_join: if outer { Some(cur_table_idx) } else { None },
+                        from_outer_join: if outer {
+                            Some(right_table.internal_id)
+                        } else {
+                            None
+                        },
                         consumed: false,
                     });
                 }
@@ -858,7 +904,11 @@ pub fn break_predicate_at_and_boundaries(predicate: Expr, out_predicates: &mut V
     }
 }
 
-fn parse_row_id<F>(column_name: &str, table_id: usize, fn_check: F) -> Result<Option<Expr>>
+fn parse_row_id<F>(
+    column_name: &str,
+    table_id: TableInternalId,
+    fn_check: F,
+) -> Result<Option<Expr>>
 where
     F: FnOnce() -> bool,
 {

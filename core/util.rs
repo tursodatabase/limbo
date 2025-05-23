@@ -1,6 +1,6 @@
 use crate::{
     schema::{self, Column, Schema, Type},
-    translate::{collate::CollationSeq, expr::walk_expr},
+    translate::{collate::CollationSeq, expr::walk_expr, plan::JoinOrderMember},
     types::{Value, ValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
@@ -583,12 +583,20 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
 
 /// This function checks if a given expression is a constant value that can be pushed down to the database engine.
 /// It is expected to be called with the other half of a binary expression with an Expr::Column
-pub fn can_pushdown_predicate(top_level_expr: &Expr, table_idx: usize) -> Result<bool> {
+pub fn can_pushdown_predicate(
+    top_level_expr: &Expr,
+    table_idx: usize,
+    join_order: &[JoinOrderMember],
+) -> Result<bool> {
     let mut can_pushdown = true;
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<()> {
         match expr {
             Expr::Column { table, .. } | Expr::RowId { table, .. } => {
-                can_pushdown &= *table <= table_idx;
+                let join_idx = join_order
+                    .iter()
+                    .position(|t| t.table_id == *table)
+                    .expect("table not found in join_order");
+                can_pushdown &= join_idx <= table_idx;
             }
             Expr::FunctionCall { args, name, .. } => {
                 let function = crate::function::Func::resolve_function(

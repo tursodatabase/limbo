@@ -188,7 +188,7 @@ fn rebuild_or_expr_from_list(mut operands: Vec<Expr>) -> Expr {
 mod tests {
     use super::*;
     use crate::translate::plan::WhereTerm;
-    use limbo_sqlite3_parser::ast::{self, Expr, Literal, Operator};
+    use limbo_sqlite3_parser::ast::{self, Expr, Literal, Operator, TableInternalId};
 
     #[test]
     fn test_lift_common_subexpressions() -> Result<()> {
@@ -200,7 +200,7 @@ mod tests {
         let a_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 0,
                 is_rowid_alias: false,
             }),
@@ -211,7 +211,7 @@ mod tests {
         let b_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 1,
                 is_rowid_alias: false,
             }),
@@ -222,7 +222,7 @@ mod tests {
         let x_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 2,
                 is_rowid_alias: false,
             }),
@@ -233,7 +233,7 @@ mod tests {
         let y_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 3,
                 is_rowid_alias: false,
             }),
@@ -293,7 +293,7 @@ mod tests {
         let a_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 0,
                 is_rowid_alias: false,
             }),
@@ -304,7 +304,7 @@ mod tests {
         let x_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 1,
                 is_rowid_alias: false,
             }),
@@ -315,7 +315,7 @@ mod tests {
         let y_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 2,
                 is_rowid_alias: false,
             }),
@@ -326,7 +326,7 @@ mod tests {
         let z_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 3,
                 is_rowid_alias: false,
             }),
@@ -393,7 +393,7 @@ mod tests {
         let x_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 0,
                 is_rowid_alias: false,
             }),
@@ -404,7 +404,7 @@ mod tests {
         let y_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 1,
                 is_rowid_alias: false,
             }),
@@ -445,7 +445,7 @@ mod tests {
         let a_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 0,
                 is_rowid_alias: false,
             }),
@@ -456,7 +456,7 @@ mod tests {
         let x_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 1,
                 is_rowid_alias: false,
             }),
@@ -467,7 +467,7 @@ mod tests {
         let y_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 2,
                 is_rowid_alias: false,
             }),
@@ -487,7 +487,7 @@ mod tests {
 
         let mut where_clause = vec![WhereTerm {
             expr: or_expr,
-            from_outer_join: Some(0), // Set from_outer_join
+            from_outer_join: Some(TableInternalId::default()), // Set from_outer_join
             consumed: false,
         }];
 
@@ -507,9 +507,15 @@ mod tests {
                 Box::new(ast::Expr::Parenthesized(vec![y_expr]))
             )
         );
-        assert_eq!(nonconsumed_terms[0].from_outer_join, Some(0));
+        assert_eq!(
+            nonconsumed_terms[0].from_outer_join,
+            Some(TableInternalId::default())
+        );
         assert_eq!(nonconsumed_terms[1].expr, a_expr);
-        assert_eq!(nonconsumed_terms[1].from_outer_join, Some(0));
+        assert_eq!(
+            nonconsumed_terms[1].from_outer_join,
+            Some(TableInternalId::default())
+        );
 
         Ok(())
     }
@@ -523,7 +529,7 @@ mod tests {
         let single_expr = Expr::Binary(
             Box::new(Expr::Column {
                 database: None,
-                table: 0,
+                table: TableInternalId::default(),
                 column: 0,
                 is_rowid_alias: false,
             }),
@@ -559,7 +565,7 @@ mod tests {
                 Expr::Binary(
                     Box::new(Expr::Column {
                         database: None,
-                        table: 0,
+                        table: TableInternalId::default(),
                         column: i,
                         is_rowid_alias: false,
                     }),

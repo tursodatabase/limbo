@@ -135,7 +135,11 @@ pub fn init_group_by(
                     CollationSeq::new(collation_name).map(Some)
                 }
                 ast::Expr::Column { table, column, .. } => {
-                    let table_reference = plan.table_references.get(*table).unwrap();
+                    let table_reference = plan
+                        .table_references
+                        .iter()
+                        .find(|t| t.internal_id == *table)
+                        .unwrap();
 
                     let Some(table_column) = table_reference.table.get_column_at(*column) else {
                         crate::bail_parse_error!("column index out of bounds");
