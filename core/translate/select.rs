@@ -17,46 +17,64 @@ use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
 use limbo_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
 use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
+pub struct TranslateSelectResult {
+    pub program: ProgramBuilder,
+    pub num_result_cols: usize,
+}
+
 pub fn translate_select(
     query_mode: QueryMode,
     schema: &Schema,
     select: ast::Select,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
-) -> Result<ProgramBuilder> {
-    let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
+    query_type: SelectQueryType,
+) -> Result<TranslateSelectResult> {
+    let mut select_plan = prepare_select_plan(schema, select, syms, None, query_type)?;
     optimize_plan(&mut select_plan, schema)?;
+    let num_result_cols;
     let opts = match &select_plan {
-        Plan::Select(select) => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(select),
-            approx_num_insns: estimate_num_instructions(select),
-            approx_num_labels: estimate_num_labels(select),
-        },
-        Plan::CompoundSelect { first, rest, .. } => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| count_plan_required_cursors(plan))
-                    .sum::<usize>(),
-            approx_num_insns: estimate_num_instructions(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_instructions(plan))
-                    .sum::<usize>(),
-            approx_num_labels: estimate_num_labels(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_labels(plan))
-                    .sum::<usize>(),
-        },
+        Plan::Select(select) => {
+            num_result_cols = select.result_columns.len();
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(select),
+                approx_num_insns: estimate_num_instructions(select),
+                approx_num_labels: estimate_num_labels(select),
+            }
+        }
+        Plan::CompoundSelect { first, rest, .. } => {
+            // Compound Selects must return the same number of columns
+            num_result_cols = first.result_columns.len();
+
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| count_plan_required_cursors(plan))
+                        .sum::<usize>(),
+                approx_num_insns: estimate_num_instructions(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_instructions(plan))
+                        .sum::<usize>(),
+                approx_num_labels: estimate_num_labels(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_labels(plan))
+                        .sum::<usize>(),
+            }
+        }
         other => panic!("plan is not a SelectPlan: {:?}", other),
     };
 
     program.extend(&opts);
     emit_program(&mut program, select_plan, syms)?;
-    Ok(program)
+    Ok(TranslateSelectResult {
+        program,
+        num_result_cols,
+    })
 }
 
 pub fn prepare_select_plan<'a>(
@@ -64,6 +82,7 @@ pub fn prepare_select_plan<'a>(
     mut select: ast::Select,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
+    query_type: SelectQueryType,
 ) -> Result<Plan> {
     let compounds = select.body.compounds.take();
     match compounds {
@@ -77,6 +96,7 @@ pub fn prepare_select_plan<'a>(
                 select.with.take(),
                 syms,
                 outer_scope,
+                query_type,
             )?))
         }
         Some(compounds) => {
@@ -88,6 +108,7 @@ pub fn prepare_select_plan<'a>(
                 None,
                 syms,
                 outer_scope,
+                query_type.clone(),
             )?;
             let mut rest = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
@@ -95,8 +116,16 @@ pub fn prepare_select_plan<'a>(
                 if operator != ast::CompoundOperator::UnionAll {
                     crate::bail_parse_error!("only UNION ALL is supported for compound SELECTs");
                 }
-                let plan =
-                    prepare_one_select_plan(schema, *select, None, None, None, syms, outer_scope)?;
+                let plan = prepare_one_select_plan(
+                    schema,
+                    *select,
+                    None,
+                    None,
+                    None,
+                    syms,
+                    outer_scope,
+                    query_type.clone(), // TODO: come back here when I do more tests on how the values should be yielded
+                )?;
                 rest.push((plan, operator));
             }
             // Ensure all subplans have same number of result columns
@@ -144,6 +173,7 @@ fn prepare_one_select_plan<'a>(
     with: Option<ast::With>,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
+    query_type: SelectQueryType,
 ) -> Result<SelectPlan> {
     match select {
         ast::OneSelect::Select(select_inner) => {
@@ -205,7 +235,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_type,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -520,7 +550,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_type,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };
