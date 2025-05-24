@@ -32,36 +32,47 @@ pub fn translate_select(
 ) -> Result<TranslateSelectResult> {
     let mut select_plan = prepare_select_plan(schema, select, syms, None, query_type)?;
     optimize_plan(&mut select_plan, schema)?;
+    let num_result_cols;
     let opts = match &select_plan {
-        Plan::Select(select) => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(select),
-            approx_num_insns: estimate_num_instructions(select),
-            approx_num_labels: estimate_num_labels(select),
-        },
-        Plan::CompoundSelect { first, rest, .. } => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(first)
+        Plan::Select(select) => {
+            num_result_cols = select.result_columns.len();
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(select),
+                approx_num_insns: estimate_num_instructions(select),
+                approx_num_labels: estimate_num_labels(select),
+            }
+        }
+        Plan::CompoundSelect { first, rest, .. } => {
+            num_result_cols = first.result_columns.len()
                 + rest
                     .iter()
-                    .map(|(plan, _)| count_plan_required_cursors(plan))
-                    .sum::<usize>(),
-            approx_num_insns: estimate_num_instructions(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_instructions(plan))
-                    .sum::<usize>(),
-            approx_num_labels: estimate_num_labels(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_labels(plan))
-                    .sum::<usize>(),
-        },
+                    .map(|(plan, _)| plan.result_columns.len())
+                    .sum::<usize>();
+
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| count_plan_required_cursors(plan))
+                        .sum::<usize>(),
+                approx_num_insns: estimate_num_instructions(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_instructions(plan))
+                        .sum::<usize>(),
+                approx_num_labels: estimate_num_labels(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_labels(plan))
+                        .sum::<usize>(),
+            }
+        }
         other => panic!("plan is not a SelectPlan: {:?}", other),
     };
 
     program.extend(&opts);
-    let num_result_cols = select.result_columns.len();
     emit_program(&mut program, select_plan, syms)?;
     Ok(TranslateSelectResult {
         program,
@@ -88,6 +99,7 @@ pub fn prepare_select_plan<'a>(
                 select.with.take(),
                 syms,
                 outer_scope,
+                query_type,
             )?))
         }
         Some(compounds) => {
@@ -99,6 +111,7 @@ pub fn prepare_select_plan<'a>(
                 None,
                 syms,
                 outer_scope,
+                query_type.clone(),
             )?;
             let mut rest = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
@@ -106,8 +119,16 @@ pub fn prepare_select_plan<'a>(
                 if operator != ast::CompoundOperator::UnionAll {
                     crate::bail_parse_error!("only UNION ALL is supported for compound SELECTs");
                 }
-                let plan =
-                    prepare_one_select_plan(schema, *select, None, None, None, syms, outer_scope)?;
+                let plan = prepare_one_select_plan(
+                    schema,
+                    *select,
+                    None,
+                    None,
+                    None,
+                    syms,
+                    outer_scope,
+                    query_type.clone(), // TODO: come back here when I do more tests on how the values should be yielded
+                )?;
                 rest.push((plan, operator));
             }
             // Ensure all subplans have same number of result columns
@@ -155,6 +176,7 @@ fn prepare_one_select_plan<'a>(
     with: Option<ast::With>,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
+    query_type: SelectQueryType,
 ) -> Result<SelectPlan> {
     match select {
         ast::OneSelect::Select(select_inner) => {
