@@ -224,3 +224,42 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_where {
 1
 20}
 
+do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all {
+    CREATE TABLE t1(x INTEGER);
+    CREATE TABLE t2(x INTEGER); 
+    CREATE TABLE t3(x INTEGER);
+    
+    INSERT INTO t1 VALUES(1),(2),(3);
+    INSERT INTO t2 VALUES(4),(5),(6);
+    INSERT INTO t3 VALUES(7),(8),(9);
+
+    INSERT INTO t1 SELECT x FROM t2 UNION ALL SELECT x FROM t3;
+    SELECT * FROM t1;
+} {1
+2
+3
+4
+5
+6
+7
+8
+9}
+
+do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all_where {
+    CREATE TABLE t1(x INTEGER);
+    CREATE TABLE t2(x INTEGER); 
+    CREATE TABLE t3(x INTEGER);
+    
+    INSERT INTO t1 VALUES(1),(2),(3);
+    INSERT INTO t2 VALUES(4),(5),(6);
+    INSERT INTO t3 VALUES(7),(8),(9);
+
+    INSERT INTO t1 SELECT x FROM t2 WHERE x != 4 UNION ALL SELECT x FROM t3 WHERE x == 8;
+    SELECT * FROM t1;
+} {1
+2
+3
+5
+6
+8}
+

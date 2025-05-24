@@ -605,9 +605,7 @@ fn populate_columns_multiple_rows(
     for (i, mapping) in column_mappings.iter().enumerate() {
         let target_reg = column_registers_start + i;
 
-        // dbg!(mapping, i, target_reg, yield_reg + value_index_seen);
         if let Some(value_index) = mapping.value_index {
-            // dbg!(column_registers_start + value_index);
             program.emit_insn(Insn::Copy {
                 src_reg: yield_reg + value_index_seen,
                 dst_reg: column_registers_start + value_index + other_values_seen,

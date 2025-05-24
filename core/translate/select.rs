@@ -44,11 +44,8 @@ pub fn translate_select(
             }
         }
         Plan::CompoundSelect { first, rest, .. } => {
-            num_result_cols = first.result_columns.len()
-                + rest
-                    .iter()
-                    .map(|(plan, _)| plan.result_columns.len())
-                    .sum::<usize>();
+            // Compound Selects must return the same number of columns
+            num_result_cols = first.result_columns.len();
 
             ProgramBuilderOpts {
                 query_mode,

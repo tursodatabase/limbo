@@ -245,6 +245,16 @@ fn emit_program_for_compound_select(
     }
 
     let mut first_t_ctx = t_ctx_list.remove(0);
+
+    let mut registers_subqery = None;
+    if matches!(
+        first.query_type,
+        crate::translate::plan::SelectQueryType::Subquery { .. }
+    ) {
+        registers_subqery = Some(program.alloc_registers(first.result_columns.len()));
+        first_t_ctx.reg_result_cols_start = registers_subqery.clone();
+    }
+
     emit_query(program, &mut first, &mut first_t_ctx)?;
 
     // TODO: add support for UNION, EXCEPT, INTERSECT
@@ -264,6 +274,13 @@ fn emit_program_for_compound_select(
         let (mut select, operator) = rest.remove(0);
         if operator != ast::CompoundOperator::UnionAll {
             crate::bail_parse_error!("unimplemented compound select operator: {:?}", operator);
+        }
+        if matches!(
+            select.query_type,
+            crate::translate::plan::SelectQueryType::Subquery { .. }
+        ) {
+            // Need to reuse the same registers when you are yielding
+            t_ctx.reg_result_cols_start = registers_subqery.clone();
         }
         emit_query(program, &mut select, &mut t_ctx)?;
         program.preassign_label_to_next_insn(label_next_select);
@@ -365,7 +382,9 @@ pub fn emit_query<'a>(
     }
 
     // Allocate registers for result columns
-    t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
+    if t_ctx.reg_result_cols_start.is_none() {
+        t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
+    }
 
     // Initialize cursors and other resources needed for query execution
     if let Some(ref mut order_by) = plan.order_by {
