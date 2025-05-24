@@ -468,7 +468,7 @@ mod tests {
         }
 
         for iter_num in 0..NUM_FUZZ_ITERATIONS {
-            // Number of SELECT clauses to be UNION ALL'd
+            // Number of SELECT clauses
             let num_selects_in_union =
                 rng.random_range(1..=(table_names.len() + MAX_SELECTS_IN_UNION_EXTRA));
             let mut select_statements = Vec::new();
@@ -479,7 +479,15 @@ mod tests {
                 select_statements.push(format!("SELECT c1, c2, c3 FROM {}", table_to_select_from));
             }
 
-            let mut query = select_statements.join(" UNION ALL ");
+            const COMPOUND_OPERATORS: [&str; 2] = [" UNION ALL ", " UNION "];
+
+            let mut query = String::new();
+            for (i, select_statement) in select_statements.iter().enumerate() {
+                if i > 0 {
+                    query.push_str(COMPOUND_OPERATORS.choose(&mut rng).unwrap());
+                }
+                query.push_str(select_statement);
+            }
 
             if rng.random_bool(0.8) {
                 let limit_val = rng.random_range(0..=MAX_LIMIT_VALUE); // LIMIT 0 is valid
@@ -497,9 +505,15 @@ mod tests {
             let sqlite_results = sqlite_exec_rows(&sqlite_conn, &query);
 
             assert_eq!(
-                limbo_results, sqlite_results,
-                "query: {}, limbo: {:?}, sqlite: {:?}, seed: {}",
-                query, limbo_results, sqlite_results, seed
+                limbo_results,
+                sqlite_results,
+                "query: {}, limbo.len(): {}, sqlite.len(): {}, limbo: {:?}, sqlite: {:?}, seed: {}",
+                query,
+                limbo_results.len(),
+                sqlite_results.len(),
+                limbo_results,
+                sqlite_results,
+                seed
             );
         }
     }

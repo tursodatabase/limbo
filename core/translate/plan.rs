@@ -285,6 +285,13 @@ pub enum SelectQueryType {
         /// The index of the first instruction in the bytecode that implements the subquery.
         coroutine_implementation_start: BranchOffset,
     },
+    /// One arm of a UNION query, so its results need to be fed into a temp index for deduplication.
+    UnionArm {
+        /// The cursor ID of the temp index that will be used to deduplicate the results.
+        index_cursor_id: CursorID,
+        /// The deduplication index.
+        dedupe_index: Arc<Index>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

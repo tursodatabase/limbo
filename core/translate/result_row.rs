@@ -1,5 +1,9 @@
 use crate::{
-    vdbe::{builder::ProgramBuilder, insn::Insn, BranchOffset},
+    vdbe::{
+        builder::ProgramBuilder,
+        insn::{IdxInsertFlags, Insn},
+        BranchOffset,
+    },
     Result,
 };
 
@@ -86,6 +90,25 @@ pub fn emit_result_row_and_limit(
             program.emit_insn(Insn::ResultRow {
                 start_reg: result_columns_start_reg,
                 count: plan.result_columns.len(),
+            });
+        }
+        SelectQueryType::UnionArm {
+            index_cursor_id,
+            dedupe_index,
+        } => {
+            let record_reg = program.alloc_register();
+            program.emit_insn(Insn::MakeRecord {
+                start_reg: result_columns_start_reg,
+                count: plan.result_columns.len(),
+                dest_reg: record_reg,
+                index_name: Some(dedupe_index.name.clone()),
+            });
+            program.emit_insn(Insn::IdxInsert {
+                cursor_id: *index_cursor_id,
+                record_reg,
+                unpacked_start: None,
+                unpacked_count: None,
+                flags: IdxInsertFlags::new(),
             });
         }
         SelectQueryType::Subquery { yield_reg, .. } => {
