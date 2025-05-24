@@ -101,7 +101,7 @@ pub struct Database {
     page_size: u32,
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
-    shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
+    _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     shared_wal: Arc<UnsafeCell<WalFileShared>>,
     open_flags: OpenFlags,
 }
@@ -174,7 +174,7 @@ impl Database {
             mv_store,
             schema: schema.clone(),
             header: db_header.clone(),
-            shared_page_cache: shared_page_cache.clone(),
+            _shared_page_cache: shared_page_cache.clone(),
             shared_wal: shared_wal.clone(),
             db_file,
             io: io.clone(),
@@ -210,12 +210,13 @@ impl Database {
             self.shared_wal.clone(),
             buffer_pool.clone(),
         )));
+        // For now let's open database without shared cache by default.
         let pager = Rc::new(Pager::finish_open(
             self.header.clone(),
             self.db_file.clone(),
             Some(wal),
             self.io.clone(),
-            self.shared_page_cache.clone(),
+            Arc::new(RwLock::new(DumbLruPageCache::default())),
             buffer_pool,
         )?);
         let conn = Rc::new(Connection {
@@ -230,6 +231,7 @@ impl Database {
             last_change: Cell::new(0),
             syms: RefCell::new(SymbolTable::new()),
             total_changes: Cell::new(0),
+            _shared_cache: false,
         });
         if let Err(e) = conn.register_builtins() {
             return Err(LimboError::ExtensionError(e));
@@ -327,6 +329,7 @@ pub struct Connection {
     last_change: Cell<i64>,
     total_changes: Cell<i64>,
     syms: RefCell<SymbolTable>,
+    _shared_cache: bool,
 }
 
 impl Connection {
