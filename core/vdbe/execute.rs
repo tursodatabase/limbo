@@ -1360,6 +1360,7 @@ pub fn op_column(
         cursor_id,
         column,
         dest,
+        default,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -1386,38 +1387,39 @@ pub fn op_column(
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     match cursor_type {
         CursorType::BTreeTable(_) | CursorType::BTreeIndex(_) => {
-            let value = {
+            let value = 'value: {
                 let mut cursor =
                     must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Column");
                 let cursor = cursor.as_btree_mut();
                 let record = cursor.record();
-                let value = if let Some(record) = record.as_ref() {
-                    if cursor.get_null_flag() {
-                        RefValue::Null
-                    } else {
-                        match record.get_value_opt(*column) {
-                            Some(val) => val.clone(),
-                            None => RefValue::Null,
-                        }
-                    }
-                } else {
-                    RefValue::Null
+
+                let Some(record) = record.as_ref() else {
+                    break 'value Value::Null;
                 };
-                value
+
+                if cursor.get_null_flag() {
+                    break 'value Value::Null;
+                }
+
+                if let Some(value) = record.get_value_opt(*column) {
+                    break 'value value.to_owned();
+                }
+
+                default.clone().unwrap_or(Value::Null)
             };
             // If we are copying a text/blob, let's try to simply update size of text if we need to allocate more and reuse.
             match (&value, &mut state.registers[*dest]) {
-                (RefValue::Text(text_ref), Register::Value(Value::Text(text_reg))) => {
+                (Value::Text(text_ref), Register::Value(Value::Text(text_reg))) => {
                     text_reg.value.clear();
-                    text_reg.value.extend_from_slice(text_ref.value.to_slice());
+                    text_reg.value.extend_from_slice(text_ref.value.as_slice());
                 }
-                (RefValue::Blob(raw_slice), Register::Value(Value::Blob(blob_reg))) => {
+                (Value::Blob(raw_slice), Register::Value(Value::Blob(blob_reg))) => {
                     blob_reg.clear();
-                    blob_reg.extend_from_slice(raw_slice.to_slice());
+                    blob_reg.extend_from_slice(raw_slice.as_slice());
                 }
                 _ => {
                     let reg = &mut state.registers[*dest];
-                    *reg = Register::Value(value.to_owned());
+                    *reg = Register::Value(value);
                 }
             }
         }
@@ -1430,7 +1432,7 @@ pub fn op_column(
             if let Some(record) = record {
                 state.registers[*dest] = Register::Value(match record.get_value_opt(*column) {
                     Some(val) => val.to_owned(),
-                    None => Value::Null,
+                    None => default.clone().unwrap_or(Value::Null),
                 });
             } else {
                 state.registers[*dest] = Register::Value(Value::Null);

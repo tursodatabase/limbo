@@ -1845,11 +1845,8 @@ pub fn translate_expr(
                         } else {
                             *column
                         };
-                        program.emit_insn(Insn::Column {
-                            cursor_id: read_cursor,
-                            column,
-                            dest: target_register,
-                        });
+
+                        program.emit_column(read_cursor, column, target_register);
                     }
                     let Some(column) = table_reference.table.get_column_at(*column) else {
                         crate::bail_parse_error!("column index out of bounds");

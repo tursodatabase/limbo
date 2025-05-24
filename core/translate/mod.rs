@@ -30,11 +30,12 @@ pub(crate) mod update;
 mod values;
 
 use crate::fast_lock::SpinLock;
-use crate::schema::Schema;
+use crate::schema::{Column, Schema};
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::translate::delete::translate_delete;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
+use crate::vdbe::insn::{Insn, RegisterOrLiteral};
 use crate::vdbe::Program;
 use crate::{bail_parse_error, Connection, LimboError, Result, SymbolTable};
 use fallible_iterator::FallibleIterator as _;
@@ -43,14 +44,13 @@ use insert::translate_insert;
 use limbo_sqlite3_parser::ast::{self, Delete, Insert};
 use limbo_sqlite3_parser::lexer::sql::Parser;
 use schema::{
-    translate_create_table, translate_create_virtual_table, translate_drop_table, ParseSchema,
-    SQLITE_TABLEID,
+    translate_create_table, translate_create_virtual_table, translate_drop_table, SQLITE_TABLEID,
 };
 use select::translate_select;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use transaction::{translate_tx_begin, translate_tx_commit};
-use update::translate_update;
+use update::{translate_update, translate_update_with_after};
 
 pub fn translate(
     schema: &Schema,
@@ -107,27 +107,249 @@ pub fn translate_inner(
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
         ast::Stmt::AlterTable(a) => {
-            let (table_name, alter_table) = a.as_ref();
+            let (table_name, alter_table) = *a;
+            let ast::Name(table_name) = table_name.name;
+
+            let Some(table) = schema.tables.get(&table_name) else {
+                return Err(LimboError::ParseError(format!(
+                    "no such table: {table_name}"
+                )));
+            };
+
+            let Some(original_btree) = table.btree() else {
+                todo!()
+            };
+            let mut btree = (*original_btree).clone();
 
             match alter_table {
-                ast::AlterTableBody::RenameTo(name) => {
-                    let rename = &name.0;
-                    let name = &table_name.name.0;
+                ast::AlterTableBody::DropColumn(column) => {
+                    let ast::Name(column) = column;
 
-                    let Some(table) = schema.tables.get(name) else {
-                        return Err(LimboError::ParseError(format!("no such table: {name}")));
+                    // Tables always have at least one column.
+                    assert_ne!(btree.columns.len(), 0);
+
+                    if btree.columns.len() == 1 {
+                        return Err(LimboError::ParseError(format!(
+                            "cannot drop column \"{column}\": no other columns exist"
+                        )));
+                    }
+
+                    let (dropped_col, col) = btree
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .find(|(_, Column { name, .. })| name.as_ref() == Some(&column))
+                        .ok_or_else(|| {
+                            LimboError::ParseError(format!("no such column: \"{column}\""))
+                        })?;
+
+                    if col.primary_key {
+                        return Err(LimboError::ParseError(format!(
+                            "cannot drop column \"{column}\": PRIMARY KEY"
+                        )));
+                    }
+
+                    if col.unique
+                        || btree.unique_sets.as_ref().is_some_and(|set| {
+                            set.iter().any(|set| {
+                                set.iter().any(|(column_name, _)| column_name == &column)
+                            })
+                        })
+                    {
+                        return Err(LimboError::ParseError(format!(
+                            "cannot drop column \"{column}\": UNIQUE"
+                        )));
+                    }
+
+                    btree.columns.remove(dropped_col);
+
+                    let sql = btree.to_sql();
+
+                    let stmt = format!(
+                        r#"
+                            UPDATE {SQLITE_TABLEID}
+                            SET sql = '{sql}'
+                            WHERE name = '{table_name}' AND type = 'table'
+                        "#,
+                    );
+
+                    let mut parser = Parser::new(stmt.as_bytes());
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                        unreachable!();
                     };
 
-                    if schema.tables.contains_key(rename) {
+                    translate_update_with_after(
+                        QueryMode::Normal,
+                        schema,
+                        &mut update,
+                        syms,
+                        program,
+                        |program| {
+                            let column_count = btree.columns.len();
+                            let root_page = btree.root_page;
+                            let table_name = btree.name.clone();
+
+                            let cursor_id = program.alloc_cursor_id(
+                                Some(table_name.clone()),
+                                crate::vdbe::builder::CursorType::BTreeTable(original_btree),
+                            );
+
+                            program.emit_insn(Insn::OpenWrite {
+                                cursor_id,
+                                root_page: RegisterOrLiteral::Literal(root_page),
+                                name: table_name.clone(),
+                            });
+
+                            program.cursor_loop(cursor_id, |program| {
+                                let rowid = program.alloc_register();
+
+                                // FIXME: Handle tables without rowid.
+                                program.emit_insn(Insn::RowId {
+                                    cursor_id,
+                                    dest: rowid,
+                                });
+
+                                let first_column = program.alloc_registers(column_count);
+
+                                let mut iter = first_column;
+
+                                for i in 0..(column_count + 1) {
+                                    if i == dropped_col {
+                                        continue;
+                                    }
+
+                                    program.emit_column(cursor_id, i, iter);
+
+                                    iter += 1;
+                                }
+
+                                let record = program.alloc_register();
+
+                                program.emit_insn(Insn::MakeRecord {
+                                    start_reg: first_column,
+                                    count: column_count,
+                                    dest_reg: record,
+                                    index_name: None,
+                                });
+
+                                program.emit_insn(Insn::Insert {
+                                    cursor: cursor_id,
+                                    key_reg: rowid,
+                                    record_reg: record,
+                                    flag: 0,
+                                    table_name: table_name.clone(),
+                                });
+                            });
+
+                            program.emit_insn(Insn::ParseSchema {
+                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                                where_clause: None,
+                            })
+                        },
+                    )?
+                }
+                ast::AlterTableBody::AddColumn(col_def) => {
+                    let column = Column::from(col_def);
+
+                    if let Some(default) = &column.default {
+                        if !matches!(
+                            default,
+                            ast::Expr::Literal(
+                                ast::Literal::Null
+                                    | ast::Literal::Blob(_)
+                                    | ast::Literal::Numeric(_)
+                                    | ast::Literal::String(_)
+                            )
+                        ) {
+                            // TODO: This is slightly inaccurate since sqlite returns a `Runtime
+                            // error`.
+                            return Err(LimboError::ParseError(
+                                "Cannot add a column with non-constant default".to_string(),
+                            ));
+                        }
+                    }
+
+                    btree.columns.push(column);
+
+                    let sql = btree.to_sql();
+
+                    let stmt = format!(
+                        r#"
+                            UPDATE {SQLITE_TABLEID}
+                            SET sql = '{sql}'
+                            WHERE name = '{table_name}' AND type = 'table'
+                        "#,
+                    );
+
+                    let mut parser = Parser::new(stmt.as_bytes());
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                        unreachable!();
+                    };
+
+                    translate_update_with_after(
+                        QueryMode::Normal,
+                        schema,
+                        &mut update,
+                        syms,
+                        program,
+                        |program| {
+                            program.emit_insn(Insn::ParseSchema {
+                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                                where_clause: None,
+                            });
+                        },
+                    )?
+                }
+                ast::AlterTableBody::RenameColumn { old, new } => {
+                    let Some(column) = btree
+                        .columns
+                        .iter_mut()
+                        .find(|column| column.name == Some(old.0.clone()))
+                    else {
+                        return Err(LimboError::ParseError(format!("no such column: \"{old}\"")));
+                    };
+
+                    column.name = Some(new.0.clone());
+
+                    let sql = btree.to_sql();
+
+                    let stmt = format!(
+                        r#"
+                            UPDATE {SQLITE_TABLEID}
+                            SET sql = '{sql}'
+                            WHERE name = '{table_name}' AND type = 'table'
+                        "#,
+                    );
+
+                    let mut parser = Parser::new(stmt.as_bytes());
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                        unreachable!();
+                    };
+
+                    translate_update_with_after(
+                        QueryMode::Normal,
+                        schema,
+                        &mut update,
+                        syms,
+                        program,
+                        |program| {
+                            program.emit_insn(Insn::ParseSchema {
+                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                                where_clause: None,
+                            });
+                        },
+                    )?
+                }
+                ast::AlterTableBody::RenameTo(name) => {
+                    let ast::Name(rename) = name;
+
+                    if schema.tables.contains_key(&rename) {
                         return Err(LimboError::ParseError(format!(
                             "there is already another table or index with this name: {rename}"
                         )));
                     };
 
-                    let Some(btree) = table.btree() else { todo!() };
-
-                    let mut btree = (*btree).clone();
-                    btree.name = rename.clone();
+                    btree.name = rename;
 
                     let sql = btree.to_sql();
 
@@ -137,8 +359,9 @@ pub fn translate_inner(
                             SET name = '{rename}'
                               , tbl_name = '{rename}'
                               , sql = '{sql}'
-                            WHERE tbl_name = '{name}'
+                            WHERE name = '{table_name}' AND type = 'table'
                         "#,
+                        rename = &btree.name,
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
@@ -146,16 +369,20 @@ pub fn translate_inner(
                         unreachable!();
                     };
 
-                    translate_update(
+                    translate_update_with_after(
                         QueryMode::Normal,
                         schema,
                         &mut update,
                         syms,
-                        ParseSchema::Reload,
                         program,
+                        |program| {
+                            program.emit_insn(Insn::ParseSchema {
+                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                                where_clause: None,
+                            });
+                        },
                     )?
                 }
-                _ => todo!(),
             }
         }
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
@@ -233,14 +460,9 @@ pub fn translate_inner(
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => translate_select(query_mode, schema, *select, syms, program)?,
-        ast::Stmt::Update(mut update) => translate_update(
-            query_mode,
-            schema,
-            &mut update,
-            syms,
-            ParseSchema::None,
-            program,
-        )?,
+        ast::Stmt::Update(mut update) => {
+            translate_update(query_mode, schema, &mut update, syms, program)?
+        }
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {

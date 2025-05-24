@@ -9,6 +9,7 @@ use crate::{
     schema::{BTreeTable, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     translate::collate::CollationSeq,
+    Value,
 };
 use limbo_macros::Description;
 use limbo_sqlite3_parser::ast::SortOrder;
@@ -364,6 +365,7 @@ pub enum Insn {
         cursor_id: CursorID,
         column: usize,
         dest: usize,
+        default: Option<Value>,
     },
 
     TypeCheck {
