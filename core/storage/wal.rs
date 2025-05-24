@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::{debug, trace};
 
 use std::fmt::Formatter;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 use crate::fast_lock::SpinLock;
@@ -12,7 +12,7 @@ use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
-use crate::{Buffer, LimboError, Result};
+use crate::{Buffer, Result};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -59,13 +59,21 @@ pub enum CheckpointMode {
 }
 
 #[derive(Debug)]
-struct LimboRwLock {
+pub struct LimboRwLock {
     lock: AtomicU32,
     nreads: AtomicU32,
     value: AtomicU32,
 }
 
 impl LimboRwLock {
+    pub fn new() -> Self {
+        Self {
+            lock: AtomicU32::new(NO_LOCK),
+            nreads: AtomicU32::new(0),
+            value: AtomicU32::new(READMARK_NOT_USED),
+        }
+    }
+
     /// Shared lock. Returns true if it was successful, false if it couldn't lock it
     pub fn read(&mut self) -> bool {
         let lock = self.lock.load(Ordering::SeqCst);
@@ -283,29 +291,30 @@ impl fmt::Debug for WalFile {
 /// that needs to be communicated between threads so this struct does the job.
 #[allow(dead_code)]
 pub struct WalFileShared {
-    wal_header: Arc<SpinLock<WalHeader>>,
-    min_frame: AtomicU64,
-    max_frame: AtomicU64,
-    nbackfills: AtomicU64,
+    pub wal_header: Arc<SpinLock<WalHeader>>,
+    pub min_frame: AtomicU64,
+    pub max_frame: AtomicU64,
+    pub nbackfills: AtomicU64,
     // Frame cache maps a Page to all the frames it has stored in WAL in ascending order.
     // This is to easily find the frame it must checkpoint each connection if a checkpoint is
     // necessary.
     // One difference between SQLite and limbo is that we will never support multi process, meaning
     // we don't need WAL's index file. So we can do stuff like this without shared memory.
     // TODO: this will need refactoring because this is incredible memory inefficient.
-    frame_cache: Arc<SpinLock<HashMap<u64, Vec<u64>>>>,
+    pub frame_cache: Arc<SpinLock<HashMap<u64, Vec<u64>>>>,
     // Another memory inefficient array made to just keep track of pages that are in frame_cache.
-    pages_in_frames: Arc<SpinLock<Vec<u64>>>,
-    last_checksum: (u32, u32), // Check of last frame in WAL, this is a cumulative checksum over all frames in the WAL
-    file: Arc<dyn File>,
+    pub pages_in_frames: Arc<SpinLock<Vec<u64>>>,
+    pub last_checksum: (u32, u32), // Check of last frame in WAL, this is a cumulative checksum over all frames in the WAL
+    pub file: Arc<dyn File>,
     /// read_locks is a list of read locks that can coexist with the max_frame number stored in
     /// value. There is a limited amount because and unbounded amount of connections could be
     /// fatal. Therefore, for now we copy how SQLite behaves with limited amounts of read max
     /// frames that is equal to 5
-    read_locks: [LimboRwLock; 5],
+    pub read_locks: [LimboRwLock; 5],
     /// There is only one write allowed in WAL mode. This lock takes care of ensuring there is only
     /// one used.
-    write_lock: LimboRwLock,
+    pub write_lock: LimboRwLock,
+    pub loaded: AtomicBool,
 }
 
 impl fmt::Debug for WalFileShared {
@@ -747,14 +756,20 @@ impl WalFileShared {
     ) -> Result<Arc<UnsafeCell<WalFileShared>>> {
         let file = io.open_file(path, crate::io::OpenFlags::Create, false)?;
         let header = if file.size()? > 0 {
-            let wal_header = match sqlite3_ondisk::begin_read_wal_header(&file) {
-                Ok(header) => header,
-                Err(err) => return Err(LimboError::ParseError(err.to_string())),
-            };
-            tracing::info!("recover not implemented yet");
+            let wal_file_shared = sqlite3_ondisk::read_entire_wal_dumb(&file)?;
             // TODO: Return a completion instead.
-            io.run_once()?;
-            wal_header
+            let mut max_loops = 1000;
+            while !unsafe { &*wal_file_shared.get() }
+                .loaded
+                .load(Ordering::SeqCst)
+            {
+                io.run_once()?;
+                max_loops -= 1;
+                if max_loops == 0 {
+                    panic!("WAL file not loaded");
+                }
+            }
+            return Ok(wal_file_shared);
         } else {
             let magic = if cfg!(target_endian = "big") {
                 WAL_MAGIC_BE
@@ -832,6 +847,7 @@ impl WalFileShared {
                 nreads: AtomicU32::new(0),
                 value: AtomicU32::new(READMARK_NOT_USED),
             },
+            loaded: AtomicBool::new(true),
         };
         Ok(Arc::new(UnsafeCell::new(shared)))
     }

@@ -51,6 +51,10 @@ impl<T> SpinLock<T> {
         }
         SpinLockGuard { lock: self }
     }
+
+    pub fn into_inner(self) -> UnsafeCell<T> {
+        self.value
+    }
 }
 
 #[cfg(test)]

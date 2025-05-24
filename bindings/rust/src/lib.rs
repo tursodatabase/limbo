@@ -348,3 +348,52 @@ impl<'a> FromIterator<&'a limbo_core::Value> for Row {
         Row { values }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_database_persistence() -> Result<()> {
+        let db_path = "test_persistence.db";
+        // Ensure a clean state by removing the database file if it exists from a previous run
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+
+        // First, create the database, a table, and insert some data
+        {
+            let db = Builder::new_local(db_path).build().await?;
+            let conn = db.connect()?;
+            conn.execute(
+                "CREATE TABLE test_persistence (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+                (),
+            )
+            .await?;
+            conn.execute("INSERT INTO test_persistence (name) VALUES ('Alice');", ())
+                .await?;
+            conn.execute("INSERT INTO test_persistence (name) VALUES ('Bob');", ())
+                .await?;
+        } // db and conn are dropped here, simulating closing
+
+        // Now, re-open the database and check if the data is still there
+        let db = Builder::new_local(db_path).build().await?;
+        let conn = db.connect()?;
+
+        let mut rows = conn
+            .query("SELECT name FROM test_persistence ORDER BY id;", ())
+            .await?;
+
+        let row1 = rows.next().await?.expect("Expected first row");
+        assert_eq!(row1.get_value(0)?, Value::Text("Alice".to_string()));
+
+        let row2 = rows.next().await?.expect("Expected second row");
+        assert_eq!(row2.get_value(0)?, Value::Text("Bob".to_string()));
+
+        assert!(rows.next().await?.is_none(), "Expected no more rows");
+
+        // Clean up the database file
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+        Ok(())
+    }
+}

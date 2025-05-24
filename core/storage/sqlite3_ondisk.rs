@@ -43,22 +43,25 @@
 
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
-use crate::io::{Buffer, Completion, ReadCompletion, SyncCompletion, WriteCompletion};
+use crate::io::{Buffer, Complete, Completion, ReadCompletion, SyncCompletion, WriteCompletion};
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
 use crate::types::{
     ImmutableRecord, RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype,
 };
-use crate::{File, Result};
-use std::cell::RefCell;
+use crate::{File, Result, WalFileShared};
+use std::cell::{RefCell, UnsafeCell};
+use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::trace;
 
 use super::pager::PageRef;
+use super::wal::LimboRwLock;
 
 /// The size of the database header in bytes.
 pub const DATABASE_HEADER_SIZE: usize = 100;
@@ -1354,37 +1357,171 @@ pub fn write_varint_to_vec(value: u64, payload: &mut Vec<u8>) {
     payload.extend_from_slice(&varint[0..n]);
 }
 
-pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<SpinLock<WalHeader>>> {
+/// We need to read the WAL file on open to reconstruct the WAL frame cache.
+pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFileShared>>> {
     let drop_fn = Rc::new(|_buf| {});
+    let size = file.size()?;
     #[allow(clippy::arc_with_non_send_sync)]
-    let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
-    let result = Arc::new(SpinLock::new(WalHeader::default()));
-    let header = result.clone();
-    let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
-        let header = header.clone();
-        finish_read_wal_header(buf, header).unwrap();
-    });
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
-    io.pread(0, c)?;
-    Ok(result)
-}
+    let buf_for_pread = Arc::new(RefCell::new(Buffer::allocate(size as usize, drop_fn)));
+    let header = Arc::new(SpinLock::new(WalHeader::default()));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let wal_file_shared_ret = Arc::new(UnsafeCell::new(WalFileShared {
+        wal_header: header.clone(),
+        min_frame: AtomicU64::new(0),
+        max_frame: AtomicU64::new(0),
+        nbackfills: AtomicU64::new(0),
+        frame_cache: Arc::new(SpinLock::new(HashMap::new())),
+        pages_in_frames: Arc::new(SpinLock::new(Vec::new())),
+        last_checksum: (0, 0),
+        file: file.clone(),
+        read_locks: [
+            LimboRwLock::new(),
+            LimboRwLock::new(),
+            LimboRwLock::new(),
+            LimboRwLock::new(),
+            LimboRwLock::new(),
+        ],
+        write_lock: LimboRwLock::new(),
+        loaded: AtomicBool::new(false),
+    }));
+    let wal_file_shared_for_completion = wal_file_shared_ret.clone();
 
-fn finish_read_wal_header(
-    buf: Arc<RefCell<Buffer>>,
-    header: Arc<SpinLock<WalHeader>>,
-) -> Result<()> {
-    let buf = buf.borrow();
-    let buf = buf.as_slice();
-    let mut header = header.lock();
-    header.magic = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    header.file_format = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
-    header.page_size = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    header.checkpoint_seq = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-    header.salt_1 = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    header.salt_2 = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-    header.checksum_1 = u32::from_be_bytes([buf[24], buf[25], buf[26], buf[27]]);
-    header.checksum_2 = u32::from_be_bytes([buf[28], buf[29], buf[30], buf[31]]);
-    Ok(())
+    let complete: Box<Complete> = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+        let buf = buf.borrow();
+        let buf_slice = buf.as_slice();
+        let mut header_locked = header.lock();
+        // Read header
+        header_locked.magic =
+            u32::from_be_bytes([buf_slice[0], buf_slice[1], buf_slice[2], buf_slice[3]]);
+        header_locked.file_format =
+            u32::from_be_bytes([buf_slice[4], buf_slice[5], buf_slice[6], buf_slice[7]]);
+        header_locked.page_size =
+            u32::from_be_bytes([buf_slice[8], buf_slice[9], buf_slice[10], buf_slice[11]]);
+        header_locked.checkpoint_seq =
+            u32::from_be_bytes([buf_slice[12], buf_slice[13], buf_slice[14], buf_slice[15]]);
+        header_locked.salt_1 =
+            u32::from_be_bytes([buf_slice[16], buf_slice[17], buf_slice[18], buf_slice[19]]);
+        header_locked.salt_2 =
+            u32::from_be_bytes([buf_slice[20], buf_slice[21], buf_slice[22], buf_slice[23]]);
+        header_locked.checksum_1 =
+            u32::from_be_bytes([buf_slice[24], buf_slice[25], buf_slice[26], buf_slice[27]]);
+        header_locked.checksum_2 =
+            u32::from_be_bytes([buf_slice[28], buf_slice[29], buf_slice[30], buf_slice[31]]);
+
+        // Read frames into frame_cache and pages_in_frames
+        if buf_slice.len() < WAL_HEADER_SIZE {
+            panic!("WAL file too small for header");
+        }
+
+        let use_native_endian_checksum =
+            cfg!(target_endian = "big") == ((header_locked.magic & 1) != 0);
+
+        let calculated_header_checksum = checksum_wal(
+            &buf_slice[0..24],
+            &*header_locked,
+            (0, 0),
+            use_native_endian_checksum,
+        );
+
+        if calculated_header_checksum != (header_locked.checksum_1, header_locked.checksum_2) {
+            panic!(
+                "WAL header checksum mismatch. Expected ({}, {}), Got ({}, {})",
+                header_locked.checksum_1,
+                header_locked.checksum_2,
+                calculated_header_checksum.0,
+                calculated_header_checksum.1
+            );
+        }
+
+        let mut cumulative_checksum = (header_locked.checksum_1, header_locked.checksum_2);
+        let page_size_u32 = header_locked.page_size;
+
+        if page_size_u32 < MIN_PAGE_SIZE
+            || page_size_u32 > MAX_PAGE_SIZE
+            || page_size_u32.count_ones() != 1
+        {
+            panic!("Invalid page size in WAL header: {}", page_size_u32);
+        }
+        let page_size = page_size_u32 as usize;
+
+        let mut current_offset = WAL_HEADER_SIZE;
+        let mut frame_idx = 1_u64;
+
+        let wfs_data = unsafe { &mut *wal_file_shared_for_completion.get() };
+
+        while current_offset + WAL_FRAME_HEADER_SIZE <= buf_slice.len()
+            && current_offset + WAL_FRAME_HEADER_SIZE + page_size <= buf_slice.len()
+        {
+            let frame_header_slice =
+                &buf_slice[current_offset..current_offset + WAL_FRAME_HEADER_SIZE];
+            let page_data_slice = &buf_slice[current_offset + WAL_FRAME_HEADER_SIZE
+                ..current_offset + WAL_FRAME_HEADER_SIZE + page_size];
+
+            let frame_h_page_number =
+                u32::from_be_bytes(frame_header_slice[0..4].try_into().unwrap());
+            let _frame_h_db_size = u32::from_be_bytes(frame_header_slice[4..8].try_into().unwrap());
+            let frame_h_salt_1 = u32::from_be_bytes(frame_header_slice[8..12].try_into().unwrap());
+            let frame_h_salt_2 = u32::from_be_bytes(frame_header_slice[12..16].try_into().unwrap());
+            let frame_h_checksum_1 =
+                u32::from_be_bytes(frame_header_slice[16..20].try_into().unwrap());
+            let frame_h_checksum_2 =
+                u32::from_be_bytes(frame_header_slice[20..24].try_into().unwrap());
+
+            if frame_h_salt_1 != header_locked.salt_1 || frame_h_salt_2 != header_locked.salt_2 {
+                panic!(
+                    "WAL frame salt mismatch. Expected ({}, {}), Got ({}, {})",
+                    header_locked.salt_1, header_locked.salt_2, frame_h_salt_1, frame_h_salt_2
+                );
+            }
+
+            let checksum_after_fh_meta = checksum_wal(
+                &frame_header_slice[0..8],
+                &*header_locked,
+                cumulative_checksum,
+                use_native_endian_checksum,
+            );
+            let calculated_frame_checksum = checksum_wal(
+                page_data_slice,
+                &*header_locked,
+                checksum_after_fh_meta,
+                use_native_endian_checksum,
+            );
+
+            if calculated_frame_checksum != (frame_h_checksum_1, frame_h_checksum_2) {
+                panic!(
+                    "WAL frame checksum mismatch. Expected ({}, {}), Got ({}, {})",
+                    frame_h_checksum_1,
+                    frame_h_checksum_2,
+                    calculated_frame_checksum.0,
+                    calculated_frame_checksum.1
+                );
+            }
+
+            cumulative_checksum = calculated_frame_checksum;
+
+            wfs_data
+                .frame_cache
+                .lock()
+                .entry(frame_h_page_number as u64)
+                .or_default()
+                .push(frame_idx);
+            wfs_data
+                .pages_in_frames
+                .lock()
+                .push(frame_h_page_number as u64);
+
+            frame_idx += 1;
+            current_offset += WAL_FRAME_HEADER_SIZE + page_size;
+        }
+
+        wfs_data.max_frame.store(frame_idx, Ordering::SeqCst);
+        wfs_data.last_checksum = cumulative_checksum;
+        wfs_data.loaded.store(true, Ordering::SeqCst);
+    });
+    let c = Completion::Read(ReadCompletion::new(buf_for_pread, complete));
+    file.pread(0, c)?;
+
+    Ok(wal_file_shared_ret)
 }
 
 pub fn begin_read_wal_frame(
@@ -1463,7 +1600,7 @@ pub fn begin_write_wal_frame(
 
         let expects_be = wal_header.magic & 1;
         let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be;
-        let header_checksum = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian); // Only 8 bytes
+        let header_checksum = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian);
         let final_checksum = checksum_wal(
             &buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + page_size as usize],
             wal_header,
