@@ -314,11 +314,7 @@ impl Pager {
     pub fn read_page(&self, page_idx: usize) -> Result<PageRef, LimboError> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
-        let max_frame = match &self.wal {
-            Some(wal) => wal.borrow().get_max_frame(),
-            None => 0,
-        };
-        let page_key = PageCacheKey::new(page_idx, Some(max_frame));
+        let page_key = PageCacheKey::new(page_idx);
         if let Some(page) = page_cache.get(&page_key) {
             tracing::trace!("read_page(page_idx = {}) = cached", page_idx);
             return Ok(page.clone());
@@ -407,13 +403,9 @@ impl Pager {
             match state {
                 FlushState::Start => {
                     let db_size = self.db_header.lock().database_size;
-                    let max_frame = match &self.wal {
-                        Some(wal) => wal.borrow().get_max_frame(),
-                        None => 0,
-                    };
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
-                        let page_key = PageCacheKey::new(*page_id, Some(max_frame));
+                        let page_key = PageCacheKey::new(*page_id);
                         let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                         if let Some(wal) = &self.wal {
                             let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
@@ -649,6 +641,7 @@ impl Pager {
             loop {
                 let first_page_ref = self.read_page(1)?;
                 if first_page_ref.is_locked() {
+                    // FIXME: we should never run io here!
                     self.io.run_once()?;
                     continue;
                 }
@@ -667,12 +660,8 @@ impl Pager {
             // setup page and add to cache
             page.set_dirty();
             self.add_dirty(page.get().id);
-            let max_frame = match &self.wal {
-                Some(wal) => wal.borrow().get_max_frame(),
-                None => 0,
-            };
 
-            let page_key = PageCacheKey::new(page.get().id, Some(max_frame));
+            let page_key = PageCacheKey::new(page.get().id);
             let mut cache = self.page_cache.write();
             match cache.insert(page_key, page.clone()) {
                 Err(CacheError::Full) => return Err(LimboError::CacheFull),
@@ -692,11 +681,7 @@ impl Pager {
         page: PageRef,
     ) -> Result<(), LimboError> {
         let mut cache = self.page_cache.write();
-        let max_frame = match &self.wal {
-            Some(wal) => wal.borrow().get_max_frame(),
-            None => 0,
-        };
-        let page_key = PageCacheKey::new(id, Some(max_frame));
+        let page_key = PageCacheKey::new(id);
 
         // FIXME: use specific page key for writer instead of max frame, this will make readers not conflict
         assert!(page.is_dirty());
@@ -779,13 +764,13 @@ mod tests {
             let cache = cache.clone();
             std::thread::spawn(move || {
                 let mut cache = cache.write();
-                let page_key = PageCacheKey::new(1, None);
+                let page_key = PageCacheKey::new(1);
                 cache.insert(page_key, Arc::new(Page::new(1))).unwrap();
             })
         };
         let _ = thread.join();
         let mut cache = cache.write();
-        let page_key = PageCacheKey::new(1, None);
+        let page_key = PageCacheKey::new(1);
         let page = cache.get(&page_key);
         assert_eq!(page.unwrap().get().id, 1);
     }

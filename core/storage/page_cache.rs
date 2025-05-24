@@ -17,7 +17,6 @@ const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES: usize = 2000;
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub struct PageCacheKey {
     pgno: usize,
-    max_frame: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -67,8 +66,8 @@ pub enum CacheResizeResult {
 }
 
 impl PageCacheKey {
-    pub fn new(pgno: usize, max_frame: Option<u64>) -> Self {
-        Self { pgno, max_frame }
+    pub fn new(pgno: usize) -> Self {
+        Self { pgno }
     }
 }
 impl DumbLruPageCache {
@@ -607,7 +606,7 @@ mod tests {
     };
 
     fn create_key(id: usize) -> PageCacheKey {
-        PageCacheKey::new(id, Some(id as u64))
+        PageCacheKey::new(id)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -846,8 +845,8 @@ mod tests {
     #[test]
     fn test_insert_same_id_different_frame() {
         let mut cache = DumbLruPageCache::default();
-        let key1_1 = PageCacheKey::new(1, Some(1 as u64));
-        let key1_2 = PageCacheKey::new(1, Some(2 as u64));
+        let key1_1 = PageCacheKey::new(1);
+        let key1_2 = PageCacheKey::new(1);
         let page1_1 = page_with_content(1);
         let page1_2 = page_with_content(1);
 
@@ -1018,8 +1017,7 @@ mod tests {
                 0 => {
                     // add
                     let id_page = rng.next_u64() % max_pages;
-                    let id_frame = rng.next_u64() % max_pages;
-                    let key = PageCacheKey::new(id_page as usize, Some(id_frame));
+                    let key = PageCacheKey::new(id_page as usize);
                     #[allow(clippy::arc_with_non_send_sync)]
                     let page = Arc::new(Page::new(id_page as usize));
                     if let Some(_) = cache.peek(&key, false) {
@@ -1043,8 +1041,7 @@ mod tests {
                     let random = rng.next_u64() % 2 == 0;
                     let key = if random || lru.is_empty() {
                         let id_page: u64 = rng.next_u64() % max_pages;
-                        let id_frame = rng.next_u64() % max_pages;
-                        let key = PageCacheKey::new(id_page as usize, Some(id_frame));
+                        let key = PageCacheKey::new(id_page as usize);
                         key
                     } else {
                         let i = rng.next_u64() as usize % lru.len();
