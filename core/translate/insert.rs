@@ -208,7 +208,7 @@ pub fn translate_insert(
     let record_register = program.alloc_register();
 
     if inserting_multiple_rows {
-        populate_record_multiple_rows(
+        populate_columns_multiple_rows(
             &mut program,
             &column_mappings,
             column_registers_start,
@@ -593,7 +593,7 @@ fn resolve_indicies_for_insert(
     Ok(index_col_mappings)
 }
 
-fn populate_record_multiple_rows(
+fn populate_columns_multiple_rows(
     program: &mut ProgramBuilder,
     column_mappings: &[ColumnMapping],
     column_registers_start: usize,
@@ -601,19 +601,23 @@ fn populate_record_multiple_rows(
     resolver: &Resolver,
 ) -> Result<()> {
     let mut value_index_seen = 0;
+    let mut other_values_seen = 0;
     for (i, mapping) in column_mappings.iter().enumerate() {
         let target_reg = column_registers_start + i;
 
-        if mapping.value_index.is_some() {
+        // dbg!(mapping, i, target_reg, yield_reg + value_index_seen);
+        if let Some(value_index) = mapping.value_index {
+            // dbg!(column_registers_start + value_index);
             program.emit_insn(Insn::Copy {
                 src_reg: yield_reg + value_index_seen,
-                dst_reg: target_reg,
+                dst_reg: column_registers_start + value_index + other_values_seen,
                 amount: 0,
             });
             value_index_seen += 1;
             continue;
         }
 
+        other_values_seen += 1;
         if mapping.column.is_rowid_alias {
             program.emit_insn(Insn::SoftNull { reg: target_reg });
         } else if let Some(default_expr) = mapping.default_value {
