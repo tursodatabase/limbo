@@ -196,3 +196,31 @@ do_execsql_test_on_specific_db {:memory:} unique_insert_with_pkey {
     SELECT * FROM t2;
 } {1|1
 2|6}
+
+do_execsql_test_on_specific_db {:memory:} insert_from_select_1 {
+    CREATE TABLE t(a);
+    CREATE TABLE t2(b, c);
+    INSERT INTO t2 values (1, 2), (10, 20);
+    INSERT INTO t SELECT b FROM t2;
+    SELECT * FROM t;
+    INSERT INTO t SELECT c FROM t2;
+    SELECT * FROM t;
+} {1
+10
+1
+10
+2
+20}
+
+do_execsql_test_on_specific_db {:memory:} insert_from_select_where {
+    CREATE TABLE t(a);
+    CREATE TABLE t2(b, c);
+    INSERT INTO t2 values (1, 2), (10, 20);
+    INSERT INTO t SELECT b FROM t2 WHERE b < 10;
+    SELECT * FROM t;
+    INSERT INTO t SELECT c FROM t2 WHERE c > 2;
+    SELECT * FROM t;
+} {1
+1
+20}
+
