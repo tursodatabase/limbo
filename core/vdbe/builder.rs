@@ -697,12 +697,8 @@ impl ProgramBuilder {
                 _ => break 'value None,
             };
 
-            let Some(default) = default else {
+            let Some(ast::Expr::Literal(ref literal)) = default else {
                 break 'value None;
-            };
-
-            let ast::Expr::Literal(ref literal) = default else {
-                panic!("column added by ALTER TABLE should be constant")
             };
 
             Some(match literal {
