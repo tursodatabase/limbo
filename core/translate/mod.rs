@@ -274,17 +274,27 @@ pub fn translate_inner(
                     btree.columns.push(column);
 
                     let sql = btree.to_sql();
+                    let mut escaped = String::with_capacity(sql.len());
+
+                    for ch in sql.chars() {
+                        match ch {
+                            '\'' => escaped.push_str("''"),
+                            ch => escaped.push(ch),
+                        }
+                    }
 
                     let stmt = format!(
                         r#"
                             UPDATE {SQLITE_TABLEID}
-                            SET sql = '{sql}'
+                            SET sql = '{escaped}'
                             WHERE name = '{table_name}' AND type = 'table'
                         "#,
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) =
+                        parser.next().unwrap()
+                    else {
                         unreachable!();
                     };
 
