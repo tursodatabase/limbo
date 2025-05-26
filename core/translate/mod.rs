@@ -113,15 +113,16 @@ pub fn translate_inner(
             let (table_name, alter_table) = *a;
             let ast::Name(table_name) = table_name.name;
 
-            let Some(table) = schema.tables.get(&table_name) else {
+            let Some(original_btree) = schema
+                .tables
+                .get(&table_name)
+                .and_then(|table| table.btree())
+            else {
                 return Err(LimboError::ParseError(format!(
                     "no such table: {table_name}"
                 )));
             };
 
-            let Some(original_btree) = table.btree() else {
-                todo!()
-            };
             let mut btree = (*original_btree).clone();
 
             match alter_table {
@@ -137,22 +138,17 @@ pub fn translate_inner(
                         )));
                     }
 
-                    let (dropped_col, col) = btree
-                        .columns
-                        .iter()
-                        .enumerate()
-                        .find(|(_, Column { name, .. })| name.as_ref() == Some(&column))
-                        .ok_or_else(|| {
-                            LimboError::ParseError(format!("no such column: \"{column}\""))
-                        })?;
+                    let (dropped_index, column) = btree.get_column(name).ok_or_else(|| {
+                        LimboError::ParseError(format!("no such column: \"{column}\""))
+                    })?;
 
-                    if col.primary_key {
+                    if column.primary_key {
                         return Err(LimboError::ParseError(format!(
                             "cannot drop column \"{column}\": PRIMARY KEY"
                         )));
                     }
 
-                    if col.unique
+                    if column.unique
                         || btree.unique_sets.as_ref().is_some_and(|set| {
                             set.iter().any(|set| {
                                 set.iter().any(|(column_name, _)| column_name == &column)
@@ -164,7 +160,7 @@ pub fn translate_inner(
                         )));
                     }
 
-                    btree.columns.remove(dropped_col);
+                    btree.columns.remove(dropped_index);
 
                     let sql = btree.to_sql();
 
@@ -216,7 +212,7 @@ pub fn translate_inner(
                                 let mut iter = first_column;
 
                                 for i in 0..(column_count + 1) {
-                                    if i == dropped_col {
+                                    if i == dropped_index {
                                         continue;
                                     }
 
