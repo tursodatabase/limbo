@@ -649,7 +649,7 @@ impl From<ColumnDefinition> for Column {
             notnull,
             ty_str,
             primary_key,
-            is_rowid_alias: false,
+            is_rowid_alias: primary_key && matches!(ty, Type::Integer),
             unique,
             collation,
         }
