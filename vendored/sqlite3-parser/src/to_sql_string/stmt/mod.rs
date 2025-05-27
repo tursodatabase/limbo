@@ -35,6 +35,22 @@ mod tests {
                 );
             }
         };
+        ($test_name:ident, $input:literal, $($attribute:meta),*) => {
+            #[test]
+            $(#[$attribute])*
+            fn $test_name() {
+                let context = crate::to_sql_string::stmt::tests::TestContext;
+                let input: &str = $input;
+                let mut parser = crate::lexer::sql::Parser::new(input.as_bytes());
+                let cmd = fallible_iterator::FallibleIterator::next(&mut parser)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    input,
+                    crate::to_sql_string::ToSqlString::to_sql_string(cmd.stmt(), &context)
+                );
+            }
+        }
     }
 
     pub(crate) struct TestContext;

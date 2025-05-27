@@ -42,9 +42,10 @@ impl ToSqlString for Expr {
                 ret.push_str("CASE ");
                 if let Some(base) = base {
                     ret.push_str(&base.to_sql_string(context));
+                    ret.push(' ');
                 }
                 for (when, then) in when_then_pairs {
-                    ret.push_str(" WHEN ");
+                    ret.push_str("WHEN ");
                     ret.push_str(&when.to_sql_string(context));
                     ret.push_str(" THEN ");
                     ret.push_str(&then.to_sql_string(context));
@@ -103,13 +104,14 @@ impl ToSqlString for Expr {
                 ret.push(')');
                 if let Some(filter_over) = filter_over {
                     if let Some(filter) = &filter_over.filter_clause {
-                        ret.push_str(" FILTER (");
-                        ret.push_str("WHERE ");
-                        ret.push_str(&filter.to_sql_string(context));
-                        ret.push(')');
+                        ret.push_str(&format!(
+                            " FILTER (WHERE {})",
+                            filter.to_sql_string(context)
+                        ));
                     }
-                    if let Some(_over) = &filter_over.over_clause {
-                        todo!()
+                    if let Some(over) = &filter_over.over_clause {
+                        ret.push(' ');
+                        ret.push_str(&over.to_sql_string(context));
                     }
                 }
             }
@@ -118,13 +120,14 @@ impl ToSqlString for Expr {
                 ret.push_str("(*)");
                 if let Some(filter_over) = filter_over {
                     if let Some(filter) = &filter_over.filter_clause {
-                        ret.push_str(" FILTER (");
-                        ret.push_str("WHERE ");
-                        ret.push_str(&filter.to_sql_string(context));
-                        ret.push(')');
+                        ret.push_str(&format!(
+                            " FILTER (WHERE {})",
+                            filter.to_sql_string(context)
+                        ));
                     }
-                    if let Some(_over) = &filter_over.over_clause {
-                        todo!()
+                    if let Some(over) = &filter_over.over_clause {
+                        ret.push(' ');
+                        ret.push_str(&over.to_sql_string(context));
                     }
                 }
             }
@@ -147,31 +150,27 @@ impl ToSqlString for Expr {
                 table: _,
             } => todo!(),
             Expr::InList { lhs, not, rhs } => {
-                ret.push_str(&lhs.to_sql_string(context));
-                ret.push(' ');
-                if *not {
-                    ret.push_str("NOT ");
-                }
-                ret.push('(');
-                if let Some(rhs) = rhs {
-                    let joined_args = rhs
-                        .iter()
-                        .map(|expr| expr.to_sql_string(context))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    ret.push_str(&joined_args);
-                }
-                ret.push(')');
+                ret.push_str(&format!(
+                    "{} {}IN ({})",
+                    lhs.to_sql_string(context),
+                    if *not { "NOT " } else { "" },
+                    if let Some(rhs) = rhs {
+                        rhs.iter()
+                            .map(|expr| expr.to_sql_string(context))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    } else {
+                        "".to_string()
+                    }
+                ));
             }
             Expr::InSelect { lhs, not, rhs } => {
-                ret.push_str(&lhs.to_sql_string(context));
-                ret.push(' ');
-                if *not {
-                    ret.push_str("NOT ");
-                }
-                ret.push('(');
-                ret.push_str(&rhs.to_sql_string(context));
-                ret.push(')');
+                ret.push_str(&format!(
+                    "{} {}IN ({})",
+                    lhs.to_sql_string(context),
+                    if *not { "NOT " } else { "" },
+                    rhs.to_sql_string(context)
+                ));
             }
             Expr::InTable {
                 lhs,
@@ -406,6 +405,21 @@ impl ToSqlString for ast::UnaryOperator {
             Self::Positive => "+",
         }
         .to_string()
+    }
+}
+
+impl ToSqlString for ast::Over {
+    fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
+        let mut ret = vec!["OVER".to_string()];
+        match self {
+            Self::Name(name) => {
+                ret.push(name.0.clone());
+            }
+            Self::Window(window) => {
+                ret.push(window.to_sql_string(context));
+            }
+        }
+        ret.join(" ")
     }
 }
 
