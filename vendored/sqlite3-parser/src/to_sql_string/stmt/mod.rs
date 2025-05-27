@@ -37,14 +37,17 @@ impl ToSqlString for ast::Stmt {
             }
             // TODO: not sure where name is applied here
             // https://www.sqlite.org/lang_transaction.html
-            Self::Begin(transaction_type, _) => {
+            Self::Begin(transaction_type, _name) => {
                 let t_type = transaction_type.map_or("", |t_type| match t_type {
-                    ast::TransactionType::Deferred => "DEFERRED ",
-                    ast::TransactionType::Exclusive => "EXCLUSIVE ",
-                    ast::TransactionType::Immediate => "IMMEDIATE ",
+                    ast::TransactionType::Deferred => " DEFERRED",
+                    ast::TransactionType::Exclusive => " EXCLUSIVE",
+                    ast::TransactionType::Immediate => " IMMEDIATE",
                 });
                 format!("BEGIN {}TRANSACTION", t_type)
             }
+            // END or COMMIT are equivalent here, so just defaulting to COMMIT
+            // TODO: again there are no names in the docs
+            Self::Commit(_name) => "COMMIT".to_string(),
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
@@ -121,11 +124,13 @@ mod tests {
 
     to_sql_string_test!(test_attach, "ATTACH './test.db' AS test_db");
 
-    to_sql_string_test!(test_transaction, "BEGIN TRANSACTION");
+    to_sql_string_test!(test_transaction, "BEGIN");
 
-    to_sql_string_test!(test_transaction_deferred, "BEGIN DEFERRED TRANSACTION");
+    to_sql_string_test!(test_transaction_deferred, "BEGIN DEFERRED");
 
-    to_sql_string_test!(test_transaction_immediate, "BEGIN IMMEDIATE TRANSACTION");
+    to_sql_string_test!(test_transaction_immediate, "BEGIN IMMEDIATE");
 
-    to_sql_string_test!(test_transaction_exclusive, "BEGIN EXCLUSIVE TRANSACTION");
+    to_sql_string_test!(test_transaction_exclusive, "BEGIN EXCLUSIVE");
+
+    to_sql_string_test!(test_commit, "COMMIT");
 }
