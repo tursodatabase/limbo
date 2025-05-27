@@ -16,6 +16,13 @@ impl ToSqlString for ast::Stmt {
                     body.to_sql_string(context)
                 )
             }
+            Self::Analyze(name) => {
+                if let Some(name) = name {
+                    format!("ANALYZE {}", name.to_sql_string(context))
+                } else {
+                    format!("ANALYZE")
+                }
+            }
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
@@ -75,4 +82,18 @@ mod tests {
             todo!()
         }
     }
+
+    to_sql_string_test!(test_analyze, "ANALYZE");
+
+    to_sql_string_test!(
+        test_analyze_table,
+        "ANALYZE table",
+        ignore = "parser can't parse table name"
+    );
+
+    to_sql_string_test!(
+        test_analyze_schema_table,
+        "ANALYZE schema.table",
+        ignore = "parser can't parse schema.table name"
+    );
 }
