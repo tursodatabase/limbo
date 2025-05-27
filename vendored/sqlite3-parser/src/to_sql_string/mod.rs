@@ -26,3 +26,20 @@ impl<T: ToSqlString> ToSqlString for Box<T> {
         T::to_sql_string(&self, context)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ToSqlContext;
+
+    struct TestContext;
+
+    impl ToSqlContext for TestContext {
+        fn get_column_name(&self, _table_id: crate::ast::TableInternalId, _col_idx: usize) -> &str {
+            "placeholder_column"
+        }
+
+        fn get_table_name(&self, _id: crate::ast::TableInternalId) -> &str {
+            "placeholder_table"
+        }
+    }
+}

@@ -408,3 +408,6 @@ impl ToSqlString for ast::UnaryOperator {
         .to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {}
