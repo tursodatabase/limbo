@@ -23,6 +23,18 @@ impl ToSqlString for ast::Stmt {
                     format!("ANALYZE")
                 }
             }
+            Self::Attach {
+                expr,
+                db_name,
+                key: _,
+            } => {
+                // TODO: what is `key` in the attach syntax?
+                format!(
+                    "ATTACH {} AS {}",
+                    expr.to_sql_string(context),
+                    db_name.to_sql_string(context)
+                )
+            }
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
@@ -96,4 +108,6 @@ mod tests {
         "ANALYZE schema.table",
         ignore = "parser can't parse schema.table name"
     );
+
+    to_sql_string_test!(test_attach, "ATTACH './test.db' AS test_db");
 }
