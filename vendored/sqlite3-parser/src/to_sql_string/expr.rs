@@ -306,8 +306,8 @@ impl ToSqlString for ast::Operator {
 impl ToSqlString for ast::Type {
     fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
         let mut ret = self.name.clone();
-        ret.push(' ');
         if let Some(size) = &self.size {
+            ret.push(' ');
             ret.push('(');
             ret.push_str(&size.to_sql_string(context));
             ret.push(')');
@@ -346,7 +346,10 @@ impl ToSqlString for ast::Distinctness {
 impl ToSqlString for ast::QualifiedName {
     fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
         let mut ret = String::new();
-        // TODO: skip DB Name
+        if let Some(db_name) = &self.db_name {
+            ret.push_str(&db_name.0);
+            ret.push('.');
+        }
         if let Some(alias) = &self.alias {
             ret.push_str(&alias.0);
             ret.push('.');
