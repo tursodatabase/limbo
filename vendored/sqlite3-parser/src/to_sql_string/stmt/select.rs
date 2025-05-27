@@ -188,14 +188,18 @@ impl ToSqlString for ast::SelectTable {
                 }
             }
             Self::Select(select, alias) => {
+                ret.push('(');
                 ret.push_str(&select.to_sql_string(context));
+                ret.push(')');
                 if let Some(alias) = alias {
                     ret.push(' ');
                     ret.push_str(&alias.to_sql_string(context));
                 }
             }
             Self::Sub(from_clause, alias) => {
+                ret.push('(');
                 ret.push_str(&from_clause.to_sql_string(context));
+                ret.push(')');
                 if let Some(alias) = alias {
                     ret.push(' ');
                     ret.push_str(&alias.to_sql_string(context));
@@ -338,10 +342,14 @@ impl ToSqlString for ast::JoinOperator {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         match self {
             Self::Comma => ",".to_string(),
-            Self::TypedJoin(join) => format!(
-                "JOIN {}",
-                join.map_or(String::new(), |join| join.to_sql_string(context))
-            ),
+            Self::TypedJoin(join) => {
+                let join_keyword = "JOIN";
+                if let Some(join) = join {
+                    format!("{} {}", join_keyword, join.to_sql_string(context))
+                } else {
+                    join_keyword.to_string()
+                }
+            }
         }
     }
 }
@@ -496,4 +504,58 @@ impl ToSqlString for ast::FrameExclude {
         };
         format!("EXCLUDE {}", clause)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::to_sql_string_test;
+
+    to_sql_string_test!(test_select_basic, "SELECT 1");
+
+    to_sql_string_test!(test_select_table, "SELECT * FROM t");
+
+    to_sql_string_test!(test_select_table_2, "SELECT a FROM t");
+
+    to_sql_string_test!(test_select_multiple_columns, "SELECT a, b, c FROM t");
+
+    to_sql_string_test!(test_select_with_alias, "SELECT a AS col1 FROM t");
+
+    to_sql_string_test!(test_select_with_table_alias, "SELECT t1.a FROM t AS t1");
+
+    to_sql_string_test!(test_select_with_where, "SELECT a FROM t WHERE b = 1");
+
+    to_sql_string_test!(
+        test_select_with_multiple_conditions,
+        "SELECT a FROM t WHERE b = 1 AND c > 2"
+    );
+
+    to_sql_string_test!(test_select_with_order_by, "SELECT a FROM t ORDER BY a DESC");
+
+    to_sql_string_test!(test_select_with_limit, "SELECT a FROM t LIMIT 10");
+
+    to_sql_string_test!(test_select_with_offset, "SELECT a FROM t LIMIT 10 OFFSET 5");
+
+    to_sql_string_test!(
+        test_select_with_join,
+        "SELECT a FROM t JOIN t2 ON t.b = t2.b"
+    );
+
+    to_sql_string_test!(
+        test_select_with_group_by,
+        "SELECT a, COUNT(*) FROM t GROUP BY a"
+    );
+
+    to_sql_string_test!(
+        test_select_with_having,
+        "SELECT a, COUNT(*) FROM t GROUP BY a HAVING COUNT(*) > 1"
+    );
+
+    to_sql_string_test!(test_select_with_distinct, "SELECT DISTINCT a FROM t");
+
+    to_sql_string_test!(test_select_with_function, "SELECT COUNT(a) FROM t");
+
+    to_sql_string_test!(
+        test_select_with_subquery,
+        "SELECT a FROM (SELECT b FROM t) AS sub"
+    );
 }

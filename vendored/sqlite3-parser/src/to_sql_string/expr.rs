@@ -285,7 +285,7 @@ impl ToSqlString for ast::Operator {
             Self::BitwiseOr => "|",
             Self::Concat => "||",
             Self::Divide => "/",
-            Self::Equals => "==",
+            Self::Equals => "=",
             Self::Greater => ">",
             Self::GreaterEquals => ">=",
             Self::Is => "IS",
