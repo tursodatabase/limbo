@@ -2,11 +2,20 @@ use crate::ast;
 
 use super::ToSqlString;
 
+mod alter_table;
 mod select;
 
 impl ToSqlString for ast::Stmt {
     fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
         match self {
+            Self::AlterTable(alter_table) => {
+                let (name, body) = alter_table.as_ref();
+                format!(
+                    "ALTER TABLE {} {}",
+                    name.to_sql_string(context),
+                    body.to_sql_string(context)
+                )
+            }
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
