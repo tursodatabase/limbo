@@ -156,6 +156,19 @@ impl ToSqlString for ast::Stmt {
                 view_name.to_sql_string(context)
             ),
             Self::Insert(insert) => format!("{};", insert.to_sql_string(context)),
+            Self::Pragma(name, body) => {
+                format!(
+                    "PRAGMA {}{};",
+                    name.to_sql_string(context),
+                    body.as_ref()
+                        .map_or("".to_string(), |body| match body.as_ref() {
+                            ast::PragmaBody::Equals(expr) =>
+                                format!(" = {}", expr.to_sql_string(context)),
+                            ast::PragmaBody::Call(expr) =>
+                                format!("({})", expr.to_sql_string(context)),
+                        })
+                )
+            }
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
@@ -353,4 +366,8 @@ mod tests {
     to_sql_string_test!(test_drop_trigger, "DROP TRIGGER schema_name.test_trigger;");
 
     to_sql_string_test!(test_drop_view, "DROP VIEW schema_name.test_view;");
+
+    to_sql_string_test!(test_pragma_equals, "PRAGMA schema_name.Pragma_name = 1;");
+
+    to_sql_string_test!(test_pragma_call, "PRAGMA schema_name.Pragma_name_2(1);");
 }
