@@ -285,6 +285,17 @@ impl ProgramBuilder {
         cursor
     }
 
+    pub fn add_pragma_result_column(&mut self, col_name: String) {
+        // TODO figure out a better type definition for ResultSetColumn
+        // or invent another way to set pragma result columns
+        let expr = ast::Expr::Id(ast::Id("".to_string()));
+        self.result_columns.push(ResultSetColumn {
+            expr,
+            alias: Some(col_name),
+            contains_aggregates: false,
+        });
+    }
+
     #[instrument(skip(self), level = Level::TRACE)]
     pub fn emit_insn(&mut self, insn: Insn) {
         let function = insn.to_function();
