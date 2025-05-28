@@ -246,7 +246,7 @@ impl ToSqlString for Expr {
                 ret.push_str(&name1.0);
             }
             Expr::Raise(resolve_type, expr) => {
-                ret.push_str("RAISE (");
+                ret.push_str("RAISE(");
                 ret.push_str(&resolve_type.to_sql_string(context));
                 if let Some(expr) = expr {
                     ret.push_str(", ");

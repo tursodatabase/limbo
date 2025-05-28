@@ -9,21 +9,20 @@ mod select;
 
 impl ToSqlString for ast::Stmt {
     fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
-        dbg!(self);
         match self {
             Self::AlterTable(alter_table) => {
                 let (name, body) = alter_table.as_ref();
                 format!(
-                    "ALTER TABLE {} {}",
+                    "ALTER TABLE {} {};",
                     name.to_sql_string(context),
                     body.to_sql_string(context)
                 )
             }
             Self::Analyze(name) => {
                 if let Some(name) = name {
-                    format!("ANALYZE {}", name.to_sql_string(context))
+                    format!("ANALYZE {};", name.to_sql_string(context))
                 } else {
-                    format!("ANALYZE")
+                    format!("ANALYZE;")
                 }
             }
             Self::Attach {
@@ -33,7 +32,7 @@ impl ToSqlString for ast::Stmt {
             } => {
                 // TODO: what is `key` in the attach syntax?
                 format!(
-                    "ATTACH {} AS {}",
+                    "ATTACH {} AS {};",
                     expr.to_sql_string(context),
                     db_name.to_sql_string(context)
                 )
@@ -46,11 +45,11 @@ impl ToSqlString for ast::Stmt {
                     ast::TransactionType::Exclusive => " EXCLUSIVE",
                     ast::TransactionType::Immediate => " IMMEDIATE",
                 });
-                format!("BEGIN{}", t_type)
+                format!("BEGIN{};", t_type)
             }
             // END or COMMIT are equivalent here, so just defaulting to COMMIT
             // TODO: again there are no names in the docs
-            Self::Commit(_name) => "COMMIT".to_string(),
+            Self::Commit(_name) => "COMMIT;".to_string(),
             Self::CreateIndex {
                 unique,
                 if_not_exists,
@@ -60,7 +59,7 @@ impl ToSqlString for ast::Stmt {
                 where_clause,
             } => {
                 format!(
-                    "CREATE {}INDEX {}{} ON {} ({}){}",
+                    "CREATE {}INDEX {}{} ON {} ({}){};",
                     unique.then_some("UNIQUE ").unwrap_or(""),
                     if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
                     idx_name.to_sql_string(context),
@@ -85,7 +84,7 @@ impl ToSqlString for ast::Stmt {
                 body,
             } => {
                 format!(
-                    "CREATE{} TABLE {}{} {}",
+                    "CREATE{} TABLE {}{} {};",
                     temporary.then_some(" TEMP").unwrap_or(""),
                     if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
                     tbl_name.to_sql_string(context),
@@ -93,7 +92,7 @@ impl ToSqlString for ast::Stmt {
                 )
             }
             Self::CreateTrigger(trigger) => trigger.to_sql_string(context),
-            Self::Select(select) => select.to_sql_string(context),
+            Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
     }
@@ -110,7 +109,7 @@ mod tests {
             #[test]
             fn $test_name() {
                 let context = crate::to_sql_string::stmt::tests::TestContext;
-                let input: &str = $input;
+                let input = $input.split_whitespace().collect::<Vec<&str>>().join(" ");
                 let mut parser = crate::lexer::sql::Parser::new(input.as_bytes());
                 let cmd = fallible_iterator::FallibleIterator::next(&mut parser)
                     .unwrap()
@@ -126,7 +125,7 @@ mod tests {
             $(#[$attribute])*
             fn $test_name() {
                 let context = crate::to_sql_string::stmt::tests::TestContext;
-                let input: &str = $input;
+                let input = $input.split_whitespace().collect::<Vec<&str>>().join(" ");
                 let mut parser = crate::lexer::sql::Parser::new(input.as_bytes());
                 let cmd = fallible_iterator::FallibleIterator::next(&mut parser)
                     .unwrap()
@@ -153,71 +152,71 @@ mod tests {
         }
     }
 
-    to_sql_string_test!(test_analyze, "ANALYZE");
+    to_sql_string_test!(test_analyze, "ANALYZE;");
 
     to_sql_string_test!(
         test_analyze_table,
-        "ANALYZE table",
+        "ANALYZE table;",
         ignore = "parser can't parse table name"
     );
 
     to_sql_string_test!(
         test_analyze_schema_table,
-        "ANALYZE schema.table",
+        "ANALYZE schema.table;",
         ignore = "parser can't parse schema.table name"
     );
 
-    to_sql_string_test!(test_attach, "ATTACH './test.db' AS test_db");
+    to_sql_string_test!(test_attach, "ATTACH './test.db' AS test_db;");
 
-    to_sql_string_test!(test_transaction, "BEGIN");
+    to_sql_string_test!(test_transaction, "BEGIN;");
 
-    to_sql_string_test!(test_transaction_deferred, "BEGIN DEFERRED");
+    to_sql_string_test!(test_transaction_deferred, "BEGIN DEFERRED;");
 
-    to_sql_string_test!(test_transaction_immediate, "BEGIN IMMEDIATE");
+    to_sql_string_test!(test_transaction_immediate, "BEGIN IMMEDIATE;");
 
-    to_sql_string_test!(test_transaction_exclusive, "BEGIN EXCLUSIVE");
+    to_sql_string_test!(test_transaction_exclusive, "BEGIN EXCLUSIVE;");
 
-    to_sql_string_test!(test_commit, "COMMIT");
+    to_sql_string_test!(test_commit, "COMMIT;");
 
     // Test a simple index on a single column
     to_sql_string_test!(
         test_create_index_simple,
-        "CREATE INDEX idx_name ON employees (last_name)"
+        "CREATE INDEX idx_name ON employees (last_name);"
     );
 
     // Test a unique index to enforce uniqueness on a column
     to_sql_string_test!(
         test_create_unique_index,
-        "CREATE UNIQUE INDEX idx_unique_email ON users (email)"
+        "CREATE UNIQUE INDEX idx_unique_email ON users (email);"
     );
 
     // Test a multi-column index
     to_sql_string_test!(
         test_create_index_multi_column,
-        "CREATE INDEX idx_name_salary ON employees (last_name, salary)"
+        "CREATE INDEX idx_name_salary ON employees (last_name, salary);"
     );
 
     // Test a partial index with a WHERE clause
     to_sql_string_test!(
         test_create_partial_index,
-        "CREATE INDEX idx_active_users ON users (username) WHERE active = true"
+        "CREATE INDEX idx_active_users ON users (username) WHERE active = true;"
     );
 
     // Test an index on an expression
     to_sql_string_test!(
         test_create_index_on_expression,
-        "CREATE INDEX idx_upper_name ON employees (UPPER(last_name))"
+        "CREATE INDEX idx_upper_name ON employees (UPPER(last_name));"
     );
 
     // Test an index with descending order
     to_sql_string_test!(
         test_create_index_descending,
-        "CREATE INDEX idx_salary_desc ON employees (salary DESC)"
+        "CREATE INDEX idx_salary_desc ON employees (salary DESC);"
     );
 
     // Test an index with mixed ascending and descending orders on multiple columns
     to_sql_string_test!(
         test_create_index_mixed_order,
-        "CREATE INDEX idx_name_asc_salary_desc ON employees (last_name ASC, salary DESC)"
+        "CREATE INDEX idx_name_asc_salary_desc ON employees (last_name ASC, salary DESC);"
     );
 }
