@@ -41,7 +41,7 @@ impl ToSqlString for ast::NamedColumnConstraint {
     fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
         let mut ret = Vec::new();
         if let Some(name) = &self.name {
-            ret.push(format!("CONSTRAINT {} ", name.0));
+            ret.push(format!("CONSTRAINT {}", name.0));
         }
         ret.push(self.constraint.to_sql_string(context));
         ret.join(" ")
@@ -104,7 +104,7 @@ impl ToSqlString for ast::ColumnConstraint {
                 auto_increment,
             } => {
                 format!(
-                    "PRIMARY KEY {}{}{}",
+                    "PRIMARY KEY{}{}{}",
                     order.map_or("".to_string(), |order| format!(
                         " {}",
                         order.to_sql_string(context)

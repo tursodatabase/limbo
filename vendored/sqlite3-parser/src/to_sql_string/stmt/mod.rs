@@ -8,6 +8,7 @@ mod select;
 
 impl ToSqlString for ast::Stmt {
     fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
+        dbg!(self);
         match self {
             Self::AlterTable(alter_table) => {
                 let (name, body) = alter_table.as_ref();
@@ -103,7 +104,7 @@ mod tests {
     #[macro_export]
     /// Create a test that first parses then input, the converts the parsed ast back to a string and compares with original input
     macro_rules! to_sql_string_test {
-        ($test_name:ident, $input:literal) => {
+        ($test_name:ident, $input:expr) => {
             #[test]
             fn $test_name() {
                 let context = crate::to_sql_string::stmt::tests::TestContext;
@@ -118,7 +119,7 @@ mod tests {
                 );
             }
         };
-        ($test_name:ident, $input:literal, $($attribute:meta),*) => {
+        ($test_name:ident, $input:expr, $($attribute:meta),*) => {
             #[test]
             $(#[$attribute])*
             fn $test_name() {
