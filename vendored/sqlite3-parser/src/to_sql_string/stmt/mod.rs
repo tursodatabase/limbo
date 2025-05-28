@@ -60,40 +60,36 @@ impl ToSqlString for ast::Stmt {
                 tbl_name,
                 columns,
                 where_clause,
-            } => {
-                format!(
-                    "CREATE {}INDEX {}{} ON {} ({}){};",
-                    unique.then_some("UNIQUE ").unwrap_or(""),
-                    if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
-                    idx_name.to_sql_string(context),
-                    tbl_name.0,
-                    columns
-                        .iter()
-                        .map(|col| col.to_sql_string(context))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    where_clause
-                        .as_ref()
-                        .map_or("".to_string(), |where_clause| format!(
-                            " WHERE {}",
-                            where_clause.to_sql_string(context)
-                        ))
-                )
-            }
+            } => format!(
+                "CREATE {}INDEX {}{} ON {} ({}){};",
+                unique.then_some("UNIQUE ").unwrap_or(""),
+                if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
+                idx_name.to_sql_string(context),
+                tbl_name.0,
+                columns
+                    .iter()
+                    .map(|col| col.to_sql_string(context))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                where_clause
+                    .as_ref()
+                    .map_or("".to_string(), |where_clause| format!(
+                        " WHERE {}",
+                        where_clause.to_sql_string(context)
+                    ))
+            ),
             Self::CreateTable {
                 temporary,
                 if_not_exists,
                 tbl_name,
                 body,
-            } => {
-                format!(
-                    "CREATE{} TABLE {}{} {};",
-                    temporary.then_some(" TEMP").unwrap_or(""),
-                    if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
-                    tbl_name.to_sql_string(context),
-                    body.to_sql_string(context)
-                )
-            }
+            } => format!(
+                "CREATE{} TABLE {}{} {};",
+                temporary.then_some(" TEMP").unwrap_or(""),
+                if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
+                tbl_name.to_sql_string(context),
+                body.to_sql_string(context)
+            ),
             Self::CreateTrigger(trigger) => trigger.to_sql_string(context),
             Self::CreateView {
                 temporary,
@@ -156,19 +152,37 @@ impl ToSqlString for ast::Stmt {
                 view_name.to_sql_string(context)
             ),
             Self::Insert(insert) => format!("{};", insert.to_sql_string(context)),
-            Self::Pragma(name, body) => {
-                format!(
-                    "PRAGMA {}{};",
-                    name.to_sql_string(context),
-                    body.as_ref()
-                        .map_or("".to_string(), |body| match body.as_ref() {
-                            ast::PragmaBody::Equals(expr) =>
-                                format!(" = {}", expr.to_sql_string(context)),
-                            ast::PragmaBody::Call(expr) =>
-                                format!("({})", expr.to_sql_string(context)),
-                        })
-                )
-            }
+            Self::Pragma(name, body) => format!(
+                "PRAGMA {}{};",
+                name.to_sql_string(context),
+                body.as_ref()
+                    .map_or("".to_string(), |body| match body.as_ref() {
+                        ast::PragmaBody::Equals(expr) =>
+                            format!(" = {}", expr.to_sql_string(context)),
+                        ast::PragmaBody::Call(expr) => format!("({})", expr.to_sql_string(context)),
+                    })
+            ),
+            // TODO: missing collation name
+            Self::Reindex { obj_name } => format!(
+                "REINDEX{};",
+                obj_name.as_ref().map_or("".to_string(), |name| format!(
+                    " {}",
+                    name.to_sql_string(context)
+                ))
+            ),
+            Self::Release(name) => format!("RELEASE {};", name.0),
+            Self::Rollback {
+                // TODO: there is no transaction name in SQLITE
+                // https://www.sqlite.org/lang_transaction.html
+                tx_name: _,
+                savepoint_name,
+            } => format!(
+                "ROLLBACK{};",
+                savepoint_name
+                    .as_ref()
+                    .map_or("".to_string(), |name| format!(" TO {}", name.0))
+            ),
+            Self::Savepoint(name) => format!("SAVEPOINT {};", name.0),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
@@ -370,4 +384,16 @@ mod tests {
     to_sql_string_test!(test_pragma_equals, "PRAGMA schema_name.Pragma_name = 1;");
 
     to_sql_string_test!(test_pragma_call, "PRAGMA schema_name.Pragma_name_2(1);");
+
+    to_sql_string_test!(test_reindex, "REINDEX schema_name.test_table;");
+
+    to_sql_string_test!(test_reindex_2, "REINDEX;");
+
+    to_sql_string_test!(test_release, "RELEASE savepoint_name;");
+
+    to_sql_string_test!(test_rollback, "ROLLBACK;");
+
+    to_sql_string_test!(test_rollback_2, "ROLLBACK TO savepoint_name;");
+
+    to_sql_string_test!(test_savepoint, "SAVEPOINT savepoint_name;");
 }
