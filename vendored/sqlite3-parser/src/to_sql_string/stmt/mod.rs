@@ -9,6 +9,7 @@ mod create_virtual_table;
 mod delete;
 mod insert;
 mod select;
+mod update;
 
 impl ToSqlString for ast::Stmt {
     fn to_sql_string<C: super::ToSqlContext>(&self, context: &C) -> String {
@@ -184,6 +185,7 @@ impl ToSqlString for ast::Stmt {
             ),
             Self::Savepoint(name) => format!("SAVEPOINT {};", name.0),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
+            Self::Update(update) => format!("{};", update.to_sql_string(context)),
             _ => todo!(),
         }
     }
