@@ -77,7 +77,7 @@ impl ToSqlString for ast::TriggerCmdDelete {
             self.where_clause
                 .as_ref()
                 .map_or("".to_string(), |expr| format!(
-                    " {}",
+                    " WHERE {}",
                     expr.to_sql_string(context)
                 ))
         )
