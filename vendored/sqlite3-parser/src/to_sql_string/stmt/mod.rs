@@ -121,6 +121,7 @@ impl ToSqlString for ast::Stmt {
                 create_virtual_table.to_sql_string(context)
             }
             Self::Delete(delete) => delete.to_sql_string(context),
+            Self::Detach(name) => format!("DETACH {};", name.to_sql_string(context)),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
@@ -307,5 +308,11 @@ mod tests {
     to_sql_string_test!(
         test_create_view_arithmetic,
         "CREATE VIEW view_arithmetic AS SELECT name, salary * 1.1 AS adjusted_salary FROM employees;"
+    );
+
+   
+    to_sql_string_test!(
+        test_detach,
+        "DETACH 'x.db';"
     );
 }
