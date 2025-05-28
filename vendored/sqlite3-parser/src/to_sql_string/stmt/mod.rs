@@ -43,11 +43,38 @@ impl ToSqlString for ast::Stmt {
                     ast::TransactionType::Exclusive => " EXCLUSIVE",
                     ast::TransactionType::Immediate => " IMMEDIATE",
                 });
-                format!("BEGIN {}TRANSACTION", t_type)
+                format!("BEGIN{}", t_type)
             }
             // END or COMMIT are equivalent here, so just defaulting to COMMIT
             // TODO: again there are no names in the docs
             Self::Commit(_name) => "COMMIT".to_string(),
+            Self::CreateIndex {
+                unique,
+                if_not_exists,
+                idx_name,
+                tbl_name,
+                columns,
+                where_clause,
+            } => {
+                format!(
+                    "CREATE {}INDEX {}{} ON {} ({}){}",
+                    unique.then_some("UNIQUE ").unwrap_or(""),
+                    if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
+                    idx_name.to_sql_string(context),
+                    tbl_name.0,
+                    columns
+                        .iter()
+                        .map(|col| col.to_sql_string(context))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    where_clause
+                        .as_ref()
+                        .map_or("".to_string(), |where_clause| format!(
+                            " WHERE {}",
+                            where_clause.to_sql_string(context)
+                        ))
+                )
+            }
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
@@ -133,4 +160,46 @@ mod tests {
     to_sql_string_test!(test_transaction_exclusive, "BEGIN EXCLUSIVE");
 
     to_sql_string_test!(test_commit, "COMMIT");
+
+    // Test a simple index on a single column
+    to_sql_string_test!(
+        test_create_index_simple,
+        "CREATE INDEX idx_name ON employees (last_name)"
+    );
+
+    // Test a unique index to enforce uniqueness on a column
+    to_sql_string_test!(
+        test_create_unique_index,
+        "CREATE UNIQUE INDEX idx_unique_email ON users (email)"
+    );
+
+    // Test a multi-column index
+    to_sql_string_test!(
+        test_create_index_multi_column,
+        "CREATE INDEX idx_name_salary ON employees (last_name, salary)"
+    );
+
+    // Test a partial index with a WHERE clause
+    to_sql_string_test!(
+        test_create_partial_index,
+        "CREATE INDEX idx_active_users ON users (username) WHERE active = true"
+    );
+
+    // Test an index on an expression
+    to_sql_string_test!(
+        test_create_index_on_expression,
+        "CREATE INDEX idx_upper_name ON employees (UPPER(last_name))"
+    );
+
+    // Test an index with descending order
+    to_sql_string_test!(
+        test_create_index_descending,
+        "CREATE INDEX idx_salary_desc ON employees (salary DESC)"
+    );
+
+    // Test an index with mixed ascending and descending orders on multiple columns
+    to_sql_string_test!(
+        test_create_index_mixed_order,
+        "CREATE INDEX idx_name_asc_salary_desc ON employees (last_name ASC, salary DESC)"
+    );
 }
