@@ -122,6 +122,38 @@ impl ToSqlString for ast::Stmt {
             }
             Self::Delete(delete) => delete.to_sql_string(context),
             Self::Detach(name) => format!("DETACH {};", name.to_sql_string(context)),
+            Self::DropIndex {
+                if_exists,
+                idx_name,
+            } => format!(
+                "DROP INDEX{} {};",
+                if_exists.then_some("IF EXISTS ").unwrap_or(""),
+                idx_name.to_sql_string(context)
+            ),
+            Self::DropTable {
+                if_exists,
+                tbl_name,
+            } => format!(
+                "DROP TABLE{} {};",
+                if_exists.then_some("IF EXISTS ").unwrap_or(""),
+                tbl_name.to_sql_string(context)
+            ),
+            Self::DropTrigger {
+                if_exists,
+                trigger_name,
+            } => format!(
+                "DROP TRIGGER{} {};",
+                if_exists.then_some("IF EXISTS ").unwrap_or(""),
+                trigger_name.to_sql_string(context)
+            ),
+            Self::DropView {
+                if_exists,
+                view_name,
+            } => format!(
+                "DROP VIEW{} {};",
+                if_exists.then_some("IF EXISTS ").unwrap_or(""),
+                view_name.to_sql_string(context)
+            ),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
@@ -310,9 +342,13 @@ mod tests {
         "CREATE VIEW view_arithmetic AS SELECT name, salary * 1.1 AS adjusted_salary FROM employees;"
     );
 
-   
-    to_sql_string_test!(
-        test_detach,
-        "DETACH 'x.db';"
-    );
+    to_sql_string_test!(test_detach, "DETACH 'x.db';");
+
+    to_sql_string_test!(test_drop_index, "DROP INDEX schema_name.test_index;");
+
+    to_sql_string_test!(test_drop_table, "DROP TABLE schema_name.test_table;");
+
+    to_sql_string_test!(test_drop_trigger, "DROP TRIGGER schema_name.test_trigger;");
+
+    to_sql_string_test!(test_drop_view, "DROP VIEW schema_name.test_view;");
 }
