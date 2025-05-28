@@ -7,6 +7,7 @@ mod create_table;
 mod create_trigger;
 mod create_virtual_table;
 mod delete;
+mod insert;
 mod select;
 
 impl ToSqlString for ast::Stmt {
@@ -154,6 +155,7 @@ impl ToSqlString for ast::Stmt {
                 if_exists.then_some("IF EXISTS ").unwrap_or(""),
                 view_name.to_sql_string(context)
             ),
+            Self::Insert(insert) => format!("{};", insert.to_sql_string(context)),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }

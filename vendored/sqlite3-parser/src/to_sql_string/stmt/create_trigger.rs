@@ -131,7 +131,7 @@ impl ToSqlString for ast::TriggerCmdInsert {
 impl ToSqlString for ast::Upsert {
     fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
         format!(
-            "ON CONFLICT {}{}{}",
+            "ON CONFLICT{}{}{}",
             self.index.as_ref().map_or("".to_string(), |index| format!(
                 "{} ",
                 index.to_sql_string(context)
@@ -167,10 +167,10 @@ impl ToSqlString for ast::UpsertIndex {
 impl ToSqlString for ast::UpsertDo {
     fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
         match self {
-            Self::Nothing => "NOTHING".to_string(),
+            Self::Nothing => "DO NOTHING".to_string(),
             Self::Set { sets, where_clause } => {
                 format!(
-                    "UPDATE SET {}{}",
+                    "DO UPDATE SET {}{}",
                     sets.iter()
                         .map(|set| set.to_sql_string(context))
                         .collect::<Vec<_>>()
