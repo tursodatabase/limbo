@@ -1328,10 +1328,7 @@ mod ptrmap_tests {
     fn test_get_ptrmap_offset() {
         let page_size = 5 + 5 * 2; //  Maps 3 data pages
 
-        assert_eq!(
-            get_ptrmap_offset_in_page(3, 2, page_size).unwrap(),
-            0 * PTRMAP_ENTRY_SIZE
-        );
+        assert_eq!(get_ptrmap_offset_in_page(3, 2, page_size).unwrap(), 0);
         assert_eq!(
             get_ptrmap_offset_in_page(4, 2, page_size).unwrap(),
             1 * PTRMAP_ENTRY_SIZE
@@ -1345,10 +1342,7 @@ mod ptrmap_tests {
         // D(7) is index 0 on P1. Offset 0.
         // D(8) is index 1 on P1. Offset 5.
         // D(9) is index 2 on P1. Offset 10.
-        assert_eq!(
-            get_ptrmap_offset_in_page(7, 6, page_size).unwrap(),
-            0 * PTRMAP_ENTRY_SIZE
-        );
+        assert_eq!(get_ptrmap_offset_in_page(7, 6, page_size).unwrap(), 0);
         assert_eq!(
             get_ptrmap_offset_in_page(8, 6, page_size).unwrap(),
             1 * PTRMAP_ENTRY_SIZE
