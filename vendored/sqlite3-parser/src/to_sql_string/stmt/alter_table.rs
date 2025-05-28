@@ -65,7 +65,7 @@ impl ToSqlString for ast::ColumnConstraint {
                 clause,
                 deref_clause,
             } => format!(
-                "{}{}",
+                "FOREIGN KEY {}{}",
                 clause.to_sql_string(context),
                 if let Some(deref) = deref_clause {
                     deref.to_sql_string(context)

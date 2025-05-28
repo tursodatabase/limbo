@@ -3,6 +3,7 @@ use crate::ast;
 use super::ToSqlString;
 
 mod alter_table;
+mod create_table;
 mod select;
 
 impl ToSqlString for ast::Stmt {
@@ -73,6 +74,20 @@ impl ToSqlString for ast::Stmt {
                             " WHERE {}",
                             where_clause.to_sql_string(context)
                         ))
+                )
+            }
+            Self::CreateTable {
+                temporary,
+                if_not_exists,
+                tbl_name,
+                body,
+            } => {
+                format!(
+                    "CREATE{} TABLE {}{} {}",
+                    temporary.then_some(" TEMP").unwrap_or(""),
+                    if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
+                    tbl_name.to_sql_string(context),
+                    body.to_sql_string(context)
                 )
             }
             Self::Select(select) => select.to_sql_string(context),

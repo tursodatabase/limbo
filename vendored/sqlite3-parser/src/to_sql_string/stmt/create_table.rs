@@ -1,0 +1,115 @@
+use crate::{ast, to_sql_string::ToSqlString};
+
+impl ToSqlString for ast::CreateTableBody {
+    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
+        match self {
+            Self::AsSelect(select) => format!("AS {}", select.to_sql_string(context)),
+            Self::ColumnsAndConstraints {
+                columns,
+                constraints,
+                options,
+            } => {
+                format!(
+                    "({}) {}{}",
+                    columns
+                        .iter()
+                        .map(|(_, col)| col.to_sql_string(context))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    constraints
+                        .as_ref()
+                        .map_or("".to_string(), |constraints| format!(
+                            " {}",
+                            constraints
+                                .iter()
+                                .map(|constraint| constraint.to_sql_string(context))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )),
+                    options.to_sql_string(context)
+                )
+            }
+        }
+    }
+}
+
+impl ToSqlString for ast::NamedTableConstraint {
+    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
+        if let Some(name) = &self.name {
+            format!("{} {}", name.0, self.constraint.to_sql_string(context))
+        } else {
+            format!("{}", self.constraint.to_sql_string(context))
+        }
+    }
+}
+
+impl ToSqlString for ast::TableConstraint {
+    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
+        match self {
+            Self::Check(expr) => format!("CHECK ({})", expr.to_sql_string(context)),
+            Self::ForeignKey {
+                columns,
+                clause,
+                deref_clause,
+            } => format!(
+                "FOREIGN KEY ({}){}{}",
+                columns
+                    .iter()
+                    .map(|col| col.to_sql_string(context))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                clause.to_sql_string(context),
+                if let Some(deref) = deref_clause {
+                    deref.to_sql_string(context)
+                } else {
+                    "".to_string()
+                }
+            ),
+            Self::PrimaryKey {
+                columns,
+                auto_increment,
+                conflict_clause,
+            } => format!(
+                "PRIMARY KEY ({}){}{}",
+                columns
+                    .iter()
+                    .map(|col| col.to_sql_string(context))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                conflict_clause.map_or("".to_string(), |conflict| format!(
+                    " {}",
+                    conflict.to_sql_string(context)
+                )),
+                auto_increment.then_some(" AUTOINCREMENT").unwrap_or("")
+            ),
+            Self::Unique {
+                columns,
+                conflict_clause,
+            } => format!(
+                "UNIQUE ({}){}",
+                columns
+                    .iter()
+                    .map(|col| col.to_sql_string(context))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                conflict_clause.map_or("".to_string(), |conflict| format!(
+                    " {}",
+                    conflict.to_sql_string(context)
+                ))
+            ),
+        }
+    }
+}
+
+impl ToSqlString for ast::TableOptions {
+    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
+        if *self == Self::NONE {
+            ""
+        } else if *self == Self::STRICT {
+            "STRICT"
+        } else {
+            "WITHOUT ROWID"
+        }
+        .to_string()
+    }
+}
