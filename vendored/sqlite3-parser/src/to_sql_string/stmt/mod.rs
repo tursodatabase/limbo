@@ -4,6 +4,7 @@ use super::ToSqlString;
 
 mod alter_table;
 mod create_table;
+mod create_trigger;
 mod select;
 
 impl ToSqlString for ast::Stmt {
@@ -91,6 +92,7 @@ impl ToSqlString for ast::Stmt {
                     body.to_sql_string(context)
                 )
             }
+            Self::CreateTrigger(trigger) => trigger.to_sql_string(context),
             Self::Select(select) => select.to_sql_string(context),
             _ => todo!(),
         }
