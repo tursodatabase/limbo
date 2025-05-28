@@ -5,6 +5,7 @@ use super::ToSqlString;
 mod alter_table;
 mod create_table;
 mod create_trigger;
+mod create_virtual_table;
 mod select;
 
 impl ToSqlString for ast::Stmt {
@@ -100,7 +101,7 @@ impl ToSqlString for ast::Stmt {
                 select,
             } => {
                 format!(
-                    "CREATE{} VIEW {}{}{} AS {}",
+                    "CREATE{} VIEW {}{}{} AS {};",
                     temporary.then_some(" TEMP").unwrap_or(""),
                     if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
                     view_name.to_sql_string(context),
@@ -114,6 +115,9 @@ impl ToSqlString for ast::Stmt {
                     )),
                     select.to_sql_string(context)
                 )
+            }
+            Self::CreateVirtualTable(create_virtual_table) => {
+                create_virtual_table.to_sql_string(context)
             }
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
@@ -246,60 +250,60 @@ mod tests {
     // Test 1: View with DISTINCT keyword
     to_sql_string_test!(
         test_create_view_distinct,
-        "CREATE VIEW view_distinct AS SELECT DISTINCT name FROM employees"
+        "CREATE VIEW view_distinct AS SELECT DISTINCT name FROM employees;"
     );
 
     // Test 2: View with LIMIT clause
     to_sql_string_test!(
         test_create_view_limit,
-        "CREATE VIEW view_limit AS SELECT id, name FROM employees LIMIT 10"
+        "CREATE VIEW view_limit AS SELECT id, name FROM employees LIMIT 10;"
     );
 
     // Test 3: View with CASE expression
     to_sql_string_test!(
         test_create_view_case,
-        "CREATE VIEW view_case AS SELECT name, CASE WHEN salary > 70000 THEN 'High' ELSE 'Low' END AS salary_level FROM employees"
+        "CREATE VIEW view_case AS SELECT name, CASE WHEN salary > 70000 THEN 'High' ELSE 'Low' END AS salary_level FROM employees;"
     );
 
     // Test 4: View with LEFT JOIN
     to_sql_string_test!(
         test_create_view_left_join,
-        "CREATE VIEW view_left_join AS SELECT e.name, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id = d.id"
+        "CREATE VIEW view_left_join AS SELECT e.name, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id = d.id;"
     );
 
     // Test 5: View with HAVING clause
     to_sql_string_test!(
         test_create_view_having,
-        "CREATE VIEW view_having AS SELECT department_id, AVG(salary) AS avg_salary FROM employees GROUP BY department_id HAVING AVG(salary) > 55000"
+        "CREATE VIEW view_having AS SELECT department_id, AVG(salary) AS avg_salary FROM employees GROUP BY department_id HAVING AVG(salary) > 55000;"
     );
 
     // Test 6: View with CTE (Common Table Expression)
     to_sql_string_test!(
         test_create_view_cte,
-        "CREATE VIEW view_cte AS WITH high_earners AS (SELECT * FROM employees WHERE salary > 80000) SELECT id, name FROM high_earners"
+        "CREATE VIEW view_cte AS WITH high_earners AS (SELECT * FROM employees WHERE salary > 80000) SELECT id, name FROM high_earners;"
     );
 
     // Test 7: View with multiple conditions in WHERE
     to_sql_string_test!(
         test_create_view_multi_where,
-        "CREATE VIEW view_multi_where AS SELECT id, name FROM employees WHERE salary > 50000 AND department_id = 3"
+        "CREATE VIEW view_multi_where AS SELECT id, name FROM employees WHERE salary > 50000 AND department_id = 3;"
     );
 
     // Test 8: View with NULL handling
     to_sql_string_test!(
         test_create_view_null,
-        "CREATE VIEW view_null AS SELECT name, COALESCE(salary, 0) AS salary FROM employees"
+        "CREATE VIEW view_null AS SELECT name, COALESCE(salary, 0) AS salary FROM employees;"
     );
 
     // Test 9: View with subquery in WHERE clause
     to_sql_string_test!(
         test_create_view_subquery_where,
-        "CREATE VIEW view_subquery_where AS SELECT name FROM employees WHERE department_id IN (SELECT id FROM departments WHERE name = 'Sales')"
+        "CREATE VIEW view_subquery_where AS SELECT name FROM employees WHERE department_id IN (SELECT id FROM departments WHERE name = 'Sales');"
     );
 
     // Test 10: View with arithmetic expression
     to_sql_string_test!(
         test_create_view_arithmetic,
-        "CREATE VIEW view_arithmetic AS SELECT name, salary * 1.1 AS adjusted_salary FROM employees"
+        "CREATE VIEW view_arithmetic AS SELECT name, salary * 1.1 AS adjusted_salary FROM employees;"
     );
 }
