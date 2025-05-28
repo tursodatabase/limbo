@@ -124,6 +124,14 @@ test("pragma table_list", async (t) => {
   t.deepEqual(actual, expectedValue);
 });
 
+test("simple pragma table_list", async (t) => {
+  const [db] = await connect(":memory:");
+  let param = "sqlite_schema";
+  let actual = db.pragma(`table_info(${param})`, {simple: true});
+  let expectedValue = 0;
+  t.deepEqual(actual, expectedValue);
+});
+
 const connect = async (path) => {
   const db = new Database(path);
   return [db];
