@@ -7,18 +7,7 @@ impl ToSqlString for ast::Select {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         let mut ret = Vec::new();
         if let Some(with) = &self.with {
-            let joined_expr = with
-                .ctes
-                .iter()
-                .map(|cte| cte.to_sql_string(context))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            ret.push(format!(
-                "WITH{} {}",
-                if with.recursive { " RECURSIVE " } else { "" },
-                joined_expr
-            ));
+            ret.push(with.to_sql_string(context));
         }
 
         ret.push(self.body.to_sql_string(context));
@@ -33,11 +22,7 @@ impl ToSqlString for ast::Select {
             ret.push(format!("ORDER BY {}", joined_cols));
         }
         if let Some(limit) = &self.limit {
-            ret.push(format!("LIMIT {}", limit.expr.to_sql_string(context)));
-            // TODO: missing , + expr in ast
-            if let Some(offset) = &limit.offset {
-                ret.push(format!("OFFSET {}", offset.to_sql_string(context)));
-            }
+            ret.push(limit.to_sql_string(context));
         }
         ret.join(" ")
     }
@@ -207,6 +192,36 @@ impl ToSqlString for ast::SelectTable {
             }
         }
         ret
+    }
+}
+
+impl ToSqlString for ast::With {
+    fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
+        format!(
+            "WITH{} {}",
+            if self.recursive { " RECURSIVE " } else { "" },
+            self.ctes
+                .iter()
+                .map(|cte| cte.to_sql_string(context))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+impl ToSqlString for ast::Limit {
+    fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
+        format!(
+            "LIMIT {}{}",
+            self.expr.to_sql_string(context),
+            self.offset
+                .as_ref()
+                .map_or("".to_string(), |offset| format!(
+                    " OFFSET {}",
+                    offset.to_sql_string(context)
+                ))
+        )
+        // TODO: missing , + expr in ast
     }
 }
 

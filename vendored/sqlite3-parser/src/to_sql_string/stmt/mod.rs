@@ -6,6 +6,7 @@ mod alter_table;
 mod create_table;
 mod create_trigger;
 mod create_virtual_table;
+mod delete;
 mod select;
 
 impl ToSqlString for ast::Stmt {
@@ -119,6 +120,7 @@ impl ToSqlString for ast::Stmt {
             Self::CreateVirtualTable(create_virtual_table) => {
                 create_virtual_table.to_sql_string(context)
             }
+            Self::Delete(delete) => delete.to_sql_string(context),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             _ => todo!(),
         }
