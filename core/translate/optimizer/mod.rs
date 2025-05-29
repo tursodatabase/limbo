@@ -37,14 +37,7 @@ pub(crate) mod order;
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
-        Plan::Select(plan) => {
-            optimize_select_plan(plan, schema)?;
-            // Context for everything is created inside the plan
-            tracing::debug!(
-                target = "optimized_plan",
-                plan = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
-            );
-        }
+        Plan::Select(plan) => optimize_select_plan(plan, schema)?,
         Plan::Delete(plan) => optimize_delete_plan(plan, schema)?,
         Plan::Update(plan) => optimize_update_plan(plan, schema)?,
         Plan::CompoundSelect { first, rest, .. } => {
@@ -54,6 +47,11 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
             }
         }
     }
+    // Context for everything is created inside the plan
+    tracing::debug!(
+        target = "optimized_plan",
+        plan = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
+    );
     Ok(())
 }
 
