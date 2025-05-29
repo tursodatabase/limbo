@@ -52,11 +52,6 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
         target = "optimized_plan",
         plan_sql = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
     );
-    dbg!(&plan);
-    println!(
-        "{}",
-        plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
-    );
     Ok(())
 }
 

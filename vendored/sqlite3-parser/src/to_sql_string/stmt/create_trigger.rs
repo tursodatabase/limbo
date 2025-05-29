@@ -16,7 +16,10 @@ impl ToSqlString for ast::CreateTrigger {
             self.for_each_row.then_some(" FOR EACH ROW").unwrap_or(""),
             self.when_clause
                 .as_ref()
-                .map_or("".to_string(), |expr| format!(" WHEN {}", expr.to_string())),
+                .map_or("".to_string(), |expr| format!(
+                    " WHEN {}",
+                    expr.to_sql_string(context)
+                )),
             self.commands
                 .iter()
                 .map(|command| format!("{};", command.to_sql_string(context)))
