@@ -39,10 +39,10 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
         Plan::Select(plan) => {
             optimize_select_plan(plan, schema)?;
+            // Context for everything is created inside the plan
             tracing::debug!(
                 target = "optimized_plan",
-                plan = plan
-                    .to_sql_string(&crate::translate::plan::PlanContext(&plan.table_references))
+                plan = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
             );
         }
         Plan::Delete(plan) => optimize_delete_plan(plan, schema)?,

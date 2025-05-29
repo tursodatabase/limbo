@@ -1395,7 +1395,7 @@ impl fmt::Display for UpdatePlan {
     }
 }
 
-pub struct PlanContext<'a>(pub &'a [TableReference]);
+pub struct PlanContext<'a>(pub &'a [&'a TableReference]);
 
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
@@ -1419,6 +1419,65 @@ impl ToSqlContext for PlanContext<'_> {
     }
 }
 
+impl ToSqlString for Plan {
+    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
+        // Make the Plans pass their own context
+        match self {
+            Self::Select(select) => select.to_sql_string(&PlanContext(
+                &select.table_references.iter().collect::<Vec<_>>(),
+            )),
+            Self::CompoundSelect {
+                first,
+                rest,
+                limit,
+                offset,
+                order_by,
+            } => {
+                let all_refs = first
+                    .table_references
+                    .iter()
+                    .chain(
+                        rest.iter()
+                            .flat_map(|(plan, _)| plan.table_references.iter()),
+                    )
+                    .collect::<Vec<_>>();
+                let context = &PlanContext(all_refs.as_slice());
+
+                let mut ret = vec![first.to_sql_string(context)];
+                for (other_plan, operator) in rest {
+                    ret.push(format!(
+                        "{} {}",
+                        operator.to_sql_string(context),
+                        other_plan.to_sql_string(context),
+                    ));
+                }
+                if let Some(order_by) = &order_by {
+                    ret.push(format!(
+                        "ORDER BY {}",
+                        order_by
+                            .iter()
+                            .map(|(expr, order)| format!(
+                                "{} {}",
+                                expr.to_sql_string(context),
+                                order.to_sql_string(context)
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if let Some(limit) = &limit {
+                    ret.push(format!("LIMIT {}", limit));
+                }
+                if let Some(offset) = &offset {
+                    ret.push(format!("OFFSET {}", offset));
+                }
+                ret.join(" ")
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 impl ToSqlString for TableReference {
     fn to_sql_string<C: limbo_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
@@ -1432,9 +1491,13 @@ impl ToSqlString for TableReference {
                 // Could possibly merge the contexts together here
                 format!(
                     "({})",
-                    from_clause_subquery
-                        .plan
-                        .to_sql_string(&PlanContext(&from_clause_subquery.plan.table_references))
+                    from_clause_subquery.plan.to_sql_string(&PlanContext(
+                        &from_clause_subquery
+                            .plan
+                            .table_references
+                            .iter()
+                            .collect::<Vec<_>>()
+                    ))
                 )
             }
         };
