@@ -1423,7 +1423,9 @@ impl ToSqlString for Plan {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         // Make the Plans pass their own context
         match self {
-            Self::Select(select) => select.to_sql_string(context),
+            Self::Select(select) => select.to_sql_string(&PlanContext(
+                &select.table_references.iter().collect::<Vec<_>>(),
+            )),
             Self::CompoundSelect {
                 first,
                 rest,
@@ -1472,7 +1474,7 @@ impl ToSqlString for Plan {
                 ret.join(" ")
             }
             Self::Delete(delete) => delete.to_sql_string(context),
-            _ => todo!(),
+            Self::Update(update) => update.to_sql_string(context),
         }
     }
 }
@@ -1517,11 +1519,8 @@ impl ToSqlString for TableReference {
 impl ToSqlString for SelectPlan {
     fn to_sql_string<C: limbo_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
-        _context: &C,
+        context: &C,
     ) -> String {
-        let context = self.table_references.iter().collect::<Vec<_>>();
-        let context = &PlanContext(&context);
-
         let mut ret = Vec::new();
         // VALUES SELECT statement
         if !self.values.is_empty() {
@@ -1645,6 +1644,76 @@ impl ToSqlString for DeletePlan {
         let mut ret = Vec::new();
 
         ret.push(format!("DELETE FROM {}", table_ref.table.get_name()));
+
+        if !self.where_clause.is_empty() {
+            ret.push("WHERE".to_string());
+            ret.push(
+                self.where_clause
+                    .iter()
+                    .map(|where_clause| where_clause.expr.to_sql_string(context))
+                    .collect::<Vec<_>>()
+                    .join(" AND "),
+            );
+        }
+        if let Some(order_by) = &self.order_by {
+            ret.push(format!(
+                "ORDER BY {}",
+                order_by
+                    .iter()
+                    .map(|(expr, order)| format!(
+                        "{} {}",
+                        expr.to_sql_string(context),
+                        order.to_sql_string(context)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(limit) = &self.limit {
+            ret.push(format!("LIMIT {}", limit));
+        }
+        if let Some(offset) = &self.offset {
+            ret.push(format!("OFFSET {}", offset));
+        }
+        ret.join(" ")
+    }
+}
+
+impl ToSqlString for UpdatePlan {
+    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
+        let table_ref = self
+            .table_references
+            .first()
+            .expect("UPDATE Plan should have only one table reference");
+        let context = &self.table_references.iter().collect::<Vec<_>>();
+        let context = &PlanContext(context);
+        let mut ret = Vec::new();
+
+        // TODO: we don't work with conflict clauses yet
+
+        ret.push(format!("UPDATE {} SET", table_ref.table.get_name()));
+
+        // TODO: does not support column_name_list yet
+        ret.push(
+            self.set_clauses
+                .iter()
+                .map(|(col_idx, set_expr)| {
+                    format!(
+                        "{} = {}",
+                        table_ref
+                            .table
+                            .get_column_at(*col_idx)
+                            .as_ref()
+                            .unwrap()
+                            .name
+                            .as_ref()
+                            .unwrap(),
+                        set_expr.to_sql_string(context)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
 
         if !self.where_clause.is_empty() {
             ret.push("WHERE".to_string());

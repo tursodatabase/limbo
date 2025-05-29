@@ -47,10 +47,10 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
             }
         }
     }
-    // Context for everything is created inside the plan
+    // Context for everything is created with values inside the plan
     tracing::debug!(
         target = "optimized_plan",
-        plan = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
+        plan_sql = plan.to_sql_string(&crate::translate::plan::PlanContext(&[]))
     );
     Ok(())
 }
