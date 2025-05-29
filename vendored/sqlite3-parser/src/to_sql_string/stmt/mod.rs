@@ -186,7 +186,17 @@ impl ToSqlString for ast::Stmt {
             Self::Savepoint(name) => format!("SAVEPOINT {};", name.0),
             Self::Select(select) => format!("{};", select.to_sql_string(context)),
             Self::Update(update) => format!("{};", update.to_sql_string(context)),
-            _ => todo!(),
+            Self::Vacuum(name, expr) => {
+                format!(
+                    "VACUUM{}{};",
+                    name.as_ref()
+                        .map_or("".to_string(), |name| format!(" {}", name.0)),
+                    expr.as_ref().map_or("".to_string(), |expr| format!(
+                        " INTO {}",
+                        expr.to_sql_string(context)
+                    ))
+                )
+            }
         }
     }
 }
@@ -398,4 +408,10 @@ mod tests {
     to_sql_string_test!(test_rollback_2, "ROLLBACK TO savepoint_name;");
 
     to_sql_string_test!(test_savepoint, "SAVEPOINT savepoint_name;");
+
+    to_sql_string_test!(test_vacuum, "VACUUM;");
+
+    to_sql_string_test!(test_vacuum_2, "VACUUM schema_name;");
+
+    to_sql_string_test!(test_vacuum_3, "VACUUM schema_name INTO test.db;");
 }
