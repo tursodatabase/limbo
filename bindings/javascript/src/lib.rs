@@ -115,7 +115,13 @@ impl Database {
                             .collect();
                         to_js_value(&env, &row[0])
                     }
-                    _ => todo!(),
+                    limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
+                    limbo_core::StepResult::IO => todo!(),
+                    step @ limbo_core::StepResult::Interrupt
+                    | step @ limbo_core::StepResult::Busy => Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("{:?}", step),
+                    )),
                 }
             }
             _ => stmt.run(env, None),
