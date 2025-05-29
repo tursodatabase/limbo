@@ -107,12 +107,7 @@ impl Database {
                 let mut stmt = stmt.inner.borrow_mut();
                 match stmt.step().map_err(into_napi_error)? {
                     limbo_core::StepResult::Row => {
-                        let row: Vec<_> = stmt
-                            .row()
-                            .unwrap()
-                            .get_values()
-                            .map(|x| x.clone())
-                            .collect();
+                        let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
                         to_js_value(&env, &row[0])
                     }
                     limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
