@@ -100,7 +100,26 @@ impl Database {
         pragma_name: String,
         options: Option<PragmaOptions>,
     ) -> napi::Result<JsUnknown> {
-        todo!()
+        let sql = format!("PRAGMA {}", pragma_name);
+        let stmt = self.prepare(sql)?;
+        match options {
+            Some(PragmaOptions { simple: true, .. }) => {
+                let mut stmt = stmt.inner.borrow_mut();
+                match stmt.step().map_err(into_napi_error)? {
+                    limbo_core::StepResult::Row => {
+                        let row: Vec<_> = stmt
+                            .row()
+                            .unwrap()
+                            .get_values()
+                            .map(|x| x.clone())
+                            .collect();
+                        to_js_value(&env, &row[0])
+                    }
+                    _ => todo!(),
+                }
+            }
+            _ => stmt.run(env, None),
+        }
     }
 
     #[napi]
