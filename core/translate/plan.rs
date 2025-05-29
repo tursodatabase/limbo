@@ -1395,7 +1395,7 @@ impl fmt::Display for UpdatePlan {
     }
 }
 
-pub struct PlanContext<'a>(pub &'a [&'a TableReference]);
+pub struct PlanContext<'a>(pub &'a [&'a JoinedTable]);
 
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
@@ -1424,7 +1424,11 @@ impl ToSqlString for Plan {
         // Make the Plans pass their own context
         match self {
             Self::Select(select) => select.to_sql_string(&PlanContext(
-                &select.table_references.iter().collect::<Vec<_>>(),
+                &select
+                    .table_references
+                    .joined_tables
+                    .iter()
+                    .collect::<Vec<_>>(),
             )),
             Self::CompoundSelect {
                 first,
@@ -1435,10 +1439,11 @@ impl ToSqlString for Plan {
             } => {
                 let all_refs = first
                     .table_references
+                    .joined_tables
                     .iter()
                     .chain(
                         rest.iter()
-                            .flat_map(|(plan, _)| plan.table_references.iter()),
+                            .flat_map(|(plan, _)| plan.table_references.joined_tables.iter()),
                     )
                     .collect::<Vec<_>>();
                 let context = &PlanContext(all_refs.as_slice());
@@ -1479,7 +1484,7 @@ impl ToSqlString for Plan {
     }
 }
 
-impl ToSqlString for TableReference {
+impl ToSqlString for JoinedTable {
     fn to_sql_string<C: limbo_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
         _context: &C,
@@ -1496,6 +1501,7 @@ impl ToSqlString for TableReference {
                         &from_clause_subquery
                             .plan
                             .table_references
+                            .joined_tables
                             .iter()
                             .collect::<Vec<_>>()
                     ))
@@ -1563,7 +1569,11 @@ impl ToSqlString for SelectPlan {
             ret.push("FROM".to_string());
 
             ret.extend(self.join_order.iter().enumerate().map(|(idx, order)| {
-                let table_ref = self.table_references.get(order.original_idx).unwrap();
+                let table_ref = self
+                    .table_references
+                    .joined_tables
+                    .get(order.original_idx)
+                    .unwrap();
                 if idx == 0 {
                     table_ref.to_sql_string(context)
                 } else {
@@ -1637,6 +1647,7 @@ impl ToSqlString for DeletePlan {
     fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
         let table_ref = self
             .table_references
+            .joined_tables
             .first()
             .expect("Delete Plan should have only one table reference");
         let context = &[table_ref];
@@ -1683,9 +1694,14 @@ impl ToSqlString for UpdatePlan {
     fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
         let table_ref = self
             .table_references
+            .joined_tables
             .first()
             .expect("UPDATE Plan should have only one table reference");
-        let context = &self.table_references.iter().collect::<Vec<_>>();
+        let context = &self
+            .table_references
+            .joined_tables
+            .iter()
+            .collect::<Vec<_>>();
         let context = &PlanContext(context);
         let mut ret = Vec::new();
 
