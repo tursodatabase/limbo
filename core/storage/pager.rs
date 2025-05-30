@@ -914,7 +914,9 @@ impl Pager {
         #[cfg(not(feature = "omit_autovacuum"))]
         {
             //  Check if the last page is a ptrmap page, if so allocate it and drop it immediately
-            if is_ptrmap_page(header.database_size, header.get_page_size() as usize) {
+            if matches!(*self.auto_vacuum_mode.borrow(), AutoVacuumMode::Full)
+                && is_ptrmap_page(header.database_size, header.get_page_size() as usize)
+            {
                 allocate_page(header.database_size as usize, &self.buffer_pool, 0);
                 header.database_size += 1;
             }
@@ -1233,10 +1235,11 @@ mod ptrmap_tests {
         let db_file_raw = io.open_file("test.db", OpenFlags::Create, true).unwrap();
         let db_storage: Arc<dyn DatabaseStorage> = Arc::new(DatabaseFile::new(db_file_raw));
 
-        //  Initialize a minimal header
+        //  Initialize a minimal header in autovacuum mode
         let mut header_data = DatabaseHeader::default();
         header_data.update_page_size(page_size);
         let db_header_arc = Arc::new(SpinLock::new(header_data));
+        db_header_arc.lock().vacuum_mode_largest_root_page = 1;
 
         //  Construct interfaces for the pager
         let buffer_pool = Rc::new(BufferPool::new(page_size as usize));
@@ -1253,8 +1256,9 @@ mod ptrmap_tests {
 
         let pager = Pager::finish_open(db_header_arc, db_storage, wal, io, page_cache, buffer_pool)
             .unwrap();
+        pager.set_auto_vacuum_mode(AutoVacuumMode::Full); //  set autovacuum mode to full
 
-        //  Allocate all the pages
+        //  Allocate all the pages as btree root pages
         for _ in 0..initial_db_pages {
             pager.btree_create(&CreateBTreeFlags::new_table());
         }
