@@ -4571,7 +4571,7 @@ pub fn op_set_cookie(
         Cookie::UserVersion => {
             let mut header_guard = pager.db_header.lock();
             header_guard.user_version = *value;
-            pager.write_database_header(&*header_guard);
+            pager.write_database_header(&*header_guard)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
     }

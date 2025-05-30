@@ -125,7 +125,7 @@ fn update_pragma(
                 },
                 _ => bail_parse_error!("Not a valid value"),
             };
-            update_cache_size(cache_size, header, pager);
+            update_cache_size(cache_size, header, pager)?;
             Ok(())
         }
         PragmaName::JournalMode => {
@@ -283,7 +283,11 @@ fn query_pragma(
     Ok(())
 }
 
-fn update_cache_size(value: i64, header: Arc<SpinLock<DatabaseHeader>>, pager: Rc<Pager>) {
+fn update_cache_size(
+    value: i64,
+    header: Arc<SpinLock<DatabaseHeader>>,
+    pager: Rc<Pager>,
+) -> crate::Result<()> {
     let mut cache_size_unformatted: i64 = value;
     let mut cache_size = if cache_size_unformatted < 0 {
         let kb = cache_size_unformatted.abs() * 1024;
@@ -306,10 +310,12 @@ fn update_cache_size(value: i64, header: Arc<SpinLock<DatabaseHeader>>, pager: R
         .unwrap_or_else(|_| panic!("invalid value, too big for a i32 {}", value));
 
     // update in disk
-    pager.write_database_header(&header_guard);
+    pager.write_database_header(&header_guard)?;
 
     // update cache size
     pager
         .change_page_cache_size(cache_size)
         .expect("couldn't update page cache size");
+
+    Ok(())
 }

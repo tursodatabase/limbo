@@ -3,7 +3,9 @@ use crate::result::LimboResult;
 use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
-use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
+use crate::storage::sqlite3_ondisk::{
+    self, DatabaseHeader, PageContent, PageType, DATABASE_HEADER_PAGE_ID,
+};
 use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
 use crate::Completion;
 use crate::{Buffer, LimboError, Result};
@@ -382,8 +384,18 @@ impl Pager {
     }
 
     /// Writes the database header.
-    pub fn write_database_header(&self, header: &DatabaseHeader) {
-        sqlite3_ondisk::begin_write_database_header(header, self).expect("failed to write header");
+    pub fn write_database_header(&self, header: &DatabaseHeader) -> Result<()> {
+        let header_page = self.read_page(DATABASE_HEADER_PAGE_ID)?;
+        while header_page.is_locked() {
+            self.io.run_once()?;
+        }
+        header_page.set_dirty();
+        self.add_dirty(DATABASE_HEADER_PAGE_ID);
+
+        let contents = header_page.get().contents.as_ref().unwrap();
+        contents.write_database_header(&header);
+
+        Ok(())
     }
 
     /// Changes the size of the page cache.
@@ -665,24 +677,8 @@ impl Pager {
         let header = &self.db_header;
         let mut header = header.lock();
         header.database_size += 1;
-        {
-            // update database size
-            // read sync for now
-            loop {
-                let first_page_ref = self.read_page(1)?;
-                if first_page_ref.is_locked() {
-                    // FIXME: we should never run io here!
-                    self.io.run_once()?;
-                    continue;
-                }
-                first_page_ref.set_dirty();
-                self.add_dirty(1);
-
-                let contents = first_page_ref.get().contents.as_ref().unwrap();
-                contents.write_database_header(&header);
-                break;
-            }
-        }
+        // update database size
+        self.write_database_header(&mut header)?;
 
         // FIXME: should reserve page cache entry before modifying the database
         let page = allocate_page(header.database_size as usize, &self.buffer_pool, 0);
@@ -694,13 +690,11 @@ impl Pager {
             let page_key = PageCacheKey::new(page.get().id);
             let mut cache = self.page_cache.write();
             match cache.insert(page_key, page.clone()) {
-                Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                Err(_) => {
-                    return Err(LimboError::InternalError(
-                        "Unknown error inserting page to cache".into(),
-                    ))
-                }
-                Ok(_) => return Ok(page),
+                Err(CacheError::Full) => Err(LimboError::CacheFull),
+                Err(_) => Err(LimboError::InternalError(
+                    "Unknown error inserting page to cache".into(),
+                )),
+                Ok(_) => Ok(page),
             }
         }
     }

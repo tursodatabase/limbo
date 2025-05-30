@@ -83,6 +83,8 @@ const MAX_PAGE_SIZE: u32 = 65536;
 /// The default page size in bytes.
 const DEFAULT_PAGE_SIZE: u16 = 4096;
 
+pub const DATABASE_HEADER_PAGE_ID: usize = 1;
+
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.
@@ -296,7 +298,7 @@ pub fn begin_read_database_header(
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
     #[allow(clippy::arc_with_non_send_sync)]
-    db_file.read_page(1, Arc::new(c))?;
+    db_file.read_page(DATABASE_HEADER_PAGE_ID, Arc::new(c))?;
     Ok(result)
 }
 
@@ -333,48 +335,6 @@ fn finish_read_database_header(
     header.reserved_for_expansion.copy_from_slice(&buf[72..92]);
     header.version_valid_for = u32::from_be_bytes([buf[92], buf[93], buf[94], buf[95]]);
     header.version_number = u32::from_be_bytes([buf[96], buf[97], buf[98], buf[99]]);
-    Ok(())
-}
-
-pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Result<()> {
-    let page_source = pager.db_file.clone();
-    let header = Rc::new(header.clone());
-
-    let drop_fn = Rc::new(|_buf| {});
-    #[allow(clippy::arc_with_non_send_sync)]
-    let buffer_to_copy = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
-    let buffer_to_copy_in_cb = buffer_to_copy.clone();
-
-    let read_complete = Box::new(move |buffer: Arc<RefCell<Buffer>>| {
-        let buffer = buffer.borrow().clone();
-        let buffer = Rc::new(RefCell::new(buffer));
-        let mut buf_mut = buffer.borrow_mut();
-        write_header_to_buf(buf_mut.as_mut_slice(), &header);
-        let mut dest_buf = buffer_to_copy_in_cb.borrow_mut();
-        dest_buf.as_mut_slice().copy_from_slice(buf_mut.as_slice());
-    });
-
-    let drop_fn = Rc::new(|_buf| {});
-    #[allow(clippy::arc_with_non_send_sync)]
-    let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
-    let c = Completion::Read(ReadCompletion::new(buf, read_complete));
-    #[allow(clippy::arc_with_non_send_sync)]
-    page_source.read_page(1, Arc::new(c))?;
-    // run get header block
-    pager.io.run_once()?;
-
-    let buffer_to_copy_in_cb = buffer_to_copy.clone();
-    let write_complete = Box::new(move |bytes_written: i32| {
-        let buf_len = buffer_to_copy_in_cb.borrow().len();
-        if bytes_written < buf_len as i32 {
-            tracing::error!("wrote({bytes_written}) less than expected({buf_len})");
-        }
-        // finish_read_database_header(buf, header).unwrap();
-    });
-
-    let c = Completion::Write(WriteCompletion::new(write_complete));
-    page_source.write_page(1, buffer_to_copy, Arc::new(c))?;
-
     Ok(())
 }
 
@@ -833,7 +793,7 @@ pub fn finish_read_page(
     page: PageRef,
 ) -> Result<()> {
     trace!("finish_read_btree_page(page_idx = {})", page_idx);
-    let pos = if page_idx == 1 {
+    let pos = if page_idx == DATABASE_HEADER_PAGE_ID {
         DATABASE_HEADER_SIZE
     } else {
         0
