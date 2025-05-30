@@ -855,6 +855,7 @@ impl Limbo {
             } else {
                 (tracing_appender::non_blocking(std::io::stderr()), true)
             };
+        // Disable rustyline traces
         if let Err(e) = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
@@ -863,7 +864,7 @@ impl Limbo {
                     .with_thread_ids(true)
                     .with_ansi(should_emit_ansi),
             )
-            .with(EnvFilter::from_default_env())
+            .with(EnvFilter::from_default_env().add_directive("rustyline=off".parse().unwrap()))
             .try_init()
         {
             println!("Unable to setup tracing appender: {:?}", e);
