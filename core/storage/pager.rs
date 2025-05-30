@@ -162,6 +162,7 @@ enum CheckpointState {
     CheckpointDone,
 }
 
+/// The mode of allocating a btree page.
 pub enum BtreePageAllocMode {
     Any,        //  allocate any btree page
     Exact(u32), //  allocate a specific page number, typically used for root page allocation
