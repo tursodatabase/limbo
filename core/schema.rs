@@ -212,12 +212,24 @@ impl BTreeTable {
     /// then get_column("b") returns (1, &Column { .. })
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
         let name = normalize_ident(name);
-        for (i, column) in self.columns.iter().enumerate() {
-            if column.name.as_ref().map_or(false, |n| *n == name) {
-                return Some((i, column));
-            }
-        }
-        None
+
+        self.columns
+            .iter()
+            .enumerate()
+            .find(|(_, column)| column.name.as_ref() == Some(&name))
+    }
+
+    /// Returns the column position and column for a given column name.
+    /// Returns None if the column name is not found.
+    /// E.g. if table is CREATE TABLE t(a, b, c)
+    /// then get_column("b") returns (1, &Column { .. })
+    pub fn get_column_mut(&mut self, name: &str) -> Option<(usize, &mut Column)> {
+        let name = normalize_ident(name);
+
+        self.columns
+            .iter_mut()
+            .enumerate()
+            .find(|(_, column)| column.name.as_ref() == Some(&name))
     }
 
     pub fn from_sql(sql: &str, root_page: usize) -> Result<BTreeTable> {
@@ -232,21 +244,30 @@ impl BTreeTable {
     }
 
     pub fn to_sql(&self) -> String {
-        let mut sql = format!("CREATE TABLE {} (\n", self.name);
+        let mut sql = format!("CREATE TABLE {} (", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
-                sql.push_str(",\n");
+                sql.push_str(", ");
             }
-            sql.push_str("  ");
+            sql.push_str(" ");
             sql.push_str(column.name.as_ref().expect("column name is None"));
             sql.push(' ');
             sql.push_str(&column.ty.to_string());
+
+            if column.unique {
+                sql.push_str(" UNIQUE");
+            }
+
+            if  column.primary_key {
+                sql.push_str(" PRIMARY KEY");
+            }
+
             if let Some(default) = &column.default {
                 sql.push_str(" DEFAULT ");
                 sql.push_str(&default.to_string());
             }
         }
-        sql.push_str(");\n");
+        sql.push_str(" )");
         sql
     }
 
@@ -1472,7 +1493,7 @@ mod tests {
   name TEXT,
   tbl_name TEXT,
   rootpage INTEGER,
-  sql TEXT);
+  sql TEXT)
 "#;
         let actual = sqlite_schema_table().to_sql();
         assert_eq!(expected, actual);
