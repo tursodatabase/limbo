@@ -60,6 +60,7 @@ pub fn translate(
     connection: Weak<Connection>,
     syms: &SymbolTable,
     query_mode: QueryMode,
+    _input: &str, // TODO: going to be used for CREATE VIEW
 ) -> Result<Program> {
     let change_cnt_on = matches!(
         stmt,

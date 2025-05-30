@@ -33,6 +33,7 @@ mod numeric;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::{fast_lock::SpinLock, translate::optimizer::optimize_plan};
+use core::str;
 pub use error::LimboError;
 use fallible_iterator::FallibleIterator;
 pub use io::clock::{Clock, Instant};
@@ -352,6 +353,10 @@ impl Connection {
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
         let cmd = cmd.expect("Successful parse on nonempty input string should produce a command");
+        let byte_offset_end = parser.offset();
+        let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
+            .unwrap()
+            .trim();
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
@@ -365,6 +370,7 @@ impl Connection {
                     Rc::downgrade(self),
                     &syms,
                     QueryMode::Normal,
+                    &input,
                 )?);
                 Ok(Statement::new(
                     program,
@@ -382,13 +388,21 @@ impl Connection {
         tracing::trace!("Querying: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
+        let byte_offset_end = parser.offset();
+        let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
+            .unwrap()
+            .trim();
         match cmd {
-            Some(cmd) => self.run_cmd(cmd),
+            Some(cmd) => self.run_cmd(cmd, input),
             None => Ok(None),
         }
     }
 
-    pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
+    pub(crate) fn run_cmd(
+        self: &Rc<Connection>,
+        cmd: Cmd,
+        input: &str,
+    ) -> Result<Option<Statement>> {
         let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
@@ -403,6 +417,7 @@ impl Connection {
                     Rc::downgrade(self),
                     &syms,
                     cmd.into(),
+                    input,
                 )?;
                 let stmt = Statement::new(
                     program.into(),
@@ -453,6 +468,10 @@ impl Connection {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
+        let byte_offset_end = parser.offset();
+        let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
+            .unwrap()
+            .trim();
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Explain(stmt) => {
@@ -467,6 +486,7 @@ impl Connection {
                         Rc::downgrade(self),
                         &syms,
                         QueryMode::Explain,
+                        &input,
                     )?;
                     let _ = std::io::stdout().write_all(program.explain().as_bytes());
                 }
@@ -483,6 +503,7 @@ impl Connection {
                         Rc::downgrade(self),
                         &syms,
                         QueryMode::Normal,
+                        &input,
                     )?;
 
                     let mut state =
@@ -1043,6 +1064,8 @@ impl SymbolTable {
 pub struct QueryRunner<'a> {
     parser: Parser<'a>,
     conn: &'a Rc<Connection>,
+    statements: &'a [u8],
+    last_offset: usize,
 }
 
 impl<'a> QueryRunner<'a> {
@@ -1050,6 +1073,8 @@ impl<'a> QueryRunner<'a> {
         Self {
             parser: Parser::new(statements),
             conn,
+            statements,
+            last_offset: 0,
         }
     }
 }
@@ -1059,7 +1084,14 @@ impl Iterator for QueryRunner<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.parser.next() {
-            Ok(Some(cmd)) => Some(self.conn.run_cmd(cmd)),
+            Ok(Some(cmd)) => {
+                let byte_offset_end = self.parser.offset();
+                let input = str::from_utf8(&self.statements[self.last_offset..byte_offset_end])
+                    .unwrap()
+                    .trim();
+                self.last_offset = byte_offset_end;
+                Some(self.conn.run_cmd(cmd, &input))
+            }
             Ok(None) => None,
             Err(err) => {
                 self.parser.finalize();
