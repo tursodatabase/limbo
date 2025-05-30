@@ -34,6 +34,7 @@ use crate::schema::{Column, Schema};
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::translate::delete::translate_delete;
+use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Insn, RegisterOrLiteral};
 use crate::vdbe::Program;
@@ -114,8 +115,7 @@ pub fn translate_inner(
             let ast::Name(table_name) = table_name.name;
 
             let Some(original_btree) = schema
-                .tables
-                .get(&table_name)
+                .get_table(&table_name)
                 .and_then(|table| table.btree())
             else {
                 return Err(LimboError::ParseError(format!(
@@ -126,37 +126,39 @@ pub fn translate_inner(
             let mut btree = (*original_btree).clone();
 
             match alter_table {
-                ast::AlterTableBody::DropColumn(column) => {
-                    let ast::Name(column) = column;
+                ast::AlterTableBody::DropColumn(column_name) => {
+                    let ast::Name(column_name) = column_name;
 
                     // Tables always have at least one column.
                     assert_ne!(btree.columns.len(), 0);
 
                     if btree.columns.len() == 1 {
                         return Err(LimboError::ParseError(format!(
-                            "cannot drop column \"{column}\": no other columns exist"
+                            "cannot drop column \"{column_name}\": no other columns exist"
                         )));
                     }
 
-                    let (dropped_index, column) = btree.get_column(name).ok_or_else(|| {
-                        LimboError::ParseError(format!("no such column: \"{column}\""))
-                    })?;
+                    let (dropped_index, column) =
+                        btree.get_column(&column_name).ok_or_else(|| {
+                            LimboError::ParseError(format!("no such column: \"{column_name}\""))
+                        })?;
 
                     if column.primary_key {
                         return Err(LimboError::ParseError(format!(
-                            "cannot drop column \"{column}\": PRIMARY KEY"
+                            "cannot drop column \"{column_name}\": PRIMARY KEY"
                         )));
                     }
 
                     if column.unique
                         || btree.unique_sets.as_ref().is_some_and(|set| {
                             set.iter().any(|set| {
-                                set.iter().any(|(column_name, _)| column_name == &column)
+                                set.iter()
+                                    .any(|(name, _)| name == &normalize_ident(&column_name))
                             })
                         })
                     {
                         return Err(LimboError::ParseError(format!(
-                            "cannot drop column \"{column}\": UNIQUE"
+                            "cannot drop column \"{column_name}\": UNIQUE"
                         )));
                     }
 
@@ -168,12 +170,12 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{sql}'
-                            WHERE name = '{table_name}' AND type = 'table'
+                            WHERE name = '{table_name}' COLLATE NOCASE AND type = 'table'
                         "#,
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
                         unreachable!();
                     };
 
@@ -283,7 +285,7 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{escaped}'
-                            WHERE name = '{table_name}' AND type = 'table'
+                            WHERE name = '{table_name}' COLLATE NOCASE AND type = 'table'
                         "#,
                     );
 
@@ -309,15 +311,14 @@ pub fn translate_inner(
                     )?
                 }
                 ast::AlterTableBody::RenameColumn { old, new } => {
-                    let Some(column) = btree
-                        .columns
-                        .iter_mut()
-                        .find(|column| column.name == Some(old.0.clone()))
-                    else {
+                    let ast::Name(old) = old;
+                    let ast::Name(new) = new;
+
+                    let Some((_, column)) = btree.get_column_mut(&old) else {
                         return Err(LimboError::ParseError(format!("no such column: \"{old}\"")));
                     };
 
-                    column.name = Some(new.0.clone());
+                    column.name = Some(new);
 
                     let sql = btree.to_sql();
 
@@ -325,12 +326,12 @@ pub fn translate_inner(
                         r#"
                             UPDATE {SQLITE_TABLEID}
                             SET sql = '{sql}'
-                            WHERE name = '{table_name}' AND type = 'table'
+                            WHERE name = '{table_name}' COLLATE NOCASE AND type = 'table'
                         "#,
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
                         unreachable!();
                     };
 
@@ -348,32 +349,32 @@ pub fn translate_inner(
                         },
                     )?
                 }
-                ast::AlterTableBody::RenameTo(name) => {
-                    let ast::Name(rename) = name;
+                ast::AlterTableBody::RenameTo(new_name) => {
+                    let ast::Name(new_name) = new_name;
 
-                    if schema.tables.contains_key(&rename) {
+                    if schema.get_table(&new_name).is_some() {
                         return Err(LimboError::ParseError(format!(
-                            "there is already another table or index with this name: {rename}"
+                            "there is already another table or index with this name: {new_name}"
                         )));
                     };
 
-                    btree.name = rename;
+                    btree.name = new_name;
 
                     let sql = btree.to_sql();
 
                     let stmt = format!(
                         r#"
                             UPDATE {SQLITE_TABLEID}
-                            SET name = '{rename}'
-                              , tbl_name = '{rename}'
-                              , sql = '{sql}'
-                            WHERE name = '{table_name}' AND type = 'table'
+                            SET name = CASE WHEN type = 'table' THEN '{new_name}' ELSE name END
+                              , tbl_name = '{new_name}'
+                              , sql = CASE WHEN type = 'table' THEN '{sql}' ELSE sql END
+                            WHERE tbl_name = '{table_name}' COLLATE NOCASE
                         "#,
-                        rename = &btree.name,
+                        new_name = &btree.name,
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
                         unreachable!();
                     };
 
