@@ -1,6 +1,7 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -17,10 +18,11 @@ use super::main_loop::{
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{
     JoinOrderMember, Operation, QueryDestination, SelectPlan, TableReferences, UpdatePlan,
+    WhereClauseSubqueryPlan,
 };
 use super::schema::ParseSchema;
 use super::select::emit_simple_count;
-use super::subquery::emit_subqueries;
+use super::subquery::{compute_plans_for_where_clause_subqueries, emit_from_clause_subqueries};
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
 use crate::schema::{Index, IndexColumn, Schema};
@@ -36,6 +38,10 @@ pub struct Resolver<'a> {
     pub schema: &'a Schema,
     pub symbol_table: &'a SymbolTable,
     pub expr_to_reg_cache: Vec<(&'a ast::Expr, usize)>,
+    /// Precomputed query plans for subqueries appearing in the WHERE clause.
+    /// When [translate_expr] is called on an expression like [ast::Expr::Exists],
+    /// it will expect to find a plan cached in this vector.
+    pub where_clause_subquery_plans: Vec<(&'a ast::Expr, RefCell<Option<WhereClauseSubqueryPlan>>)>,
 }
 
 impl<'a> Resolver<'a> {
@@ -44,6 +50,7 @@ impl<'a> Resolver<'a> {
             schema,
             symbol_table,
             expr_to_reg_cache: Vec::new(),
+            where_clause_subquery_plans: Vec::new(),
         }
     }
 
@@ -62,6 +69,24 @@ impl<'a> Resolver<'a> {
             .iter()
             .find(|(e, _)| exprs_are_equivalent(expr, e))
             .map(|(_, reg)| *reg)
+    }
+
+    /// Returns the cached WHERE clause subquery plan for the given expression, if any.
+    /// The plan is removed from the cache, because translation of the plan
+    /// requires an owned [Plan] struct.
+    pub fn resolve_where_clause_subquery_plan(
+        &self,
+        expr: &ast::Expr,
+    ) -> Option<WhereClauseSubqueryPlan> {
+        let plan_index = self
+            .where_clause_subquery_plans
+            .iter()
+            .position(|(e, _)| exprs_are_equivalent(expr, e))?;
+        let plan = self.where_clause_subquery_plans[plan_index]
+            .1
+            .take()
+            .unwrap();
+        Some(plan)
     }
 }
 
@@ -465,12 +490,17 @@ fn read_deduplicated_union_rows(
     });
 }
 
-fn emit_program_for_select(
+pub fn emit_program_for_select(
     program: &mut ProgramBuilder,
     mut plan: SelectPlan,
     schema: &Schema,
     syms: &SymbolTable,
 ) -> Result<()> {
+    if matches!(plan.query_destination, QueryDestination::Exists { .. }) {
+        // There is no need to do any work towards retrieving result columns in an EXISTS subquery.
+        // The result is always a single row with a boolean value.
+        plan.result_columns.clear();
+    }
     let mut t_ctx = TranslateCtx::new(
         program,
         schema,
@@ -513,8 +543,8 @@ pub fn emit_query<'a>(
         return Ok(reg_result_cols_start);
     }
 
-    // Emit subqueries first so the results can be read in the main query loop.
-    emit_subqueries(program, t_ctx, &mut plan.table_references)?;
+    // Emit FROM clause subqueries first so the results can be read in the main query loop.
+    emit_from_clause_subqueries(program, t_ctx, &mut plan.table_references)?;
 
     init_limit(program, t_ctx, plan.limit, plan.offset);
 
@@ -574,11 +604,17 @@ pub fn emit_query<'a>(
         return Ok(t_ctx.reg_result_cols_start.unwrap());
     }
 
-    for where_term in plan
-        .where_clause
-        .iter()
-        .filter(|wt| wt.should_eval_before_loop(&plan.join_order))
-    {
+    compute_plans_for_where_clause_subqueries(
+        program,
+        t_ctx,
+        &plan.table_references,
+        &plan.where_clause,
+        &plan.join_order,
+    )?;
+
+    for where_term in plan.where_clause.iter().filter(|wt| {
+        wt.should_eval_before_loop(&plan.join_order, &plan.table_references.outer_query_refs())
+    }) {
         let jump_target_when_true = program.allocate_label();
         let condition_metadata = ConditionMetadata {
             jump_if_condition_is_true: false,
@@ -601,7 +637,7 @@ pub fn emit_query<'a>(
         t_ctx,
         &plan.table_references,
         &plan.join_order,
-        &mut plan.where_clause,
+        &plan.where_clause,
     )?;
 
     // Process result columns and expressions in the inner loop
@@ -933,11 +969,12 @@ fn emit_update_insns(
         },
     };
 
-    for cond in plan
-        .where_clause
-        .iter()
-        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-    {
+    for cond in plan.where_clause.iter().filter(|c| {
+        c.should_eval_before_loop(
+            &[JoinOrderMember::default()],
+            &plan.table_references.outer_query_refs(),
+        )
+    }) {
         let jump_target = program.allocate_label();
         let meta = ConditionMetadata {
             jump_if_condition_is_true: false,
@@ -1019,11 +1056,12 @@ fn emit_update_insns(
         });
     }
 
-    for cond in plan
-        .where_clause
-        .iter()
-        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-    {
+    for cond in plan.where_clause.iter().filter(|c| {
+        c.should_eval_before_loop(
+            &[JoinOrderMember::default()],
+            &plan.table_references.outer_query_refs(),
+        )
+    }) {
         let meta = ConditionMetadata {
             jump_if_condition_is_true: false,
             jump_target_when_true: BranchOffset::Placeholder,
