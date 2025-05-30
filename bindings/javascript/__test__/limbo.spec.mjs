@@ -103,6 +103,35 @@ test("Test pluck(): Rows should only have the values of the first column", async
   }
 });
 
+test("pragma query", async (t) => {
+  const [db] = await connect(":memory:");
+  let page_size = db.pragma("page_size");
+  let expectedValue = [{page_size: 4096}];
+  t.deepEqual(page_size, expectedValue);
+});
+
+test("pragma table_list", async (t) => {
+  const [db] = await connect(":memory:");
+  let param = "sqlite_schema";
+  let actual = db.pragma(`table_info(${param})`);
+  let expectedValue = [
+    {cid: 0, name: "type", type: "TEXT", notnull: 0, dflt_value: null, pk: 0},
+    {cid: 1, name: "name", type: "TEXT", notnull: 0, dflt_value: null, pk: 0},
+    {cid: 2, name: "tbl_name", type: "TEXT", notnull: 0, dflt_value: null, pk: 0},
+    {cid: 3, name: "rootpage", type: "INT", notnull: 0, dflt_value: null, pk: 0},
+    {cid: 4, name: "sql", type: "TEXT", notnull: 0, dflt_value: null, pk: 0},
+  ];
+  t.deepEqual(actual, expectedValue);
+});
+
+test("simple pragma table_list", async (t) => {
+  const [db] = await connect(":memory:");
+  let param = "sqlite_schema";
+  let actual = db.pragma(`table_info(${param})`, {simple: true});
+  let expectedValue = 0;
+  t.deepEqual(actual, expectedValue);
+});
+
 const connect = async (path) => {
   const db = new Database(path);
   return [db];

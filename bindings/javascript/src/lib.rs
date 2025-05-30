@@ -21,6 +21,11 @@ pub struct OpenDatabaseOptions {
     // verbose => Callback,
 }
 
+#[napi(object)]
+pub struct PragmaOptions {
+    pub simple: bool,
+}
+
 #[napi(custom_finalize)]
 #[derive(Clone)]
 pub struct Database {
@@ -84,6 +89,41 @@ impl Database {
     }
 
     #[napi]
+    pub fn transaction(&self) {
+        todo!()
+    }
+
+    #[napi]
+    pub fn pragma(
+        &self,
+        env: Env,
+        pragma_name: String,
+        options: Option<PragmaOptions>,
+    ) -> napi::Result<JsUnknown> {
+        let sql = format!("PRAGMA {}", pragma_name);
+        let stmt = self.prepare(sql)?;
+        match options {
+            Some(PragmaOptions { simple: true, .. }) => {
+                let mut stmt = stmt.inner.borrow_mut();
+                match stmt.step().map_err(into_napi_error)? {
+                    limbo_core::StepResult::Row => {
+                        let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
+                        to_js_value(&env, &row[0])
+                    }
+                    limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
+                    limbo_core::StepResult::IO => todo!(),
+                    step @ limbo_core::StepResult::Interrupt
+                    | step @ limbo_core::StepResult::Busy => Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("{:?}", step),
+                    )),
+                }
+            }
+            _ => stmt.run(env, None),
+        }
+    }
+
+    #[napi]
     pub fn backup(&self) {
         todo!()
     }
@@ -127,46 +167,6 @@ impl Database {
     pub fn close(&self) -> napi::Result<()> {
         self.conn.close().map_err(into_napi_error)?;
         Ok(())
-    }
-
-    // We assume that every pragma only returns one result, which isn't
-    // true.
-    #[napi]
-    pub fn pragma(&self, env: Env, pragma: String, simple: bool) -> napi::Result<JsUnknown> {
-        let stmt = self.prepare(pragma.clone())?;
-        let mut stmt = stmt.inner.borrow_mut();
-        let pragma_name = pragma
-            .split("PRAGMA")
-            .find(|s| !s.trim().is_empty())
-            .unwrap()
-            .trim();
-
-        let mut results = env.create_empty_array()?;
-
-        let step = stmt.step().map_err(into_napi_error)?;
-        match step {
-            limbo_core::StepResult::Row => {
-                let row = stmt.row().unwrap();
-                let mut obj = env.create_object()?;
-                for value in row.get_values() {
-                    let js_value = to_js_value(&env, value)?;
-
-                    if simple {
-                        return Ok(js_value);
-                    }
-
-                    obj.set_named_property(pragma_name, js_value)?;
-                }
-
-                results.set_element(0, obj)?;
-                Ok(results.into_unknown())
-            }
-            limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
-            limbo_core::StepResult::IO => todo!(),
-            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => Err(
-                napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
-            ),
-        }
     }
 }
 

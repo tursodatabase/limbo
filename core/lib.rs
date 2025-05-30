@@ -753,7 +753,7 @@ impl Statement {
     }
 
     pub fn get_column_name(&self, idx: usize) -> Cow<str> {
-        let column = &self.program.result_columns[idx];
+        let column = &self.program.result_columns.get(idx).expect("No column");
         match column.name(&self.program.table_references) {
             Some(name) => Cow::Borrowed(name),
             None => Cow::Owned(column.expr.to_string()),
