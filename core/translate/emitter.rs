@@ -18,7 +18,6 @@ use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{
     JoinOrderMember, Operation, QueryDestination, SelectPlan, TableReferences, UpdatePlan,
 };
-use super::schema::ParseSchema;
 use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
@@ -180,11 +179,12 @@ pub fn emit_program(
     plan: Plan,
     schema: &Schema,
     syms: &SymbolTable,
+    after: impl FnOnce(&mut ProgramBuilder),
 ) -> Result<()> {
     match plan {
         Plan::Select(plan) => emit_program_for_select(program, plan, schema, syms),
         Plan::Delete(plan) => emit_program_for_delete(program, plan, schema, syms),
-        Plan::Update(plan) => emit_program_for_update(program, plan, schema, syms),
+        Plan::Update(plan) => emit_program_for_update(program, plan, schema, syms, after),
         Plan::CompoundSelect { .. } => {
             emit_program_for_compound_select(program, plan, schema, syms)
         }
@@ -393,6 +393,7 @@ fn get_union_dedupe_index(
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred
+                default: None,
             })
             .collect(),
         name: "union_dedupe".to_string(),
@@ -434,11 +435,7 @@ fn read_deduplicated_union_rows(
         } else {
             dedupe_cols_start_reg
         };
-        program.emit_insn(Insn::Column {
-            cursor_id: dedupe_cursor_id,
-            column: col_idx,
-            dest: start_reg + col_idx,
-        });
+        program.emit_column(dedupe_cursor_id, col_idx, start_reg + col_idx);
     }
     if let Some(yield_reg) = yield_reg {
         program.emit_insn(Insn::Yield {
@@ -775,11 +772,11 @@ fn emit_delete_insns(
                 .iter()
                 .enumerate()
                 .for_each(|(reg_offset, column_index)| {
-                    program.emit_insn(Insn::Column {
-                        cursor_id: main_table_cursor_id,
-                        column: column_index.pos_in_table,
-                        dest: start_reg + reg_offset,
-                    });
+                    program.emit_column(
+                        main_table_cursor_id,
+                        column_index.pos_in_table,
+                        start_reg + reg_offset,
+                    );
                 });
             program.emit_insn(Insn::RowId {
                 cursor_id: main_table_cursor_id,
@@ -810,6 +807,7 @@ fn emit_program_for_update(
     mut plan: UpdatePlan,
     schema: &Schema,
     syms: &SymbolTable,
+    after: impl FnOnce(&mut ProgramBuilder),
 ) -> Result<()> {
     let mut t_ctx = TranslateCtx::new(
         program,
@@ -867,16 +865,6 @@ fn emit_program_for_update(
     )?;
     emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
 
-    match plan.parse_schema {
-        ParseSchema::None => {}
-        ParseSchema::Reload => {
-            program.emit_insn(crate::vdbe::insn::Insn::ParseSchema {
-                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                where_clause: None,
-            });
-        }
-    }
-
     close_loop(
         program,
         &mut t_ctx,
@@ -885,6 +873,8 @@ fn emit_program_for_update(
     )?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
+
+    after(program);
 
     // Finalize program
     program.epilogue(TransactionMode::Write);
@@ -1089,20 +1079,17 @@ fn emit_update_insns(
                     dest: target_reg,
                 });
             } else {
-                program.emit_insn(Insn::Column {
-                    cursor_id: *index
-                        .as_ref()
-                        .and_then(|(_, id)| {
-                            if column_idx_in_index.is_some() {
-                                Some(id)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(&cursor_id),
-                    column: column_idx_in_index.unwrap_or(idx),
-                    dest: target_reg,
-                });
+                let cursor_id = *index
+                    .as_ref()
+                    .and_then(|(_, id)| {
+                        if column_idx_in_index.is_some() {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(&cursor_id);
+                program.emit_column(cursor_id, column_idx_in_index.unwrap_or(idx), target_reg);
             }
         }
     }
@@ -1261,11 +1248,11 @@ fn emit_update_insns(
                 .iter()
                 .enumerate()
                 .for_each(|(reg_offset, column_index)| {
-                    program.emit_insn(Insn::Column {
+                    program.emit_column(
                         cursor_id,
-                        column: column_index.pos_in_table,
-                        dest: start_reg + reg_offset,
-                    });
+                        column_index.pos_in_table,
+                        start_reg + reg_offset,
+                    );
                 });
 
             program.emit_insn(Insn::RowId {
