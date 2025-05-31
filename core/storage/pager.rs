@@ -1110,8 +1110,17 @@ impl PtrmapEntry {
 
 /// Calculates how many database pages are mapped by a single pointer map page.
 /// This is based on the total page size, as ptrmap pages are filled with entries.
-/// The +1 is because the pointer map page doesn't map itself
-fn pages_mapped_per_ptrmap_page(page_size: usize) -> usize {
+fn entries_per_ptrmap_page(page_size: usize) -> usize {
+    if page_size < PTRMAP_ENTRY_SIZE {
+        0
+    } else {
+        page_size / PTRMAP_ENTRY_SIZE
+    }
+}
+
+/// Calculates the cycle length of pointer map pages
+/// The cycle length is the number of database pages that are mapped by a single pointer map page.
+fn ptrmap_page_cycle_length(page_size: usize) -> usize {
     if page_size < PTRMAP_ENTRY_SIZE {
         0
     } else {
@@ -1134,7 +1143,7 @@ pub fn is_ptrmap_page(db_page_no: u32, page_size: usize) -> bool {
 /// Calculates which pointer map page (1-indexed) contains the entry for `db_page_no_to_query` (1-indexed).
 /// `db_page_no_to_query` is the page whose ptrmap entry we are interested in.
 pub fn get_ptrmap_page_no_for_db_page(db_page_no_to_query: u32, page_size: usize) -> u32 {
-    let group_size = pages_mapped_per_ptrmap_page(page_size) as u32;
+    let group_size = ptrmap_page_cycle_length(page_size) as u32;
     if group_size == 0 {
         panic!("Page size too small, a ptrmap page cannot map any db pages.");
     }
@@ -1158,7 +1167,7 @@ pub fn get_ptrmap_offset_in_page(
     // The 0-indexed position of `db_page_no_to_query` within this sequence of data pages is:
     // `db_page_no_to_query - (ptrmap_page_no + 1)`.
 
-    let n_data_pages_per_group = pages_mapped_per_ptrmap_page(page_size);
+    let n_data_pages_per_group = entries_per_ptrmap_page(page_size);
     let first_data_page_mapped = ptrmap_page_no + 1;
     let last_data_page_mapped = ptrmap_page_no + n_data_pages_per_group as u32;
 
@@ -1295,9 +1304,9 @@ mod ptrmap_tests {
 
     #[test]
     fn test_is_ptrmap_page_logic() {
-        let page_size = 5 + 5 * 2;
-        let n_data_pages = pages_mapped_per_ptrmap_page(page_size);
-        assert_eq!(n_data_pages, 4);
+        let page_size = 15;
+        let n_data_pages = entries_per_ptrmap_page(page_size);
+        assert_eq!(n_data_pages, 3);
 
         assert!(!is_ptrmap_page(1, page_size)); // Header
         assert!(is_ptrmap_page(2, page_size)); // P0
@@ -1311,8 +1320,7 @@ mod ptrmap_tests {
 
     #[test]
     fn test_get_ptrmap_page_no() {
-        let page_size = 5 + 5 * 2; // Maps 4 data pages (N=4). Group size = 5.
-                                   // H, [P0(2), D(3-6)], [P1(7), D(8-11)], ...
+        let page_size = 15; // Maps 3 data pages
 
         // Test pages mapped by P0 (page 2)
         assert_eq!(get_ptrmap_page_no_for_db_page(3, page_size), 2); // D(3) -> P0(2)
@@ -1331,7 +1339,7 @@ mod ptrmap_tests {
 
     #[test]
     fn test_get_ptrmap_offset() {
-        let page_size = 5 + 5 * 2; //  Maps 3 data pages
+        let page_size = 15; //  Maps 3 data pages
 
         assert_eq!(get_ptrmap_offset_in_page(3, 2, page_size).unwrap(), 0);
         assert_eq!(
