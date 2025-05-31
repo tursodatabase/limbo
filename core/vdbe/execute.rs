@@ -3881,6 +3881,27 @@ pub fn op_insert(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_int_64(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Int64 {
+        _p1,
+        out_reg,
+        _p3,
+        value,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    state.registers[*out_reg] = Register::Value(Value::Integer(*value));
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_delete(
     program: &Program,
     state: &mut ProgramState,
@@ -4541,6 +4562,9 @@ pub fn op_read_cookie(
     let cookie_value = match cookie {
         Cookie::UserVersion => pager.db_header.lock().user_version.into(),
         Cookie::SchemaVersion => pager.db_header.lock().schema_cookie.into(),
+        Cookie::LargestRootPageNumber => {
+            pager.db_header.lock().vacuum_mode_largest_root_page.into()
+        }
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
     };
     state.registers[*dest] = Register::Value(Value::Integer(cookie_value));
@@ -4571,6 +4595,16 @@ pub fn op_set_cookie(
         Cookie::UserVersion => {
             let mut header_guard = pager.db_header.lock();
             header_guard.user_version = *value;
+            pager.write_database_header(&*header_guard);
+        }
+        Cookie::LargestRootPageNumber => {
+            let mut header_guard = pager.db_header.lock();
+            header_guard.vacuum_mode_largest_root_page = *value as u32;
+            pager.write_database_header(&*header_guard);
+        }
+        Cookie::IncrementalVacuum => {
+            let mut header_guard = pager.db_header.lock();
+            header_guard.incremental_vacuum_enabled = *value as u32;
             pager.write_database_header(&*header_guard);
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),

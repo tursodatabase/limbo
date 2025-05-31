@@ -1,7 +1,7 @@
 use crate::{
     schema::Index,
     storage::{
-        pager::Pager,
+        pager::{BtreePageAllocMode, Pager},
         sqlite3_ondisk::{
             read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell,
             TableLeafCell,
@@ -3734,7 +3734,9 @@ impl BTreeCursor {
         let root = root_btree.get();
         let root_contents = root.get_contents();
         // FIXME: handle page cache is full
-        let child_btree = self.pager.do_allocate_page(root_contents.page_type(), 0);
+        let child_btree =
+            self.pager
+                .do_allocate_page(root_contents.page_type(), 0, BtreePageAllocMode::Any);
 
         tracing::debug!(
             "balance_root(root={}, rightmost={}, page_type={:?})",
@@ -4902,7 +4904,8 @@ impl BTreeCursor {
     }
 
     pub fn allocate_page(&self, page_type: PageType, offset: usize) -> BTreePage {
-        self.pager.do_allocate_page(page_type, offset)
+        self.pager
+            .do_allocate_page(page_type, offset, BtreePageAllocMode::Any)
     }
 }
 
