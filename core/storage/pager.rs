@@ -379,7 +379,7 @@ impl Pager {
         let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
         let ptrmap_page_inner = ptrmap_page.get();
 
-        let page_content: &PageContent = match ptrmap_page_inner.contents.as_ref() {
+        let page_content = match ptrmap_page_inner.contents.as_ref() {
             Some(content) => content,
             None => {
                 return Err(LimboError::InternalError(format!(
@@ -389,7 +389,7 @@ impl Pager {
             }
         };
 
-        let mut page_buffer_guard: std::cell::RefMut<IoBuffer> = page_content.buffer.borrow_mut();
+        let mut page_buffer_guard = page_content.buffer.borrow_mut();
         let full_buffer_slice = page_buffer_guard.as_mut_slice();
 
         if offset_in_ptrmap_page + PTRMAP_ENTRY_SIZE > full_buffer_slice.len() {
