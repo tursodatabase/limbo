@@ -3907,6 +3907,7 @@ pub fn op_delete(
     Ok(InsnFunctionStepResult::Step)
 }
 
+#[derive(Debug)]
 pub enum OpIdxDeleteState {
     Seeking(ImmutableRecord), // First seek row to delete
     Deleting,
