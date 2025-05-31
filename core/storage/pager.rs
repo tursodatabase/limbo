@@ -1113,7 +1113,7 @@ impl PtrmapEntry {
 /// The +1 is because the pointer map page doesn't map itself
 fn pages_mapped_per_ptrmap_page(page_size: usize) -> usize {
     if page_size < PTRMAP_ENTRY_SIZE {
-        0 // Not enough space for even one entry
+        0
     } else {
         (page_size / PTRMAP_ENTRY_SIZE) + 1
     }
