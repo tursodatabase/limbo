@@ -101,6 +101,7 @@ pub fn emit_order_by(
             default: None,
             unique: false,
             collation: None,
+            hidden: false,
         });
     }
     for i in 0..result_columns.len() {
@@ -121,6 +122,7 @@ pub fn emit_order_by(
             default: None,
             unique: false,
             collation: None,
+            hidden: false,
         });
     }
 

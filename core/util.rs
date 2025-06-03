@@ -480,12 +480,6 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
     Ok(columns
         .into_iter()
         .filter_map(|(name, column_def)| {
-            // if column_def.col_type includes HIDDEN, omit it for now
-            if let Some(data_type) = column_def.col_type.as_ref() {
-                if data_type.name.as_str().contains("HIDDEN") {
-                    return None;
-                }
-            }
             let column =
                 Column {
                     name: Some(normalize_ident(&name.0)),
@@ -562,6 +556,11 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                             )),
                             _ => None,
                         }),
+                    hidden: column_def
+                        .col_type
+                        .as_ref()
+                        .map(|data_type| data_type.name.as_str().contains("HIDDEN"))
+                        .unwrap_or(false),
                 };
             Some(column)
         })
