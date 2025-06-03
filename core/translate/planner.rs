@@ -733,17 +733,17 @@ fn parse_join(
         assert!(table_references.joined_tables().len() >= 2);
         let rightmost_table = table_references.joined_tables().last().unwrap();
         // NATURAL JOIN is first transformed into a USING join with the common columns
-        let right_cols = rightmost_table.columns();
         let mut distinct_names: Option<ast::DistinctNames> = None;
         // TODO: O(n^2) maybe not great for large tables or big multiway joins
-        for right_col in right_cols.iter() {
+        // SQLite doesn't use HIDDEN columns for NATURAL joins: https://www3.sqlite.org/src/info/ab09ef427181130b
+        for right_col in rightmost_table.columns().iter().filter(|col| !col.hidden) {
             let mut found_match = false;
             for left_table in table_references
                 .joined_tables()
                 .iter()
                 .take(table_references.joined_tables().len() - 1)
             {
-                for left_col in left_table.columns().iter() {
+                for left_col in left_table.columns().iter().filter(|col| !col.hidden) {
                     if left_col.name == right_col.name {
                         if let Some(distinct_names) = distinct_names.as_mut() {
                             distinct_names
@@ -808,6 +808,7 @@ fn parse_join(
                             .columns()
                             .iter()
                             .enumerate()
+                            .filter(|(_, col)| !natural || !col.hidden)
                             .find(|(_, col)| {
                                 col.name
                                     .as_ref()

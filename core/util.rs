@@ -491,91 +491,90 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
 
     Ok(columns
         .into_iter()
-        .filter_map(|(name, column_def)| {
-            // if column_def.col_type includes HIDDEN, omit it for now
-            if let Some(data_type) = column_def.col_type.as_ref() {
-                if data_type.name.as_str().contains("HIDDEN") {
-                    return None;
-                }
-            }
-            let column =
-                Column {
-                    name: Some(normalize_ident(&name.0)),
-                    ty: match column_def.col_type {
-                        Some(ref data_type) => {
-                            // https://www.sqlite.org/datatype3.html
-                            let type_name = data_type.name.as_str().to_uppercase();
-                            if type_name.contains("INT") {
-                                Type::Integer
-                            } else if type_name.contains("CHAR")
-                                || type_name.contains("CLOB")
-                                || type_name.contains("TEXT")
-                            {
-                                Type::Text
-                            } else if type_name.contains("BLOB") || type_name.is_empty() {
-                                Type::Blob
-                            } else if type_name.contains("REAL")
-                                || type_name.contains("FLOA")
-                                || type_name.contains("DOUB")
-                            {
-                                Type::Real
-                            } else {
-                                Type::Numeric
-                            }
+        .map(|(name, column_def)| {
+            Column {
+                name: Some(normalize_ident(&name.0)),
+                ty: match column_def.col_type {
+                    Some(ref data_type) => {
+                        // https://www.sqlite.org/datatype3.html
+                        let type_name = data_type.name.as_str().to_uppercase();
+                        if type_name.contains("INT") {
+                            Type::Integer
+                        } else if type_name.contains("CHAR")
+                            || type_name.contains("CLOB")
+                            || type_name.contains("TEXT")
+                        {
+                            Type::Text
+                        } else if type_name.contains("BLOB") || type_name.is_empty() {
+                            Type::Blob
+                        } else if type_name.contains("REAL")
+                            || type_name.contains("FLOA")
+                            || type_name.contains("DOUB")
+                        {
+                            Type::Real
+                        } else {
+                            Type::Numeric
                         }
-                        None => Type::Null,
-                    },
-                    default: column_def
-                        .constraints
-                        .iter()
-                        .find_map(|c| match &c.constraint {
-                            turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
-                                Some(val.clone())
-                            }
-                            _ => None,
-                        }),
-                    notnull: column_def.constraints.iter().any(|c| {
-                        matches!(
-                            c.constraint,
-                            turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
-                        )
+                    }
+                    None => Type::Null,
+                },
+                default: column_def
+                    .constraints
+                    .iter()
+                    .find_map(|c| match &c.constraint {
+                        turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
+                            Some(val.clone())
+                        }
+                        _ => None,
                     }),
-                    ty_str: column_def
-                        .col_type
-                        .clone()
-                        .map(|t| t.name.to_string())
-                        .unwrap_or_default(),
-                    primary_key: column_def.constraints.iter().any(|c| {
-                        matches!(
-                            c.constraint,
-                            turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
-                        )
+                notnull: column_def.constraints.iter().any(|c| {
+                    matches!(
+                        c.constraint,
+                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
+                    )
+                }),
+                ty_str: column_def
+                    .col_type
+                    .clone()
+                    .map(|t| t.name.to_string())
+                    .unwrap_or_default(),
+                primary_key: column_def.constraints.iter().any(|c| {
+                    matches!(
+                        c.constraint,
+                        turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
+                    )
+                }),
+                is_rowid_alias: false,
+                unique: column_def.constraints.iter().any(|c| {
+                    matches!(
+                        c.constraint,
+                        turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
+                    )
+                }),
+                collation: column_def
+                    .constraints
+                    .iter()
+                    .find_map(|c| match &c.constraint {
+                        // TODO: see if this should be the correct behavior
+                        // currently there cannot be any user defined collation sequences.
+                        // But in the future, when a user defines a collation sequence, creates a table with it,
+                        // then closes the db and opens it again. This may panic here if the collation seq is not registered
+                        // before reading the columns
+                        turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
+                            Some(
+                                CollationSeq::new(collation_name.0.as_str()).expect(
+                                    "collation should have been set correctly in create table",
+                                ),
+                            )
+                        }
+                        _ => None,
                     }),
-                    is_rowid_alias: false,
-                    unique: column_def.constraints.iter().any(|c| {
-                        matches!(
-                            c.constraint,
-                            turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
-                        )
-                    }),
-                    collation: column_def
-                        .constraints
-                        .iter()
-                        .find_map(|c| match &c.constraint {
-                            // TODO: see if this should be the correct behavior
-                            // currently there cannot be any user defined collation sequences.
-                            // But in the future, when a user defines a collation sequence, creates a table with it,
-                            // then closes the db and opens it again. This may panic here if the collation seq is not registered
-                            // before reading the columns
-                            turso_sqlite3_parser::ast::ColumnConstraint::Collate {
-                                collation_name,
-                            } => Some(CollationSeq::new(collation_name.0.as_str()).expect(
-                                "collation should have been set correctly in create table",
-                            )),
-                            _ => None,
-                        }),
-                };
-            Some(column)
+                hidden: column_def
+                    .col_type
+                    .as_ref()
+                    .map(|data_type| data_type.name.as_str().contains("HIDDEN"))
+                    .unwrap_or(false),
+            }
         })
         .collect::<Vec<_>>())
 }

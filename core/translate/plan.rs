@@ -553,6 +553,7 @@ pub fn select_star(tables: &[JoinedTable], out_columns: &mut Vec<ResultSetColumn
                 .columns()
                 .iter()
                 .enumerate()
+                .filter(|(_, col)| !col.hidden)
                 .filter(|(_, col)| {
                     // If we are joining with USING, we need to deduplicate the columns from the right table
                     // that are also present in the USING clause.
@@ -918,6 +919,7 @@ impl JoinedTable {
                 default: None,
                 unique: false,
                 collation: None, // FIXME: infer collation from subquery
+                hidden: false,
             })
             .collect();
 
