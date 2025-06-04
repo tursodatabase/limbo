@@ -319,7 +319,9 @@ pub fn translate_inner(
                     let ast::Name(rename_to) = new;
 
                     if btree.get_column(&rename_from).is_none() {
-                        return Err(LimboError::ParseError(format!("no such column: \"{rename_from}\"")));
+                        return Err(LimboError::ParseError(format!(
+                            "no such column: \"{rename_from}\""
+                        )));
                     };
 
                     let sqlite_schema = schema
