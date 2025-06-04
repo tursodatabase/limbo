@@ -5,7 +5,7 @@ use super::optimizer::Optimizable;
 use super::plan::TableReferences;
 #[cfg(feature = "json")]
 use crate::function::JsonFunc;
-use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
+use crate::function::{AlterTableFunc, Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime;
 use crate::schema::{Table, Type};
 use crate::util::{exprs_are_equivalent, normalize_ident, parse_numeric_literal};
@@ -1778,6 +1778,7 @@ pub fn translate_expr(
                         Ok(target_register)
                     }
                 },
+                Func::AlterTable(_) => unreachable!(),
             }
         }
         ast::Expr::FunctionCallStar { .. } => todo!(),

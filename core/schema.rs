@@ -219,19 +219,6 @@ impl BTreeTable {
             .find(|(_, column)| column.name.as_ref() == Some(&name))
     }
 
-    /// Returns the column position and column for a given column name.
-    /// Returns None if the column name is not found.
-    /// E.g. if table is CREATE TABLE t(a, b, c)
-    /// then get_column("b") returns (1, &Column { .. })
-    pub fn get_column_mut(&mut self, name: &str) -> Option<(usize, &mut Column)> {
-        let name = normalize_ident(name);
-
-        self.columns
-            .iter_mut()
-            .enumerate()
-            .find(|(_, column)| column.name.as_ref() == Some(&name))
-    }
-
     pub fn from_sql(sql: &str, root_page: usize) -> Result<BTreeTable> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;

@@ -30,6 +30,7 @@ pub(crate) mod update;
 mod values;
 
 use crate::fast_lock::SpinLock;
+use crate::function::{AlterTableFunc, Func};
 use crate::schema::{Column, Schema};
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
@@ -39,6 +40,7 @@ use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Insn, RegisterOrLiteral};
 use crate::vdbe::Program;
 use crate::{bail_parse_error, Connection, LimboError, Result, SymbolTable};
+use emitter::TransactionMode;
 use fallible_iterator::FallibleIterator as _;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
@@ -107,7 +109,7 @@ pub fn translate_inner(
     stmt: ast::Stmt,
     syms: &SymbolTable,
     query_mode: QueryMode,
-    program: ProgramBuilder,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
         ast::Stmt::AlterTable(a) => {
@@ -175,7 +177,9 @@ pub fn translate_inner(
                     );
 
                     let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) =
+                        parser.next().unwrap()
+                    else {
                         unreachable!();
                     };
 
@@ -311,43 +315,88 @@ pub fn translate_inner(
                     )?
                 }
                 ast::AlterTableBody::RenameColumn { old, new } => {
-                    let ast::Name(old) = old;
-                    let ast::Name(new) = new;
+                    let ast::Name(rename_from) = old;
+                    let ast::Name(rename_to) = new;
 
-                    let Some((_, column)) = btree.get_column_mut(&old) else {
-                        return Err(LimboError::ParseError(format!("no such column: \"{old}\"")));
+                    if btree.get_column(&rename_from).is_none() {
+                        return Err(LimboError::ParseError(format!("no such column: \"{rename_from}\"")));
                     };
 
-                    column.name = Some(new);
+                    let sqlite_schema = schema
+                        .get_btree_table(SQLITE_TABLEID)
+                        .expect("sqlite_schema should be on schema");
 
-                    let sql = btree.to_sql();
-
-                    let stmt = format!(
-                        r#"
-                            UPDATE {SQLITE_TABLEID}
-                            SET sql = '{sql}'
-                            WHERE name = '{table_name}' COLLATE NOCASE AND type = 'table'
-                        "#,
+                    let cursor_id = program.alloc_cursor_id(
+                        crate::vdbe::builder::CursorType::BTreeTable(sqlite_schema.clone()),
                     );
 
-                    let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
-                        unreachable!();
-                    };
+                    program.emit_insn(Insn::OpenWrite {
+                        cursor_id,
+                        root_page: RegisterOrLiteral::Literal(sqlite_schema.root_page),
+                        name: sqlite_schema.name.clone(),
+                    });
 
-                    translate_update_with_after(
-                        QueryMode::Normal,
-                        schema,
-                        &mut update,
-                        syms,
-                        program,
-                        |program| {
-                            program.emit_insn(Insn::ParseSchema {
-                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                                where_clause: None,
-                            });
-                        },
-                    )?
+                    program.cursor_loop(cursor_id, |program| {
+                        let rowid = program.alloc_register();
+
+                        program.emit_insn(Insn::RowId {
+                            cursor_id,
+                            dest: rowid,
+                        });
+
+                        let first_column = program.alloc_registers(5);
+
+                        for i in 0..5 {
+                            program.emit_column(cursor_id, i, first_column + i);
+                        }
+
+                        program.emit_string8_new_reg(table_name.clone());
+                        program.mark_last_insn_constant();
+
+                        program.emit_string8_new_reg(rename_from.clone());
+                        program.mark_last_insn_constant();
+
+                        program.emit_string8_new_reg(rename_to.clone());
+                        program.mark_last_insn_constant();
+
+                        let out = program.alloc_registers(5);
+
+                        program.emit_insn(Insn::Function {
+                            constant_mask: 0,
+                            start_reg: first_column,
+                            dest: out,
+                            func: crate::function::FuncCtx {
+                                func: Func::AlterTable(AlterTableFunc::RenameColumn),
+                                arg_count: 8,
+                            },
+                        });
+
+                        let record = program.alloc_register();
+
+                        program.emit_insn(Insn::MakeRecord {
+                            start_reg: out,
+                            count: 5,
+                            dest_reg: record,
+                            index_name: None,
+                        });
+
+                        program.emit_insn(Insn::Insert {
+                            cursor: cursor_id,
+                            key_reg: rowid,
+                            record_reg: record,
+                            flag: 0,
+                            table_name: table_name.clone(),
+                        });
+                    });
+
+                    program.emit_insn(Insn::ParseSchema {
+                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                        where_clause: None,
+                    });
+
+                    program.epilogue(TransactionMode::Write);
+
+                    program
                 }
                 ast::AlterTableBody::RenameTo(new_name) => {
                     let ast::Name(new_name) = new_name;
@@ -358,39 +407,78 @@ pub fn translate_inner(
                         )));
                     };
 
-                    btree.name = new_name;
+                    let sqlite_schema = schema
+                        .get_btree_table(SQLITE_TABLEID)
+                        .expect("sqlite_schema should be on schema");
 
-                    let sql = btree.to_sql();
-
-                    let stmt = format!(
-                        r#"
-                            UPDATE {SQLITE_TABLEID}
-                            SET name = CASE WHEN type = 'table' THEN '{new_name}' ELSE name END
-                              , tbl_name = '{new_name}'
-                              , sql = CASE WHEN type = 'table' THEN '{sql}' ELSE sql END
-                            WHERE tbl_name = '{table_name}' COLLATE NOCASE
-                        "#,
-                        new_name = &btree.name,
+                    let cursor_id = program.alloc_cursor_id(
+                        crate::vdbe::builder::CursorType::BTreeTable(sqlite_schema.clone()),
                     );
 
-                    let mut parser = Parser::new(stmt.as_bytes());
-                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
-                        unreachable!();
-                    };
+                    program.emit_insn(Insn::OpenWrite {
+                        cursor_id,
+                        root_page: RegisterOrLiteral::Literal(sqlite_schema.root_page),
+                        name: sqlite_schema.name.clone(),
+                    });
 
-                    translate_update_with_after(
-                        QueryMode::Normal,
-                        schema,
-                        &mut update,
-                        syms,
-                        program,
-                        |program| {
-                            program.emit_insn(Insn::ParseSchema {
-                                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                                where_clause: None,
-                            });
-                        },
-                    )?
+                    program.cursor_loop(cursor_id, |program| {
+                        let rowid = program.alloc_register();
+
+                        program.emit_insn(Insn::RowId {
+                            cursor_id,
+                            dest: rowid,
+                        });
+
+                        let first_column = program.alloc_registers(5);
+
+                        for i in 0..5 {
+                            program.emit_column(cursor_id, i, first_column + i);
+                        }
+
+                        program.emit_string8_new_reg(table_name.clone());
+                        program.mark_last_insn_constant();
+
+                        program.emit_string8_new_reg(new_name.clone());
+                        program.mark_last_insn_constant();
+
+                        let out = program.alloc_registers(5);
+
+                        program.emit_insn(Insn::Function {
+                            constant_mask: 0,
+                            start_reg: first_column,
+                            dest: out,
+                            func: crate::function::FuncCtx {
+                                func: Func::AlterTable(AlterTableFunc::RenameTable),
+                                arg_count: 7,
+                            },
+                        });
+
+                        let record = program.alloc_register();
+
+                        program.emit_insn(Insn::MakeRecord {
+                            start_reg: out,
+                            count: 5,
+                            dest_reg: record,
+                            index_name: None,
+                        });
+
+                        program.emit_insn(Insn::Insert {
+                            cursor: cursor_id,
+                            key_reg: rowid,
+                            record_reg: record,
+                            flag: 0,
+                            table_name: table_name.clone(),
+                        });
+                    });
+
+                    program.emit_insn(Insn::ParseSchema {
+                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                        where_clause: None,
+                    });
+
+                    program.epilogue(TransactionMode::Write);
+
+                    program
                 }
             }
         }
@@ -479,13 +567,9 @@ pub fn translate_inner(
             )?
             .program
         }
-        ast::Stmt::Update(mut update) => translate_update(
-            query_mode,
-            schema,
-            &mut update,
-            syms,
-            program,
-        )?,
+        ast::Stmt::Update(mut update) => {
+            translate_update(query_mode, schema, &mut update, syms, program)?
+        }
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {

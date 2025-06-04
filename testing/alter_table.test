@@ -4,16 +4,20 @@ set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
 do_execsql_test_on_specific_db {:memory:} alter-table-rename-table {
-    CREATE TABLE t1(x INTEGER PRIMARY KEY);
+    CREATE TABLE t1(x INTEGER PRIMARY KEY, u UNIQUE);
     ALTER TABLE t1 RENAME TO t2;
-    SELECT tbl_name FROM sqlite_schema;
+    SELECT name FROM sqlite_schema WHERE type = 'table';
 } { "t2" }
 
 do_execsql_test_on_specific_db {:memory:} alter-table-rename-column {
     CREATE TABLE t(a);
+    CREATE INDEX i ON t(a);
     ALTER TABLE t RENAME a TO b;
     SELECT sql FROM sqlite_schema;
-} { "CREATE TABLE t(b)" }
+} {
+    "CREATE TABLE t(b)"
+    "CREATE INDEX i ON t(b)"
+}
 
 do_execsql_test_on_specific_db {:memory:} alter-table-add-column {
     CREATE TABLE t(a);

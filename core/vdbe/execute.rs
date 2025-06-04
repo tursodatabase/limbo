@@ -1,11 +1,13 @@
 #![allow(unused_variables)]
+use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Schema;
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::storage::wal::DummyWAL;
-use crate::types::ImmutableRecord;
+use crate::types::{ImmutableRecord, Text};
+use crate::util::normalize_ident;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -52,6 +54,10 @@ use super::{
     insn::{Cookie, RegisterOrLiteral},
     CommitState,
 };
+use fallible_iterator::FallibleIterator;
+use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::fmt::ToTokens;
+use limbo_sqlite3_parser::lexer::sql::Parser;
 use parking_lot::RwLock;
 use rand::thread_rng;
 
@@ -3743,6 +3749,275 @@ pub fn op_function(
                 ),
             },
         },
+        crate::function::Func::AlterTable(alter_func) => {
+            let r#type = &state.registers[*start_reg + 0].get_owned_value().clone();
+
+            let Value::Text(name) = &state.registers[*start_reg + 1].get_owned_value() else {
+                panic!("sqlite_schema.name should be TEXT")
+            };
+            let name = name.to_string();
+
+            let Value::Text(tbl_name) = &state.registers[*start_reg + 2].get_owned_value() else {
+                panic!("sqlite_schema.tbl_name should be TEXT")
+            };
+            let tbl_name = tbl_name.to_string();
+
+            let Value::Integer(root_page) =
+                &state.registers[*start_reg + 3].get_owned_value().clone()
+            else {
+                panic!("sqlite_schema.root_page should be INTEGER")
+            };
+
+            let sql = &state.registers[*start_reg + 4].get_owned_value().clone();
+
+            let (new_name, new_tbl_name, new_sql) = match alter_func {
+                AlterTableFunc::RenameTable => {
+                    let rename_from = {
+                        match &state.registers[*start_reg + 5].get_owned_value() {
+                            Value::Text(rename_from) => normalize_ident(rename_from.as_str()),
+                            _ => panic!("rename_from parameter should be TEXT"),
+                        }
+                    };
+
+                    let rename_to = {
+                        match &state.registers[*start_reg + 6].get_owned_value() {
+                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            _ => panic!("rename_to parameter should be TEXT"),
+                        }
+                    };
+
+                    let new_name = if let Some(column) =
+                        &name.strip_prefix(&format!("sqlite_autoindex_{rename_from}_"))
+                    {
+                        format!("sqlite_autoindex_{rename_to}_{column}")
+                    } else if name == rename_from {
+                        rename_to.clone()
+                    } else {
+                        name
+                    };
+
+                    let new_tbl_name = if tbl_name == rename_from {
+                        rename_to.clone()
+                    } else {
+                        tbl_name
+                    };
+
+                    let new_sql = 'sql: {
+                        let Value::Text(sql) = sql else {
+                            break 'sql None;
+                        };
+
+                        let mut parser = Parser::new(sql.as_str().as_bytes());
+                        let ast::Cmd::Stmt(stmt) = parser.next().unwrap().unwrap() else {
+                            todo!()
+                        };
+
+                        match stmt {
+                            ast::Stmt::CreateIndex {
+                                unique,
+                                if_not_exists,
+                                idx_name,
+                                tbl_name,
+                                columns,
+                                where_clause,
+                            } => {
+                                let table_name = normalize_ident(&tbl_name.0);
+
+                                if rename_from != table_name {
+                                    break 'sql None;
+                                }
+
+                                Some(
+                                    ast::Stmt::CreateIndex {
+                                        unique,
+                                        if_not_exists,
+                                        idx_name,
+                                        tbl_name: ast::Name(rename_to),
+                                        columns,
+                                        where_clause,
+                                    }
+                                    .format()
+                                    .unwrap(),
+                                )
+                            }
+                            ast::Stmt::CreateTable {
+                                temporary,
+                                if_not_exists,
+                                tbl_name,
+                                body,
+                            } => {
+                                let table_name = normalize_ident(&tbl_name.name.0);
+
+                                if rename_from != table_name {
+                                    break 'sql None;
+                                }
+
+                                Some(
+                                    ast::Stmt::CreateTable {
+                                        temporary,
+                                        if_not_exists,
+                                        tbl_name: ast::QualifiedName {
+                                            db_name: None,
+                                            name: ast::Name(rename_to),
+                                            alias: None,
+                                        },
+                                        body,
+                                    }
+                                    .format()
+                                    .unwrap(),
+                                )
+                            }
+                            _ => todo!(),
+                        }
+                    };
+
+                    (new_name, new_tbl_name, new_sql)
+                }
+                AlterTableFunc::RenameColumn => {
+                    let table = {
+                        match &state.registers[*start_reg + 5].get_owned_value() {
+                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            _ => panic!("table parameter should be TEXT"),
+                        }
+                    };
+
+                    let rename_from = {
+                        match &state.registers[*start_reg + 6].get_owned_value() {
+                            Value::Text(rename_from) => normalize_ident(rename_from.as_str()),
+                            _ => panic!("rename_from parameter should be TEXT"),
+                        }
+                    };
+
+                    let rename_to = {
+                        match &state.registers[*start_reg + 7].get_owned_value() {
+                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            _ => panic!("rename_to parameter should be TEXT"),
+                        }
+                    };
+
+                    let new_sql = 'sql: {
+                        if table != tbl_name {
+                            break 'sql None;
+                        }
+
+                        let Value::Text(sql) = sql else {
+                            break 'sql None;
+                        };
+
+                        let mut parser = Parser::new(sql.as_str().as_bytes());
+                        let ast::Cmd::Stmt(stmt) = parser.next().unwrap().unwrap() else {
+                            todo!()
+                        };
+
+                        match stmt {
+                            ast::Stmt::CreateIndex {
+                                unique,
+                                if_not_exists,
+                                idx_name,
+                                tbl_name,
+                                mut columns,
+                                where_clause,
+                            } => {
+                                if table != normalize_ident(&tbl_name.0) {
+                                    break 'sql None;
+                                }
+
+                                for column in &mut columns {
+                                    match &mut column.expr {
+                                        ast::Expr::Id(ast::Id(id))
+                                            if normalize_ident(&id) == rename_from =>
+                                        {
+                                            *id = rename_to.clone();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                Some(
+                                    ast::Stmt::CreateIndex {
+                                        unique,
+                                        if_not_exists,
+                                        idx_name,
+                                        tbl_name,
+                                        columns,
+                                        where_clause,
+                                    }
+                                    .format()
+                                    .unwrap(),
+                                )
+                            }
+                            ast::Stmt::CreateTable {
+                                temporary,
+                                if_not_exists,
+                                tbl_name,
+                                body,
+                            } => {
+                                if table != normalize_ident(&tbl_name.name.0) {
+                                    break 'sql None;
+                                }
+
+                                let ast::CreateTableBody::ColumnsAndConstraints {
+                                    mut columns,
+                                    constraints,
+                                    options,
+                                } = *body
+                                else {
+                                    todo!()
+                                };
+
+                                let column_index = columns
+                                    .get_index_of(&ast::Name(rename_from))
+                                    .expect("column being renamed should be present");
+
+                                let mut column_definition =
+                                    columns.get_index(column_index).unwrap().1.clone();
+
+                                column_definition.col_name = ast::Name(rename_to.clone());
+
+                                assert!(columns
+                                    .insert(ast::Name(rename_to), column_definition.clone())
+                                    .is_none());
+
+                                // Swaps indexes with the last one and pops the end, effectively
+                                // replacing the entry.
+                                columns.swap_remove_index(column_index).unwrap();
+
+                                Some(
+                                    ast::Stmt::CreateTable {
+                                        temporary,
+                                        if_not_exists,
+                                        tbl_name,
+                                        body: Box::new(
+                                            ast::CreateTableBody::ColumnsAndConstraints {
+                                                columns,
+                                                constraints,
+                                                options,
+                                            },
+                                        ),
+                                    }
+                                    .format()
+                                    .unwrap(),
+                                )
+                            }
+                            _ => todo!(),
+                        }
+                    };
+
+                    (name, tbl_name, new_sql)
+                }
+            };
+
+            state.registers[*dest + 0] = Register::Value(r#type.clone());
+            state.registers[*dest + 1] = Register::Value(Value::Text(Text::from(new_name)));
+            state.registers[*dest + 2] = Register::Value(Value::Text(Text::from(new_tbl_name)));
+            state.registers[*dest + 3] = Register::Value(Value::Integer(*root_page));
+
+            if let Some(new_sql) = new_sql {
+                state.registers[*dest + 4] = Register::Value(Value::Text(Text::from(new_sql)));
+            } else {
+                state.registers[*dest + 4] = Register::Value(sql.clone());
+            }
+        }
         crate::function::Func::Agg(_) => {
             unreachable!("Aggregate functions should not be handled here")
         }
