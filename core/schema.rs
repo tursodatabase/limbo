@@ -1475,13 +1475,7 @@ mod tests {
 
     #[test]
     pub fn test_sqlite_schema() {
-        let expected = r#"CREATE TABLE sqlite_schema (
-  type TEXT,
-  name TEXT,
-  tbl_name TEXT,
-  rootpage INTEGER,
-  sql TEXT)
-"#;
+        let expected = r#"CREATE TABLE sqlite_schema (type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT) "#;
         let actual = sqlite_schema_table().to_sql();
         assert_eq!(expected, actual);
     }

@@ -102,7 +102,7 @@ pub trait ToTokens {
         let mut s = FmtTokenStream { f, spaced: true };
         self.to_tokens(&mut s)
     }
-    // Format AST node to string
+    /// Format AST node to string
     fn format(&self) -> Result<String, fmt::Error> {
         let mut s = String::new();
 

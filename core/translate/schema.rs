@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fmt::Display;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -441,20 +440,16 @@ enum PrimaryKeyDefinitionType<'a> {
     },
 }
 
-struct TableFormatter<'a> {
-    body: &'a ast::CreateTableBody,
-}
-
-impl Display for TableFormatter<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.body.to_fmt(f)
-    }
-}
-
 fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTableBody) -> String {
     let mut sql = String::new();
-    let formatter = TableFormatter { body };
-    sql.push_str(format!("CREATE TABLE {} {}", tbl_name.name.0, formatter).as_str());
+    sql.push_str(
+        format!(
+            "CREATE TABLE {} {}",
+            tbl_name.name.0,
+            body.format().unwrap()
+        )
+        .as_str(),
+    );
     match body {
         ast::CreateTableBody::ColumnsAndConstraints {
             columns: _,

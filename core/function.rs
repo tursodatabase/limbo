@@ -612,7 +612,7 @@ impl Func {
             #[cfg(feature = "json")]
             Self::Json(json_func) => json_func.is_deterministic(),
             Self::External(external_func) => external_func.is_deterministic(),
-            Self::AlterTable(alter_func) => true,
+            Self::AlterTable(_) => true,
         }
     }
     pub fn resolve_function(name: &str, arg_count: usize) -> Result<Self, LimboError> {
