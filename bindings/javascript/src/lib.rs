@@ -89,11 +89,6 @@ impl Database {
     }
 
     #[napi]
-    pub fn transaction(&self) {
-        todo!()
-    }
-
-    #[napi]
     pub fn pragma(
         &self,
         env: Env,
