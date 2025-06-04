@@ -88,8 +88,6 @@ class Database {
     const pragma = `PRAGMA ${source}`;
 
     return simple
-      ? this.db.pragma(pragma, true)
-      : this.db.pragma(pragma, false);
       ? this.db.pragma(source, { simple: true })
       : this.db.pragma(source);
   }
