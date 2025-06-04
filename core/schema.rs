@@ -234,9 +234,9 @@ impl BTreeTable {
         let mut sql = format!("CREATE TABLE {} (", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
-                sql.push_str(", ");
+                sql.push(',');
             }
-            sql.push_str(" ");
+            sql.push(' ');
             sql.push_str(column.name.as_ref().expect("column name is None"));
             sql.push(' ');
             sql.push_str(&column.ty.to_string());
@@ -1475,7 +1475,7 @@ mod tests {
 
     #[test]
     pub fn test_sqlite_schema() {
-        let expected = r#"CREATE TABLE sqlite_schema (type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT) "#;
+        let expected = r#"CREATE TABLE sqlite_schema ( type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT )"#;
         let actual = sqlite_schema_table().to_sql();
         assert_eq!(expected, actual);
     }
