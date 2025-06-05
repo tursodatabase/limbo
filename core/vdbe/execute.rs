@@ -3351,9 +3351,11 @@ pub fn op_function(
                         } else {
                             None
                         };
-                        Value::Integer(
-                            exec_like(cache, pattern.as_str(), match_expression.as_str()) as i64,
-                        )
+                        Value::Integer(Value::exec_like(
+                            cache,
+                            pattern.as_str(),
+                            match_expression.as_str(),
+                        ) as i64)
                     }
                     (Value::Null, _) | (_, Value::Null) => Value::Null,
                     _ => {
@@ -5756,6 +5758,28 @@ impl Value {
             _ => Value::Integer(0),
         }
     }
+
+    // Implements LIKE pattern matching. Caches the constructed regex if a cache is provided
+    pub fn exec_like(
+        regex_cache: Option<&mut HashMap<String, Regex>>,
+        pattern: &str,
+        text: &str,
+    ) -> bool {
+        if let Some(cache) = regex_cache {
+            match cache.get(pattern) {
+                Some(re) => re.is_match(text),
+                None => {
+                    let re = construct_like_regex(pattern);
+                    let res = re.is_match(text);
+                    cache.insert(pattern.to_string(), re);
+                    res
+                }
+            }
+        } else {
+            let re = construct_like_regex(pattern);
+            re.is_match(text)
+        }
+    }
 }
 
 fn exec_concat_strings(registers: &[Register]) -> Value {
@@ -5836,28 +5860,6 @@ fn construct_like_regex(pattern: &str) -> Regex {
         .dot_matches_new_line(true)
         .build()
         .unwrap()
-}
-
-// Implements LIKE pattern matching. Caches the constructed regex if a cache is provided
-pub fn exec_like(
-    regex_cache: Option<&mut HashMap<String, Regex>>,
-    pattern: &str,
-    text: &str,
-) -> bool {
-    if let Some(cache) = regex_cache {
-        match cache.get(pattern) {
-            Some(re) => re.is_match(text),
-            None => {
-                let re = construct_like_regex(pattern);
-                let res = re.is_match(text);
-                cache.insert(pattern.to_string(), re);
-                res
-            }
-        }
-    } else {
-        let re = construct_like_regex(pattern);
-        re.is_match(text)
-    }
 }
 
 fn exec_min(regs: &[Register]) -> Value {
@@ -6351,7 +6353,7 @@ mod tests {
 
     use crate::vdbe::{Bitfield, Register};
 
-    use super::{exec_char, exec_like, exec_max, exec_min, execute_sqlite_version};
+    use super::{exec_char, exec_max, exec_min, execute_sqlite_version};
     use std::collections::HashMap;
 
     #[test]
@@ -6650,34 +6652,34 @@ mod tests {
 
     #[test]
     fn test_like_with_escape_or_regexmeta_chars() {
-        assert!(exec_like(None, r#"\%A"#, r#"\A"#));
-        assert!(exec_like(None, "%a%a", "aaaa"));
+        assert!(Value::exec_like(None, r#"\%A"#, r#"\A"#));
+        assert!(Value::exec_like(None, "%a%a", "aaaa"));
     }
 
     #[test]
     fn test_like_no_cache() {
-        assert!(exec_like(None, "a%", "aaaa"));
-        assert!(exec_like(None, "%a%a", "aaaa"));
-        assert!(!exec_like(None, "%a.a", "aaaa"));
-        assert!(!exec_like(None, "a.a%", "aaaa"));
-        assert!(!exec_like(None, "%a.ab", "aaaa"));
+        assert!(Value::exec_like(None, "a%", "aaaa"));
+        assert!(Value::exec_like(None, "%a%a", "aaaa"));
+        assert!(!Value::exec_like(None, "%a.a", "aaaa"));
+        assert!(!Value::exec_like(None, "a.a%", "aaaa"));
+        assert!(!Value::exec_like(None, "%a.ab", "aaaa"));
     }
 
     #[test]
     fn test_like_with_cache() {
         let mut cache = HashMap::new();
-        assert!(exec_like(Some(&mut cache), "a%", "aaaa"));
-        assert!(exec_like(Some(&mut cache), "%a%a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "a.a%", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.ab", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "a%", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "%a%a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "a.a%", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.ab", "aaaa"));
 
         // again after values have been cached
-        assert!(exec_like(Some(&mut cache), "a%", "aaaa"));
-        assert!(exec_like(Some(&mut cache), "%a%a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "a.a%", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.ab", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "a%", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "%a%a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "a.a%", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.ab", "aaaa"));
     }
 
     #[test]

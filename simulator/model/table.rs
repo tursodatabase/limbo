@@ -2,7 +2,6 @@ use std::{fmt::Display, ops::Deref};
 
 use limbo_core::{numeric::Numeric, types};
 use limbo_sqlite3_parser::ast;
-use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 pub(crate) struct Name(pub(crate) String);
@@ -98,33 +97,33 @@ impl SimValue {
 
     // TODO: support more predicates
     /// Returns a Value::TRUE or VALUE::FALSE
+    /// TODO: forget collations for now
     pub fn binary_compare(&self, other: &Self, operator: ast::Operator) -> SimValue {
         match operator {
             ast::Operator::Add => todo!(),
-            ast::Operator::And => self.into_bool() && other.into_bool(),
+            ast::Operator::And => Self(self.0.exec_and(&other.0)),
             ast::Operator::ArrowRight => todo!(),
             ast::Operator::ArrowRightShift => todo!(),
             ast::Operator::BitwiseAnd => todo!(),
             ast::Operator::BitwiseOr => todo!(),
             ast::Operator::BitwiseNot => todo!(),
             ast::Operator::Concat => todo!(),
-            ast::Operator::Equals => self == other,
+            ast::Operator::Equals => (self == other).into(),
             ast::Operator::Divide => todo!(),
-            ast::Operator::Greater => self > other,
-            ast::Operator::GreaterEquals => self >= other,
+            ast::Operator::Greater => (self > other).into(),
+            ast::Operator::GreaterEquals => (self >= other).into(),
             ast::Operator::Is => todo!(),
             ast::Operator::IsNot => todo!(),
             ast::Operator::LeftShift => todo!(),
-            ast::Operator::Less => self < other,
-            ast::Operator::LessEquals => self <= other,
+            ast::Operator::Less => (self < other).into(),
+            ast::Operator::LessEquals => (self <= other).into(),
             ast::Operator::Modulus => todo!(),
             ast::Operator::Multiply => todo!(),
-            ast::Operator::NotEquals => self != other,
-            ast::Operator::Or => self.into_bool() || other.into_bool(),
+            ast::Operator::NotEquals => (self != other).into(),
+            ast::Operator::Or => self.0.exec_or(&other.0).into(),
             ast::Operator::RightShift => todo!(),
-            ast::Operator::Subtract => todo!(),
+            ast::Operator::Subtract => self.0.exec_subtract(&other.0).into(),
         }
-        .into()
     }
 
     // TODO: support more operators. Copy the implementation for exec_glob
@@ -133,7 +132,8 @@ impl SimValue {
             ast::LikeOperator::Glob => todo!(),
             ast::LikeOperator::Like => {
                 // TODO: support ESCAPE `expr` option in AST
-                exec_like(self.to_string().as_str(), other.to_string().as_str())
+                // TODO: regex cache
+                types::Value::exec_like(None, self.to_string().as_str(), other.to_string().as_str())
             }
             ast::LikeOperator::Match => todo!(),
             ast::LikeOperator::Regexp => todo!(),
@@ -143,47 +143,15 @@ impl SimValue {
     pub fn unary_exec(&self, operator: ast::UnaryOperator) -> SimValue {
         let new_value = match operator {
             ast::UnaryOperator::BitwiseNot => self.0.exec_bit_not(),
-            ast::UnaryOperator::Negative => todo!(),
-            ast::UnaryOperator::Not => todo!(),
-            ast::UnaryOperator::Positive => todo!(),
+            ast::UnaryOperator::Negative => {
+                self.binary_compare(&SimValue(types::Value::Integer(0)), ast::Operator::Subtract)
+                    .0
+            }
+            ast::UnaryOperator::Not => self.0.exec_boolean_not(),
+            ast::UnaryOperator::Positive => self.0.clone(),
         };
         Self(new_value)
     }
-}
-
-/// This function is a duplication of the exec_like function in core/vdbe/mod.rs at commit 9b9d5f9b4c9920e066ef1237c80878f4c3968524
-/// Any updates to the original function should be reflected here, otherwise the test will be incorrect.
-fn construct_like_regex(pattern: &str) -> Regex {
-    let mut regex_pattern = String::with_capacity(pattern.len() * 2);
-
-    regex_pattern.push('^');
-
-    for c in pattern.chars() {
-        match c {
-            '\\' => regex_pattern.push_str("\\\\"),
-            '%' => regex_pattern.push_str(".*"),
-            '_' => regex_pattern.push('.'),
-            ch => {
-                if regex_syntax::is_meta_character(c) {
-                    regex_pattern.push('\\');
-                }
-                regex_pattern.push(ch);
-            }
-        }
-    }
-
-    regex_pattern.push('$');
-
-    RegexBuilder::new(&regex_pattern)
-        .case_insensitive(true)
-        .dot_matches_new_line(true)
-        .build()
-        .unwrap()
-}
-
-fn exec_like(pattern: &str, text: &str) -> bool {
-    let re = construct_like_regex(pattern);
-    re.is_match(text)
 }
 
 impl From<ast::Literal> for SimValue {
