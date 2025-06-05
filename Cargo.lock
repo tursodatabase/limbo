@@ -1845,6 +1845,7 @@ dependencies = [
  "rusqlite",
  "rustix 1.0.7",
  "ryu",
+ "serde",
  "sorted-vec",
  "strum",
  "strum_macros",

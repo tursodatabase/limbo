@@ -1,5 +1,7 @@
 use limbo_ext::{AggCtx, FinalizeFunction, StepFunction};
 use limbo_sqlite3_parser::ast::SortOrder;
+#[cfg(feature = "serde")]
+use serde::Deserialize;
 
 use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};
@@ -42,6 +44,7 @@ impl Display for ValueType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TextSubtype {
     Text,
     #[cfg(feature = "json")]
@@ -49,6 +52,7 @@ pub enum TextSubtype {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Text {
     pub value: Vec<u8>,
     pub subtype: TextSubtype,
@@ -108,10 +112,36 @@ impl TextRef {
     }
 }
 
+#[cfg(feature = "serde")]
+fn float_to_string<S>(float: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format!("{}", float))
+}
+
+#[cfg(feature = "serde")]
+fn string_to_float<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Value {
     Null,
     Integer(i64),
+    // we use custom serialization to preserve float precision
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            serialize_with = "float_to_string",
+            deserialize_with = "string_to_float"
+        )
+    )]
     Float(f64),
     Text(Text),
     Blob(Vec<u8>),
