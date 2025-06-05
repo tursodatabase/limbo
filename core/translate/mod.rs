@@ -204,15 +204,7 @@ pub fn translate_inner(
                                 name: table_name.clone(),
                             });
 
-                            program.cursor_loop(cursor_id, |program| {
-                                let rowid = program.alloc_register();
-
-                                // FIXME: Handle tables without rowid.
-                                program.emit_insn(Insn::RowId {
-                                    cursor_id,
-                                    dest: rowid,
-                                });
-
+                            program.cursor_loop(cursor_id, |program, rowid| {
                                 let first_column = program.alloc_registers(column_count);
 
                                 let mut iter = first_column;
@@ -338,14 +330,7 @@ pub fn translate_inner(
                         name: sqlite_schema.name.clone(),
                     });
 
-                    program.cursor_loop(cursor_id, |program| {
-                        let rowid = program.alloc_register();
-
-                        program.emit_insn(Insn::RowId {
-                            cursor_id,
-                            dest: rowid,
-                        });
-
+                    program.cursor_loop(cursor_id, |program, rowid| {
                         let first_column = program.alloc_registers(5);
 
                         for i in 0..5 {
@@ -423,14 +408,7 @@ pub fn translate_inner(
                         name: sqlite_schema.name.clone(),
                     });
 
-                    program.cursor_loop(cursor_id, |program| {
-                        let rowid = program.alloc_register();
-
-                        program.emit_insn(Insn::RowId {
-                            cursor_id,
-                            dest: rowid,
-                        });
-
+                    program.cursor_loop(cursor_id, |program, rowid| {
                         let first_column = program.alloc_registers(5);
 
                         for i in 0..5 {
