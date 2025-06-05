@@ -153,6 +153,8 @@ test("Test exec()", async (t) => {
     t.truthy(row.name);
     t.true(typeof row.age === "number");
   }
+});
+
 test("pragma query", async (t) => {
   const [db] = await connect(":memory:");
   let page_size = db.pragma("page_size");
