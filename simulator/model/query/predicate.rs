@@ -60,7 +60,10 @@ fn expr_to_value(expr: &ast::Expr, row: &[Value], table: &Table) -> Option<Value
             let value: Value = if *not { !res } else { res }.into();
             Some(value)
         }
-        // TODO: add unary
+        ast::Expr::Unary(op, expr) => {
+            let value = expr_to_value(expr, row, table)?;
+            Some(value.unary_exec(*op))
+        }
         _ => unreachable!("{:?}", expr),
     }
 }

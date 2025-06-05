@@ -2,7 +2,6 @@
 //! TODO: for now just generating [ast::Literal], but want to also generate Columns and any
 //! arbitrary [ast::Expr]
 
-use limbo_core::numeric::NullableInteger;
 use limbo_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
@@ -12,41 +11,6 @@ use crate::{
         table::{Table, Value},
     },
 };
-
-// NullableInteger Code copied from Core. Ideally we should use Limbo's Core Value for everything to avoid code repetition
-impl From<NullableInteger> for Value {
-    fn from(value: NullableInteger) -> Self {
-        match value {
-            NullableInteger::Null => Value::Null,
-            NullableInteger::Integer(v) => Value::Integer(v),
-        }
-    }
-}
-
-impl From<Value> for NullableInteger {
-    fn from(value: Value) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&Value> for NullableInteger {
-    fn from(value: &Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Integer(v) => Self::Integer(*v),
-            Value::Float(v) => Self::Integer(*v as i64),
-            Value::Text(text) => Self::from(text.as_str()),
-            Value::Blob(blob) => {
-                let text = String::from_utf8_lossy(blob.as_slice());
-                Self::from(text)
-            }
-        }
-    }
-}
-
-fn exec_bit_not(reg: &Value) -> Value {
-    (!NullableInteger::from(reg)).into()
-}
 
 pub struct TrueValue(pub Value);
 
@@ -110,7 +74,7 @@ impl ArbitraryFromMaybe<(&Value, bool)> for BitNotValue {
     where
         Self: Sized,
     {
-        let bit_not_val = exec_bit_not(value);
+        let bit_not_val = value.unary_exec(ast::UnaryOperator::BitwiseNot);
         // If you bit not the Value and it meets the predicate return Some, else None
         (bit_not_val.into_bool() == predicate).then_some(BitNotValue(value.clone()))
     }

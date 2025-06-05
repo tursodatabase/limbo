@@ -18,10 +18,19 @@ impl ArbitraryFrom<(&Table, bool)> for SimplePredicate {
     fn arbitrary_from<R: Rng>(rng: &mut R, (table, predicate_value): (&Table, bool)) -> Self {
         // Pick a random column
         let column_index = rng.gen_range(0..table.columns.len());
+        let choice = rng.gen_range(0..2);
         // Pick an operator
         match predicate_value {
-            true => SimplePredicate::true_binary(rng, table, column_index),
-            false => SimplePredicate::false_binary(rng, table, column_index),
+            true => match choice {
+                0 => SimplePredicate::true_binary(rng, table, column_index),
+                1 => SimplePredicate::true_unary(rng, table, column_index),
+                _ => unreachable!(),
+            },
+            false => match choice {
+                0 => SimplePredicate::false_binary(rng, table, column_index),
+                1 => SimplePredicate::false_unary(rng, table, column_index),
+                _ => unreachable!(),
+            },
         }
     }
 }

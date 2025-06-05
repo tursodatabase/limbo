@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Deref};
 
-use limbo_core::numeric::{nonnan::NonNan, Numeric};
+use limbo_core::numeric::{nonnan::NonNan, NullableInteger, Numeric};
 use limbo_sqlite3_parser::ast;
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -166,6 +166,15 @@ impl Value {
             ast::LikeOperator::Regexp => todo!(),
         }
     }
+
+    pub fn unary_exec(&self, operator: ast::UnaryOperator) -> Value {
+        match operator {
+            ast::UnaryOperator::BitwiseNot => exec_bit_not(self),
+            ast::UnaryOperator::Negative => todo!(),
+            ast::UnaryOperator::Not => todo!(),
+            ast::UnaryOperator::Positive => todo!(),
+        }
+    }
 }
 
 /// This function is a duplication of the exec_like function in core/vdbe/mod.rs at commit 9b9d5f9b4c9920e066ef1237c80878f4c3968524
@@ -310,4 +319,39 @@ impl From<bool> for Value {
     fn from(value: bool) -> Self {
         value.then_some(Value::TRUE).unwrap_or(Value::FALSE)
     }
+}
+
+// NullableInteger Code copied from Core. Ideally we should use Limbo's Core Value for everything to avoid code repetition
+impl From<NullableInteger> for Value {
+    fn from(value: NullableInteger) -> Self {
+        match value {
+            NullableInteger::Null => Value::Null,
+            NullableInteger::Integer(v) => Value::Integer(v),
+        }
+    }
+}
+
+impl From<Value> for NullableInteger {
+    fn from(value: Value) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&Value> for NullableInteger {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Null => Self::Null,
+            Value::Integer(v) => Self::Integer(*v),
+            Value::Float(v) => Self::Integer(*v as i64),
+            Value::Text(text) => Self::from(text.as_str()),
+            Value::Blob(blob) => {
+                let text = String::from_utf8_lossy(blob.as_slice());
+                Self::from(text)
+            }
+        }
+    }
+}
+
+fn exec_bit_not(reg: &Value) -> Value {
+    (!NullableInteger::from(reg)).into()
 }
