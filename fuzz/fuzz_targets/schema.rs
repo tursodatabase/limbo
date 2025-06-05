@@ -46,7 +46,6 @@ enum Type {
     Text,
     Real,
     Blob,
-    Custom(Id),
 }
 
 impl fmt::Display for Type {
@@ -57,7 +56,6 @@ impl fmt::Display for Type {
             Type::Text => write!(f, "TEXT"),
             Type::Real => write!(f, "REAL"),
             Type::Blob => write!(f, "BLOB"),
-            Type::Custom(id) => write!(f, "{}", id),
         }
     }
 }
@@ -66,7 +64,6 @@ impl fmt::Display for Type {
 struct ColumnDef {
     name: Id,
     r#type: Type,
-    unique: bool,
 }
 
 impl fmt::Display for ColumnDef {
@@ -77,14 +74,6 @@ impl fmt::Display for ColumnDef {
             unique,
         } = self;
         write!(f, "{name} {type}",)?;
-
-        if *unique {
-            write!(f, " UNIQUE")?;
-        }
-
-        // if *primary_key {
-        //     write!(f, " PRIMARY KEY")?;
-        // }
 
         Ok(())
     }
@@ -115,10 +104,10 @@ impl fmt::Display for Columns {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, column) in self.0.iter().enumerate() {
             if i > 0 {
-                write!(f, ", ")?
+                write!(f, ", ")?;
             }
 
-            write!(f, "{column}")?
+            write!(f, "{column}")?;
         }
 
         Ok(())
@@ -154,7 +143,19 @@ impl fmt::Display for IndexDef {
             columns,
         } = self;
 
-        todo!()
+        write!(f, "CREATE INDEX {name} ON {table}(")?;
+
+        for (i, column) in self.columns.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{column}")?;
+        }
+
+        write!(f, ")")?;
+
+        Ok(())
     }
 }
 
@@ -162,9 +163,22 @@ impl fmt::Display for IndexDef {
 enum Op {
     CreateTable(TableDef),
     CreateIndex(IndexDef),
-    DropTable { table: Id },
-    DropColumn { table: Id, column: Id },
-    RenameTable { rename_from: Id, rename_to: Id },
+    DropTable {
+        table: Id,
+    },
+    DropColumn {
+        table: Id,
+        column: Id,
+    },
+    RenameTable {
+        rename_from: Id,
+        rename_to: Id,
+    },
+    RenameColumn {
+        table: Id,
+        rename_from: Id,
+        rename_to: Id,
+    },
 }
 
 impl fmt::Display for Op {
@@ -180,6 +194,16 @@ impl fmt::Display for Op {
                 rename_from,
                 rename_to,
             } => write!(f, "ALTER TABLE {rename_from} RENAME TO {rename_to}"),
+            Op::RenameColumn {
+                table,
+                rename_from,
+                rename_to,
+            } => {
+                write!(
+                    f,
+                    "ALTER TABLE {table} RENAME COLUMN {rename_from} TO {rename_to}"
+                )
+            }
         }
     }
 }
@@ -222,6 +246,21 @@ impl<'a> Arbitrary<'a> for Ops {
                     tables.push(table_def);
                 }
                 1 => {
+                    let table = u.choose(&tables)?;
+                    let index_def = IndexDef {
+                        name: {
+                            let out = format!("i{table_index}");
+                            table_index += 1;
+
+                            Id(out)
+                        },
+                        table: table.name.clone(),
+                        columns: vec![u.choose(&table.columns.0)?.name.clone()],
+                    };
+
+                    ops.push(Op::CreateIndex(index_def.clone()));
+                }
+                2 => {
                     let index = u.choose_index(tables.len())?;
 
                     let table = &tables[index];
@@ -241,7 +280,7 @@ impl<'a> Arbitrary<'a> for Ops {
 
                     tables.remove(index);
                 }
-                2 => {
+                3 => {
                     let index = u.choose_index(tables.len())?;
 
                     let table = &tables[index];
@@ -265,6 +304,32 @@ impl<'a> Arbitrary<'a> for Ops {
                         });
                     }
                 }
+                4 => {
+                    let index = u.choose_index(tables.len())?;
+
+                    let table = &mut tables[index];
+
+                    let index = u.choose_index(table.columns.0.len())?;
+
+                    let rename_to = Id(format!("cr{table_index}"));
+                    table_index += 1;
+
+                    let column = table.columns.0[index].clone();
+
+                    table.columns.0.insert(
+                        index,
+                        ColumnDef {
+                            name: rename_to.clone(),
+                            ..column
+                        },
+                    );
+
+                    ops.push(Op::RenameColumn {
+                        table: table.name.clone(),
+                        rename_from: column.name,
+                        rename_to,
+                    });
+                }
                 _ => panic!(),
             }
         }
@@ -274,34 +339,28 @@ impl<'a> Arbitrary<'a> for Ops {
 }
 
 fn do_fuzz(Ops(ops): Ops) -> Result<Corpus, Box<dyn Error>> {
-    dbg!(&ops);
-
     let rusqlite_conn = rusqlite::Connection::open_in_memory()?;
 
     let io = Arc::new(limbo_core::MemoryIO::new());
-    let db = limbo_core::Database::open_file(io.clone(), ":memory:", true)?;
+    let db = limbo_core::Database::open_file(io.clone(), ":memory:", false)?;
     let limbo_conn = db.connect()?;
 
     for op in ops {
         let sql = op.to_string();
 
-        dbg!(&sql);
-
-        let expected = rusqlite_conn
+        rusqlite_conn
             .execute(&sql, ())
             .inspect_err(|_| {
                 dbg!(&sql);
             })
             .unwrap();
 
-        let found = 'value: {
-            limbo_conn
-                .execute(&sql)
-                .inspect_err(|_| {
-                    dbg!(&sql);
-                })
-                .unwrap()
-        };
+        limbo_conn
+            .execute(&sql)
+            .inspect_err(|_| {
+                dbg!(&sql);
+            })
+            .unwrap()
     }
 
     Ok(Corpus::Keep)
