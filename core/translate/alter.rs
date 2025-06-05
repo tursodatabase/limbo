@@ -17,12 +17,12 @@ use super::{
 };
 
 pub fn translate_alter_table(
-    alter: Box<(ast::QualifiedName, ast::AlterTableBody)>,
+    alter: (ast::QualifiedName, ast::AlterTableBody),
     syms: &SymbolTable,
     schema: &Schema,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
-    let (table_name, alter_table) = *alter;
+    let (table_name, alter_table) = alter;
     let ast::Name(table_name) = table_name.name;
 
     let Some(original_btree) = schema
