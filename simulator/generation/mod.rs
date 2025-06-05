@@ -73,9 +73,9 @@ pub(crate) fn one_of<'a, T, R: Rng>(choices: Vec<Box<dyn Fn(&mut R) -> T + 'a>>,
 /// The function takes a list of functions that return an Option<T>, along with number of retries
 /// to make before giving up.
 pub(crate) fn backtrack<'a, T, R: Rng>(
-    mut choices: Vec<(u32, Box<dyn Fn(&mut R) -> Option<T> + 'a>)>,
+    mut choices: Vec<(usize, Box<dyn Fn(&mut R) -> Option<T> + 'a>)>,
     rng: &mut R,
-) -> T {
+) -> Option<T> {
     loop {
         // If there are no more choices left, we give up
         let choices_ = choices
@@ -84,14 +84,15 @@ pub(crate) fn backtrack<'a, T, R: Rng>(
             .filter(|(_, (retries, _))| *retries > 0)
             .collect::<Vec<_>>();
         if choices_.is_empty() {
-            panic!("backtrack: no more choices left");
+            tracing::trace!("backtrack: no more choices left");
+            return None;
         }
         // Run a one_of on the remaining choices
         let (choice_index, choice) = pick(&choices_, rng);
         let choice_index = *choice_index;
         // If the choice returns None, we decrement the number of retries and try again
         let result = choice.1(rng);
-        if let Some(result) = result {
+        if result.is_some() {
             return result;
         } else {
             choices[choice_index].0 -= 1;

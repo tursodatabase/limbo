@@ -78,6 +78,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
             })
         };
 
+        // Backtrack here cannot return None
         backtrack(
             vec![
                 (1, Box::new(|rng| gen_values(rng))),
@@ -86,6 +87,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
             ],
             rng,
         )
+        .unwrap()
     }
 }
 

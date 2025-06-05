@@ -9,6 +9,7 @@ use crate::model::{
 use super::{one_of, ArbitraryFrom};
 
 mod binary;
+mod unary;
 
 struct CompoundPredicate(Predicate);
 struct SimplePredicate(Predicate);
@@ -52,11 +53,11 @@ impl ArbitraryFrom<(&Table, &Vec<Value>)> for Predicate {
 
         // Produce some true and false predicates
         let mut true_predicates = (1..=rng.gen_range(1..=4))
-            .map(|_| Predicate::true_binary(rng, (t, row)))
+            .map(|_| Predicate::true_binary(rng, t, row))
             .collect::<Vec<_>>();
 
         let false_predicates = (0..=rng.gen_range(0..=3))
-            .map(|_| Predicate::false_binary(rng, (t, row)))
+            .map(|_| Predicate::false_binary(rng, t, row))
             .collect::<Vec<_>>();
 
         // Start building a top level predicate from a true predicate

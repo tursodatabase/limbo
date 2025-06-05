@@ -54,24 +54,24 @@ impl Predicate {
     }
 
     /// Produces a true [ast::Expr::Binary] [Predicate] that is true for the provided row in the given table
-    pub fn true_binary<R: rand::Rng>(rng: &mut R, (t, row): (&Table, &Vec<Value>)) -> Predicate {
+    pub fn true_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<Value>) -> Predicate {
         // Pick a column
         let column_index = rng.gen_range(0..t.columns.len());
         let column = &t.columns[column_index];
         let value = &row[column_index];
-        let predicate = backtrack(
+        let expr = backtrack(
             vec![
                 (
                     1,
                     Box::new(|_| {
-                        Some(Predicate(Expr::Binary(
+                        Some(Expr::Binary(
                             Box::new(ast::Expr::Qualified(
                                 ast::Name(t.name.clone()),
                                 ast::Name(column.name.clone()),
                             )),
                             ast::Operator::Equals,
                             Box::new(Expr::Literal(value.into())),
-                        )))
+                        ))
                     }),
                 ),
                 (
@@ -81,14 +81,14 @@ impl Predicate {
                         if &v == value {
                             None
                         } else {
-                            Some(Predicate(Expr::Binary(
+                            Some(Expr::Binary(
                                 Box::new(ast::Expr::Qualified(
                                     ast::Name(t.name.clone()),
                                     ast::Name(column.name.clone()),
                                 )),
                                 ast::Operator::NotEquals,
                                 Box::new(Expr::Literal(v.into())),
-                            )))
+                            ))
                         }
                     }),
                 ),
@@ -96,35 +96,35 @@ impl Predicate {
                     1,
                     Box::new(|rng| {
                         let lt_value = LTValue::arbitrary_from(rng, value).0;
-                        Some(Predicate(Expr::Binary(
+                        Some(Expr::Binary(
                             Box::new(ast::Expr::Qualified(
                                 ast::Name(t.name.clone()),
                                 ast::Name(column.name.clone()),
                             )),
                             ast::Operator::Greater,
                             Box::new(Expr::Literal(lt_value.into())),
-                        )))
+                        ))
                     }),
                 ),
                 (
                     1,
                     Box::new(|rng| {
                         let gt_value = GTValue::arbitrary_from(rng, value).0;
-                        Some(Predicate(Expr::Binary(
+                        Some(Expr::Binary(
                             Box::new(ast::Expr::Qualified(
                                 ast::Name(t.name.clone()),
                                 ast::Name(column.name.clone()),
                             )),
                             ast::Operator::Less,
                             Box::new(Expr::Literal(gt_value.into())),
-                        )))
+                        ))
                     }),
                 ),
                 (
                     1,
                     Box::new(|rng| {
                         LikeValue::arbitrary_from_maybe(rng, value).map(|like| {
-                            Predicate(Expr::Like {
+                            Expr::Like {
                                 lhs: Box::new(ast::Expr::Qualified(
                                     ast::Name(t.name.clone()),
                                     ast::Name(column.name.clone()),
@@ -133,33 +133,34 @@ impl Predicate {
                                 op: ast::LikeOperator::Like,
                                 rhs: Box::new(Expr::Literal(like.0.into())),
                                 escape: None, // TODO: implement
-                            })
+                            }
                         })
                     }),
                 ),
             ],
             rng,
         );
-        predicate
+        // Backtrack will always return Some here
+        Predicate(expr.unwrap())
     }
 
     /// Produces an [ast::Expr::Binary] [Predicate] that is false for the provided row in the given table
-    pub fn false_binary<R: rand::Rng>(rng: &mut R, (t, row): (&Table, &Vec<Value>)) -> Predicate {
+    pub fn false_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<Value>) -> Predicate {
         // Pick a column
         let column_index = rng.gen_range(0..t.columns.len());
         let column = &t.columns[column_index];
         let value = &row[column_index];
-        one_of(
+        let expr = one_of(
             vec![
                 Box::new(|_| {
-                    Predicate(Expr::Binary(
+                    Expr::Binary(
                         Box::new(ast::Expr::Qualified(
                             ast::Name(t.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::NotEquals,
                         Box::new(Expr::Literal(value.into())),
-                    ))
+                    )
                 }),
                 Box::new(|rng| {
                     let v = loop {
@@ -168,40 +169,41 @@ impl Predicate {
                             break v;
                         }
                     };
-                    Predicate(Expr::Binary(
+                    Expr::Binary(
                         Box::new(ast::Expr::Qualified(
                             ast::Name(t.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Equals,
                         Box::new(Expr::Literal(v.into())),
-                    ))
+                    )
                 }),
                 Box::new(|rng| {
                     let gt_value = GTValue::arbitrary_from(rng, value).0;
-                    Predicate(Expr::Binary(
+                    Expr::Binary(
                         Box::new(ast::Expr::Qualified(
                             ast::Name(t.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Greater,
                         Box::new(Expr::Literal(gt_value.into())),
-                    ))
+                    )
                 }),
                 Box::new(|rng| {
                     let lt_value = LTValue::arbitrary_from(rng, value).0;
-                    Predicate(Expr::Binary(
+                    Expr::Binary(
                         Box::new(ast::Expr::Qualified(
                             ast::Name(t.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Less,
                         Box::new(Expr::Literal(lt_value.into())),
-                    ))
+                    )
                 }),
             ],
             rng,
-        )
+        );
+        Predicate(expr)
     }
 }
 
