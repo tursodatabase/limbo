@@ -1,11 +1,9 @@
 #![no_main]
 use core::fmt;
-use std::{error::Error, num::NonZero, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::{fuzz_target, Corpus};
-use limbo_core::{Value, IO as _};
-use rusqlite::ffi::SQLITE_STATIC;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Id(String);
@@ -71,7 +69,6 @@ impl fmt::Display for ColumnDef {
         let ColumnDef {
             name,
             r#type,
-            unique,
         } = self;
         write!(f, "{name} {type}",)?;
 
@@ -92,7 +89,6 @@ impl<'a> Arbitrary<'a> for Columns {
             out.push(ColumnDef {
                 name: Id(format!("c{i}")),
                 r#type: u.arbitrary()?,
-                unique: u.arbitrary()?,
             });
         }
 
@@ -145,7 +141,7 @@ impl fmt::Display for IndexDef {
 
         write!(f, "CREATE INDEX {name} ON {table}(")?;
 
-        for (i, column) in self.columns.iter().enumerate() {
+        for (i, column) in columns.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
