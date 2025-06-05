@@ -220,6 +220,12 @@ pub fn translate_alter_table(
                 )));
             };
 
+            if btree.get_column(&rename_to).is_some() {
+                return Err(LimboError::ParseError(format!(
+                    "duplicate column name: \"{rename_from}\""
+                )));
+            };
+
             let sqlite_schema = schema
                 .get_btree_table(SQLITE_TABLEID)
                 .expect("sqlite_schema should be on schema");
