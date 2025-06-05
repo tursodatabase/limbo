@@ -11,7 +11,7 @@ use crate::{
     },
     model::{
         query::predicate::Predicate,
-        table::{Table, Value},
+        table::{SimValue, Table},
     },
 };
 
@@ -20,7 +20,7 @@ impl Predicate {
     pub fn from_column_binary<R: rand::Rng>(
         rng: &mut R,
         column_name: &str,
-        value: &Value,
+        value: &SimValue,
     ) -> Predicate {
         let expr = one_of(
             vec![
@@ -54,7 +54,7 @@ impl Predicate {
     }
 
     /// Produces a true [ast::Expr::Binary] [Predicate] that is true for the provided row in the given table
-    pub fn true_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<Value>) -> Predicate {
+    pub fn true_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<SimValue>) -> Predicate {
         // Pick a column
         let column_index = rng.gen_range(0..t.columns.len());
         let column = &t.columns[column_index];
@@ -77,7 +77,7 @@ impl Predicate {
                 (
                     1,
                     Box::new(|rng| {
-                        let v = Value::arbitrary_from(rng, &column.column_type);
+                        let v = SimValue::arbitrary_from(rng, &column.column_type);
                         if &v == value {
                             None
                         } else {
@@ -145,7 +145,7 @@ impl Predicate {
     }
 
     /// Produces an [ast::Expr::Binary] [Predicate] that is false for the provided row in the given table
-    pub fn false_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<Value>) -> Predicate {
+    pub fn false_binary<R: rand::Rng>(rng: &mut R, t: &Table, row: &Vec<SimValue>) -> Predicate {
         // Pick a column
         let column_index = rng.gen_range(0..t.columns.len());
         let column = &t.columns[column_index];
@@ -164,7 +164,7 @@ impl Predicate {
                 }),
                 Box::new(|rng| {
                     let v = loop {
-                        let v = Value::arbitrary_from(rng, &column.column_type);
+                        let v = SimValue::arbitrary_from(rng, &column.column_type);
                         if &v != value {
                             break v;
                         }

@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Deref};
 
-use limbo_core::numeric::{nonnan::NonNan, NullableInteger, Numeric};
+use limbo_core::{numeric::Numeric, types};
 use limbo_sqlite3_parser::ast;
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ impl Deref for Name {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Table {
-    pub(crate) rows: Vec<Vec<Value>>,
+    pub(crate) rows: Vec<Vec<SimValue>>,
     pub(crate) name: String,
     pub(crate) columns: Vec<Column>,
 }
@@ -64,35 +64,8 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Value {
-    Null,
-    Integer(i64),
-    // we use custom serialization to preserve float precision
-    #[serde(
-        serialize_with = "float_to_string",
-        deserialize_with = "string_to_float"
-    )]
-    Float(f64),
-    Text(String),
-    Blob(Vec<u8>),
-}
-
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
-            (Self::Null, _) => Some(std::cmp::Ordering::Less),
-            (_, Self::Null) => Some(std::cmp::Ordering::Greater),
-            (Self::Integer(i1), Self::Integer(i2)) => i1.partial_cmp(i2),
-            (Self::Float(f1), Self::Float(f2)) => f1.partial_cmp(f2),
-            (Self::Text(t1), Self::Text(t2)) => t1.partial_cmp(t2),
-            (Self::Blob(b1), Self::Blob(b2)) => b1.partial_cmp(b2),
-            // todo: add type coercions here
-            _ => None,
-        }
-    }
-}
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub(crate) struct SimValue(pub limbo_core::Value);
 
 fn to_sqlite_blob(bytes: &[u8]) -> String {
     format!(
@@ -103,29 +76,29 @@ fn to_sqlite_blob(bytes: &[u8]) -> String {
     )
 }
 
-impl Display for Value {
+impl Display for SimValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Null => write!(f, "NULL"),
-            Self::Integer(i) => write!(f, "{}", i),
-            Self::Float(fl) => write!(f, "{}", fl),
-            Self::Text(t) => write!(f, "'{}'", t),
-            Self::Blob(b) => write!(f, "{}", to_sqlite_blob(b)),
+        match &self.0 {
+            types::Value::Null => write!(f, "NULL"),
+            types::Value::Integer(i) => write!(f, "{}", i),
+            types::Value::Float(fl) => write!(f, "{}", fl),
+            value @ types::Value::Text(..) => write!(f, "'{}'", value.to_string()),
+            types::Value::Blob(b) => write!(f, "{}", to_sqlite_blob(b)),
         }
     }
 }
 
-impl Value {
-    pub const FALSE: Self = Value::Integer(0);
-    pub const TRUE: Self = Value::Integer(1);
+impl SimValue {
+    pub const FALSE: Self = SimValue(types::Value::Integer(0));
+    pub const TRUE: Self = SimValue(types::Value::Integer(1));
 
     pub fn into_bool(&self) -> bool {
-        Numeric::from(self).try_into_bool().unwrap_or_default()
+        Numeric::from(&self.0).try_into_bool().unwrap_or_default()
     }
 
     // TODO: support more predicates
     /// Returns a Value::TRUE or VALUE::FALSE
-    pub fn binary_compare(&self, other: &Self, operator: ast::Operator) -> Value {
+    pub fn binary_compare(&self, other: &Self, operator: ast::Operator) -> SimValue {
         match operator {
             ast::Operator::Add => todo!(),
             ast::Operator::And => self.into_bool() && other.into_bool(),
@@ -167,13 +140,14 @@ impl Value {
         }
     }
 
-    pub fn unary_exec(&self, operator: ast::UnaryOperator) -> Value {
-        match operator {
-            ast::UnaryOperator::BitwiseNot => exec_bit_not(self),
+    pub fn unary_exec(&self, operator: ast::UnaryOperator) -> SimValue {
+        let new_value = match operator {
+            ast::UnaryOperator::BitwiseNot => self.0.exec_bit_not(),
             ast::UnaryOperator::Negative => todo!(),
             ast::UnaryOperator::Not => todo!(),
             ast::UnaryOperator::Positive => todo!(),
-        }
+        };
+        Self(new_value)
     }
 }
 
@@ -212,35 +186,19 @@ fn exec_like(pattern: &str, text: &str) -> bool {
     re.is_match(text)
 }
 
-impl From<&ast::Literal> for Value {
-    fn from(value: &ast::Literal) -> Self {
-        match value {
-            ast::Literal::Null => Self::Null,
-            ast::Literal::Numeric(number) => Numeric::from(number).into(),
-            ast::Literal::String(string) => Self::Text(string.clone()),
-            ast::Literal::Blob(blob) => Self::Blob(
-                blob.as_bytes()
-                    .chunks_exact(2)
-                    .map(|pair| {
-                        // We assume that sqlite3-parser has already validated that
-                        // the input is valid hex string, thus unwrap is safe.
-                        let hex_byte = std::str::from_utf8(pair).unwrap();
-                        u8::from_str_radix(hex_byte, 16).unwrap()
-                    })
-                    .collect(),
-            ),
-            lit => unimplemented!("{:?}", lit),
-        }
-    }
-}
-
-impl From<ast::Literal> for Value {
+impl From<ast::Literal> for SimValue {
     fn from(value: ast::Literal) -> Self {
-        match value {
-            ast::Literal::Null => Self::Null,
+        Self::from(&value)
+    }
+}
+
+impl From<&ast::Literal> for SimValue {
+    fn from(value: &ast::Literal) -> Self {
+        let new_value = match value {
+            ast::Literal::Null => types::Value::Null,
             ast::Literal::Numeric(number) => Numeric::from(number).into(),
-            ast::Literal::String(string) => Self::Text(string),
-            ast::Literal::Blob(blob) => Self::Blob(
+            ast::Literal::String(string) => types::Value::build_text(string),
+            ast::Literal::Blob(blob) => types::Value::Blob(
                 blob.as_bytes()
                     .chunks_exact(2)
                     .map(|pair| {
@@ -252,106 +210,55 @@ impl From<ast::Literal> for Value {
                     .collect(),
             ),
             lit => unimplemented!("{:?}", lit),
-        }
+        };
+        Self(new_value)
     }
 }
 
-impl From<Value> for ast::Literal {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Integer(i) => Self::Numeric(i.to_string()),
-            Value::Float(f) => Self::Numeric(f.to_string()),
-            Value::Text(string) => Self::String(format!("'{}'", string)),
-            Value::Blob(blob) => Self::Blob(hex::encode(blob)),
-        }
-    }
-}
-
-impl From<&Value> for ast::Literal {
-    fn from(value: &Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Integer(i) => Self::Numeric(i.to_string()),
-            Value::Float(f) => Self::Numeric(f.to_string()),
-            Value::Text(string) => Self::String(format!("'{}'", string)),
-            Value::Blob(blob) => Self::Blob(hex::encode(blob)),
-        }
-    }
-}
-
-impl From<Numeric> for Value {
-    fn from(value: Numeric) -> Self {
-        match value {
-            Numeric::Null => Value::Null,
-            Numeric::Integer(i) => Value::Integer(i),
-            Numeric::Float(f) => Value::Float(f.into()),
-        }
-    }
-}
-
-// Copied from numeric in Core
-impl From<Value> for Numeric {
-    fn from(value: Value) -> Self {
+impl From<SimValue> for ast::Literal {
+    fn from(value: SimValue) -> Self {
         Self::from(&value)
     }
 }
 
-impl From<&Value> for Numeric {
-    fn from(value: &Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Integer(v) => Self::Integer(*v),
-            Value::Float(v) => match NonNan::new(*v) {
-                Some(v) => Self::Float(v),
-                None => Self::Null,
-            },
-            Value::Text(text) => Numeric::from(text.as_str()),
-            Value::Blob(blob) => {
-                let text = String::from_utf8_lossy(blob.as_slice());
-                Numeric::from(&text)
-            }
+impl From<&SimValue> for ast::Literal {
+    fn from(value: &SimValue) -> Self {
+        match &value.0 {
+            types::Value::Null => Self::Null,
+            types::Value::Integer(i) => Self::Numeric(i.to_string()),
+            types::Value::Float(f) => Self::Numeric(f.to_string()),
+            text @ types::Value::Text(..) => Self::String(format!("'{}'", text)),
+            types::Value::Blob(blob) => Self::Blob(hex::encode(blob)),
         }
     }
 }
 
-impl From<bool> for Value {
+impl From<bool> for SimValue {
     fn from(value: bool) -> Self {
-        value.then_some(Value::TRUE).unwrap_or(Value::FALSE)
+        value.then_some(SimValue::TRUE).unwrap_or(SimValue::FALSE)
     }
 }
 
-// NullableInteger Code copied from Core. Ideally we should use Limbo's Core Value for everything to avoid code repetition
-impl From<NullableInteger> for Value {
-    fn from(value: NullableInteger) -> Self {
-        match value {
-            NullableInteger::Null => Value::Null,
-            NullableInteger::Integer(v) => Value::Integer(v),
-        }
+impl From<SimValue> for limbo_core::types::Value {
+    fn from(value: SimValue) -> Self {
+        value.0
     }
 }
 
-impl From<Value> for NullableInteger {
-    fn from(value: Value) -> Self {
-        Self::from(&value)
+impl From<&SimValue> for limbo_core::types::Value {
+    fn from(value: &SimValue) -> Self {
+        value.0.clone()
     }
 }
 
-impl From<&Value> for NullableInteger {
-    fn from(value: &Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Integer(v) => Self::Integer(*v),
-            Value::Float(v) => Self::Integer(*v as i64),
-            Value::Text(text) => Self::from(text.as_str()),
-            Value::Blob(blob) => {
-                let text = String::from_utf8_lossy(blob.as_slice());
-                Self::from(text)
-            }
-        }
+impl From<limbo_core::types::Value> for SimValue {
+    fn from(value: limbo_core::types::Value) -> Self {
+        Self(value)
     }
 }
 
-fn exec_bit_not(reg: &Value) -> Value {
-    (!NullableInteger::from(reg)).into()
+impl From<&limbo_core::types::Value> for SimValue {
+    fn from(value: &limbo_core::types::Value) -> Self {
+        Self(value.clone())
+    }
 }

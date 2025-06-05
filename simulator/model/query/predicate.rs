@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     query::EmptyContext,
-    table::{Table, Value},
+    table::{SimValue, Table},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -20,7 +20,7 @@ impl Predicate {
         Self(ast::Expr::Literal(ast::Literal::Numeric("0".to_string())))
     }
 
-    pub(crate) fn test(&self, row: &[Value], table: &Table) -> bool {
+    pub(crate) fn test(&self, row: &[SimValue], table: &Table) -> bool {
         let value = expr_to_value(&self.0, row, table);
         value.map_or(false, |value| value.into_bool())
     }
@@ -30,7 +30,7 @@ impl Predicate {
 // This function attempts to convert an simpler easily computable expression into values
 // TODO: In the future, we can try to expand this computation if we want to support harder properties that require us
 // to already know more values before hand
-fn expr_to_value(expr: &ast::Expr, row: &[Value], table: &Table) -> Option<Value> {
+fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Option<SimValue> {
     match expr {
         ast::Expr::DoublyQualified(_, _, ast::Name(col_name))
         | ast::Expr::Qualified(_, ast::Name(col_name))
@@ -57,7 +57,7 @@ fn expr_to_value(expr: &ast::Expr, row: &[Value], table: &Table) -> Option<Value
             let lhs = expr_to_value(lhs, row, table)?;
             let rhs = expr_to_value(rhs, row, table)?;
             let res = lhs.like_compare(&rhs, *op);
-            let value: Value = if *not { !res } else { res }.into();
+            let value: SimValue = if *not { !res } else { res }.into();
             Some(value)
         }
         ast::Expr::Unary(op, expr) => {

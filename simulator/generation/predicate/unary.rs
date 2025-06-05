@@ -8,14 +8,14 @@ use crate::{
     generation::{backtrack, pick, predicate::SimplePredicate, ArbitraryFromMaybe},
     model::{
         query::predicate::Predicate,
-        table::{Table, Value},
+        table::{SimValue, Table},
     },
 };
 
-pub struct TrueValue(pub Value);
+pub struct TrueValue(pub SimValue);
 
-impl ArbitraryFromMaybe<&Value> for TrueValue {
-    fn arbitrary_from_maybe<R: rand::Rng>(_rng: &mut R, value: &Value) -> Option<Self>
+impl ArbitraryFromMaybe<&SimValue> for TrueValue {
+    fn arbitrary_from_maybe<R: rand::Rng>(_rng: &mut R, value: &SimValue) -> Option<Self>
     where
         Self: Sized,
     {
@@ -24,13 +24,13 @@ impl ArbitraryFromMaybe<&Value> for TrueValue {
     }
 }
 
-impl ArbitraryFromMaybe<&Vec<&Value>> for TrueValue {
-    fn arbitrary_from_maybe<R: rand::Rng>(rng: &mut R, values: &Vec<&Value>) -> Option<Self>
+impl ArbitraryFromMaybe<&Vec<&SimValue>> for TrueValue {
+    fn arbitrary_from_maybe<R: rand::Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Option<Self>
     where
         Self: Sized,
     {
         if values.is_empty() {
-            return Some(Self(Value::TRUE));
+            return Some(Self(SimValue::TRUE));
         }
 
         let value = pick(values, rng);
@@ -38,10 +38,10 @@ impl ArbitraryFromMaybe<&Vec<&Value>> for TrueValue {
     }
 }
 
-pub struct FalseValue(pub Value);
+pub struct FalseValue(pub SimValue);
 
-impl ArbitraryFromMaybe<&Value> for FalseValue {
-    fn arbitrary_from_maybe<R: rand::Rng>(_rng: &mut R, value: &Value) -> Option<Self>
+impl ArbitraryFromMaybe<&SimValue> for FalseValue {
+    fn arbitrary_from_maybe<R: rand::Rng>(_rng: &mut R, value: &SimValue) -> Option<Self>
     where
         Self: Sized,
     {
@@ -50,13 +50,13 @@ impl ArbitraryFromMaybe<&Value> for FalseValue {
     }
 }
 
-impl ArbitraryFromMaybe<&Vec<&Value>> for FalseValue {
-    fn arbitrary_from_maybe<R: rand::Rng>(rng: &mut R, values: &Vec<&Value>) -> Option<Self>
+impl ArbitraryFromMaybe<&Vec<&SimValue>> for FalseValue {
+    fn arbitrary_from_maybe<R: rand::Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Option<Self>
     where
         Self: Sized,
     {
         if values.is_empty() {
-            return Some(Self(Value::FALSE));
+            return Some(Self(SimValue::FALSE));
         }
 
         let value = pick(values, rng);
@@ -64,12 +64,12 @@ impl ArbitraryFromMaybe<&Vec<&Value>> for FalseValue {
     }
 }
 
-pub struct BitNotValue(pub Value);
+pub struct BitNotValue(pub SimValue);
 
-impl ArbitraryFromMaybe<(&Value, bool)> for BitNotValue {
+impl ArbitraryFromMaybe<(&SimValue, bool)> for BitNotValue {
     fn arbitrary_from_maybe<R: rand::Rng>(
         _rng: &mut R,
-        (value, predicate): (&Value, bool),
+        (value, predicate): (&SimValue, bool),
     ) -> Option<Self>
     where
         Self: Sized,
@@ -80,10 +80,10 @@ impl ArbitraryFromMaybe<(&Value, bool)> for BitNotValue {
     }
 }
 
-impl ArbitraryFromMaybe<(&Vec<&Value>, bool)> for BitNotValue {
+impl ArbitraryFromMaybe<(&Vec<&SimValue>, bool)> for BitNotValue {
     fn arbitrary_from_maybe<R: rand::Rng>(
         rng: &mut R,
-        (values, predicate): (&Vec<&Value>, bool),
+        (values, predicate): (&Vec<&SimValue>, bool),
     ) -> Option<Self>
     where
         Self: Sized,
@@ -151,7 +151,9 @@ impl SimplePredicate {
             rng,
         );
         // If cannot generate a value
-        SimplePredicate(Predicate(expr.unwrap_or(Expr::Literal(Value::TRUE.into()))))
+        SimplePredicate(Predicate(
+            expr.unwrap_or(Expr::Literal(SimValue::TRUE.into())),
+        ))
     }
 
     /// Generates a false [ast::Expr::Unary] [SimplePredicate] from a [Table]
@@ -207,6 +209,8 @@ impl SimplePredicate {
             rng,
         );
         // If cannot generate a value
-        SimplePredicate(Predicate(expr.unwrap_or(Expr::Literal(Value::TRUE.into()))))
+        SimplePredicate(Predicate(
+            expr.unwrap_or(Expr::Literal(SimValue::TRUE.into())),
+        ))
     }
 }

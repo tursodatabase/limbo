@@ -4,7 +4,7 @@ use limbo_sqlite3_parser::ast::{
 
 use crate::{
     generation::{gen_random_text, pick, pick_index, Arbitrary, ArbitraryFrom},
-    model::table::Value,
+    model::table::SimValue,
     SimulatorEnv,
 };
 
@@ -251,8 +251,8 @@ impl ArbitraryFrom<&SimulatorEnv> for ast::Literal {
 }
 
 // Creates a litreal value
-impl ArbitraryFrom<&Vec<&Value>> for ast::Expr {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, values: &Vec<&Value>) -> Self {
+impl ArbitraryFrom<&Vec<&SimValue>> for ast::Expr {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Self {
         if values.is_empty() {
             return Self::Literal(ast::Literal::Null);
         }

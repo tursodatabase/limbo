@@ -1,4 +1,4 @@
-use limbo_core::LimboError;
+use limbo_core::{LimboError, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
             select::{Distinctness, ResultColumn},
             Create, Delete, Drop, Insert, Query, Select,
         },
-        table::Value,
+        table::SimValue,
     },
     runner::env::SimulatorEnv,
 };
@@ -418,7 +418,7 @@ impl Property {
                                     .iter()
                                     .filter(|vs| {
                                         let v = vs.first().unwrap();
-                                        if let Value::Integer(i) = v {
+                                        if let Value::Integer(i) = &v.0 {
                                             *i == 1
                                         } else {
                                             false
@@ -496,7 +496,7 @@ fn property_insert_values_select<R: rand::Rng>(
     let table = pick(&env.tables, rng);
     // Generate rows to insert
     let rows = (0..rng.gen_range(1..=5))
-        .map(|_| Vec::<Value>::arbitrary_from(rng, table))
+        .map(|_| Vec::<SimValue>::arbitrary_from(rng, table))
         .collect::<Vec<_>>();
 
     // Pick a random row to select

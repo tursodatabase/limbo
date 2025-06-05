@@ -3,7 +3,7 @@ use rand::{seq::SliceRandom as _, Rng};
 
 use crate::model::{
     query::predicate::Predicate,
-    table::{Table, Value},
+    table::{SimValue, Table},
 };
 
 use super::{one_of, ArbitraryFrom};
@@ -48,14 +48,14 @@ impl ArbitraryFrom<&Table> for Predicate {
     }
 }
 
-impl ArbitraryFrom<(&str, &Value)> for Predicate {
-    fn arbitrary_from<R: Rng>(rng: &mut R, (column_name, value): (&str, &Value)) -> Self {
+impl ArbitraryFrom<(&str, &SimValue)> for Predicate {
+    fn arbitrary_from<R: Rng>(rng: &mut R, (column_name, value): (&str, &SimValue)) -> Self {
         Predicate::from_column_binary(rng, column_name, value)
     }
 }
 
-impl ArbitraryFrom<(&Table, &Vec<Value>)> for Predicate {
-    fn arbitrary_from<R: Rng>(rng: &mut R, (t, row): (&Table, &Vec<Value>)) -> Self {
+impl ArbitraryFrom<(&Table, &Vec<SimValue>)> for Predicate {
+    fn arbitrary_from<R: Rng>(rng: &mut R, (t, row): (&Table, &Vec<SimValue>)) -> Self {
         // We want to produce a predicate that is true for the row
         // We can do this by creating several predicates that
         // are true, some that are false, combiend them in ways that correspond to the creation of a true predicate

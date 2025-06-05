@@ -5,7 +5,7 @@ use crate::model::query::predicate::Predicate;
 use crate::model::query::select::{Distinctness, ResultColumn};
 use crate::model::query::update::Update;
 use crate::model::query::{Create, Delete, Drop, Insert, Query, Select};
-use crate::model::table::{Table, Value};
+use crate::model::table::{SimValue, Table};
 use crate::SimulatorEnv;
 use rand::Rng;
 
@@ -38,12 +38,12 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
         let gen_values = |rng: &mut R| {
             let table = pick(&env.tables, rng);
             let num_rows = rng.gen_range(1..10);
-            let values: Vec<Vec<Value>> = (0..num_rows)
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
                         .columns
                         .iter()
-                        .map(|c| Value::arbitrary_from(rng, &c.column_type))
+                        .map(|c| SimValue::arbitrary_from(rng, &c.column_type))
                         .collect()
                 })
                 .collect();
@@ -141,7 +141,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Update {
         let table = pick(&env.tables, rng);
         let mut seen = HashSet::new();
         let num_cols = rng.gen_range(1..=table.columns.len());
-        let set_values: Vec<(String, Value)> = (0..num_cols)
+        let set_values: Vec<(String, SimValue)> = (0..num_cols)
             .map(|_| {
                 let column = loop {
                     let column = pick(&table.columns, rng);
@@ -153,7 +153,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Update {
                 seen.insert(column.name.clone());
                 (
                     column.name.clone(),
-                    Value::arbitrary_from(rng, &column.column_type),
+                    SimValue::arbitrary_from(rng, &column.column_type),
                 )
             })
             .collect();

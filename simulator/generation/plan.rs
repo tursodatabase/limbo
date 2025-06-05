@@ -11,7 +11,7 @@ use crate::{
             update::Update,
             Create, CreateIndex, Delete, Drop, Insert, Query, Select,
         },
-        table::Value,
+        table::SimValue,
     },
     runner::{env::SimConnection, io::SimulatorIO},
     SimulatorEnv,
@@ -21,7 +21,7 @@ use crate::generation::{frequency, Arbitrary, ArbitraryFrom};
 
 use super::property::{remaining, Property};
 
-pub(crate) type ResultSet = Result<Vec<Vec<Value>>>;
+pub(crate) type ResultSet = Result<Vec<Vec<SimValue>>>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct InteractionPlan {
@@ -483,7 +483,7 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
 }
 
 impl Interaction {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<Value>> {
+    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
         match self {
             Self::Query(query) => query.shadow(env),
             Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) => vec![],
@@ -512,13 +512,7 @@ impl Interaction {
                         let row = rows.row().unwrap();
                         let mut r = Vec::new();
                         for v in row.get_values() {
-                            let v = match v {
-                                limbo_core::Value::Null => Value::Null,
-                                limbo_core::Value::Integer(i) => Value::Integer(*i),
-                                limbo_core::Value::Float(f) => Value::Float(*f),
-                                limbo_core::Value::Text(t) => Value::Text(t.as_str().to_string()),
-                                limbo_core::Value::Blob(b) => Value::Blob(b.to_vec()),
-                            };
+                            let v = v.into();
                             r.push(v);
                         }
                         out.push(r);
