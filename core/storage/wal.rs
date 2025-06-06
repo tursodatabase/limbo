@@ -106,8 +106,30 @@ impl LimboRwLock {
                 ok
             }
             SHARED_LOCK => {
+                // There is this race condition where we could've unlocked after loading lock ==
+                // SHARED_LOCK.
                 self.nreads.fetch_add(1, Ordering::SeqCst);
-                true
+                let lock_after_load = self.lock.load(Ordering::SeqCst);
+                if lock_after_load != lock {
+                    // try to lock it again
+                    let res = self.lock.compare_exchange(
+                        lock_after_load,
+                        SHARED_LOCK,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                    let ok = res.is_ok();
+                    if ok {
+                        // we were able to acquire it back
+                        true
+                    } else {
+                        // we couldn't acquire it back, reduce number again
+                        self.nreads.fetch_sub(1, Ordering::SeqCst);
+                        false
+                    }
+                } else {
+                    true
+                }
             }
             WRITE_LOCK => false,
             _ => unreachable!(),
@@ -133,7 +155,7 @@ impl LimboRwLock {
                 // no op
                 false
             }
-            WRITE_LOCK => true,
+            WRITE_LOCK => false,
             _ => unreachable!(),
         };
         tracing::trace!("write_lock({})", ok);
