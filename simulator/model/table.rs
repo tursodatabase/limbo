@@ -81,7 +81,7 @@ impl Display for SimValue {
             types::Value::Null => write!(f, "NULL"),
             types::Value::Integer(i) => write!(f, "{}", i),
             types::Value::Float(fl) => write!(f, "{}", fl),
-            value @ types::Value::Text(..) => write!(f, "'{}'", value.to_string()),
+            value @ types::Value::Text(..) => write!(f, "'{}'", value),
             types::Value::Blob(b) => write!(f, "{}", to_sqlite_blob(b)),
         }
     }
@@ -138,7 +138,11 @@ impl SimValue {
             ast::LikeOperator::Like => {
                 // TODO: support ESCAPE `expr` option in AST
                 // TODO: regex cache
-                types::Value::exec_like(None, self.to_string().as_str(), other.to_string().as_str())
+                types::Value::exec_like(
+                    None,
+                    other.0.to_string().as_str(),
+                    self.0.to_string().as_str(),
+                )
             }
             ast::LikeOperator::Match => todo!(),
             ast::LikeOperator::Regexp => todo!(),
@@ -166,12 +170,19 @@ impl From<ast::Literal> for SimValue {
     }
 }
 
+/// Sanitaizes a string literal by removing single quote at front and back
+/// and escaping double single quotes
+fn sanitize_string(input: &str) -> String {
+    input[1..input.len() - 1].replace("''", "'").to_string()
+}
+
 impl From<&ast::Literal> for SimValue {
     fn from(value: &ast::Literal) -> Self {
         let new_value = match value {
             ast::Literal::Null => types::Value::Null,
             ast::Literal::Numeric(number) => Numeric::from(number).into(),
-            ast::Literal::String(string) => types::Value::build_text(string),
+            // TODO: see how to avoid sanitizing here
+            ast::Literal::String(string) => types::Value::build_text(sanitize_string(&string)),
             ast::Literal::Blob(blob) => types::Value::Blob(
                 blob.as_bytes()
                     .chunks_exact(2)

@@ -30,7 +30,7 @@ impl Predicate {
 // This function attempts to convert an simpler easily computable expression into values
 // TODO: In the future, we can try to expand this computation if we want to support harder properties that require us
 // to already know more values before hand
-fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Option<SimValue> {
+pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Option<SimValue> {
     match expr {
         ast::Expr::DoublyQualified(_, _, ast::Name(col_name))
         | ast::Expr::Qualified(_, ast::Name(col_name))

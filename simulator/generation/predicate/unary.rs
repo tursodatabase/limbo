@@ -97,6 +97,7 @@ impl ArbitraryFromMaybe<(&Vec<&SimValue>, bool)> for BitNotValue {
     }
 }
 
+// TODO: have some more complex generation with columns names here as well
 impl SimplePredicate {
     /// Generates a true [ast::Expr::Unary] [SimplePredicate] from a [Table]
     pub fn true_unary<R: rand::Rng>(rng: &mut R, table: &Table, column_index: usize) -> Self {
