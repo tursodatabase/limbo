@@ -87,6 +87,7 @@ pub fn init_distinct(program: &mut ProgramBuilder, plan: &mut SelectPlan) {
                     order: SortOrder::Asc,
                     pos_in_table: i,
                     collation: None, // FIXME: this should be determined based on the result column expression!
+                    default: None, // FIXME: this should be determined based on the result column expression!
                 })
                 .collect(),
             unique: false,
@@ -140,6 +141,7 @@ pub fn init_loop(
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred from the expression
+                default: None,   // FIXME: this should be inferred from the expression
             }],
             has_rowid: false,
             unique: false,
@@ -1385,11 +1387,7 @@ fn emit_autoindex(
     let ephemeral_cols_start_reg = program.alloc_registers(num_regs_to_reserve);
     for (i, col) in index.columns.iter().enumerate() {
         let reg = ephemeral_cols_start_reg + i;
-        program.emit_insn(Insn::Column {
-            cursor_id: table_cursor_id,
-            column: col.pos_in_table,
-            dest: reg,
-        });
+        program.emit_column(table_cursor_id, col.pos_in_table, reg);
     }
     if table_has_rowid {
         program.emit_insn(Insn::RowId {

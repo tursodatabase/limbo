@@ -763,6 +763,7 @@ fn ephemeral_index_build(
             order: SortOrder::Asc,
             pos_in_table: i,
             collation: c.collation,
+            default: c.default.clone(),
         })
         // only include columns that are used in the query
         .filter(|c| table_reference.column_is_used(c.pos_in_table))
