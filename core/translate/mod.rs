@@ -10,6 +10,7 @@
 pub(crate) mod aggregation;
 pub(crate) mod collate;
 pub(crate) mod delete;
+pub(crate) mod display;
 pub(crate) mod emitter;
 pub(crate) mod expr;
 pub(crate) mod group_by;

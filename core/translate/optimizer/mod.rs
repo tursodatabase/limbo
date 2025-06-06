@@ -6,7 +6,10 @@ use constraints::{
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
 use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
-use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
+use limbo_sqlite3_parser::{
+    ast::{self, Expr, SortOrder},
+    to_sql_string::ToSqlString,
+};
 use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 
 use crate::{
@@ -32,19 +35,22 @@ pub(crate) mod join;
 pub(crate) mod lift_common_subexpressions;
 pub(crate) mod order;
 
+#[tracing::instrument(skip_all, level = tracing::Level::DEBUG)]
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
-        Plan::Select(plan) => optimize_select_plan(plan, schema),
-        Plan::Delete(plan) => optimize_delete_plan(plan, schema),
-        Plan::Update(plan) => optimize_update_plan(plan, schema),
+        Plan::Select(plan) => optimize_select_plan(plan, schema)?,
+        Plan::Delete(plan) => optimize_delete_plan(plan, schema)?,
+        Plan::Update(plan) => optimize_update_plan(plan, schema)?,
         Plan::CompoundSelect { first, rest, .. } => {
             optimize_select_plan(first, schema)?;
             for (plan, _) in rest {
                 optimize_select_plan(plan, schema)?;
             }
-            Ok(())
         }
     }
+    // Context for everything is created with values inside the plan
+    tracing::debug!(plan_sql = plan.to_sql_string(&crate::translate::display::PlanContext(&[])));
+    Ok(())
 }
 
 /**
