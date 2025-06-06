@@ -669,6 +669,13 @@ pub enum Insn {
         table_name: String,
     },
 
+    Int64 {
+        _p1: usize,     //  unused
+        out_reg: usize, // the output register
+        _p3: usize,     // unused
+        value: i64,     //  the value being written into the output register
+    },
+
     Delete {
         cursor_id: CursorID,
     },
@@ -993,6 +1000,7 @@ impl Insn {
             Insn::EndCoroutine { .. } => execute::op_end_coroutine,
             Insn::Yield { .. } => execute::op_yield,
             Insn::Insert { .. } => execute::op_insert,
+            Insn::Int64 { .. } => execute::op_int_64,
             Insn::IdxInsert { .. } => execute::op_idx_insert,
             Insn::Delete { .. } => execute::op_delete,
             Insn::NewRowid { .. } => execute::op_new_rowid,
@@ -1047,4 +1055,6 @@ pub enum Cookie {
     DatabaseTextEncoding = 5,
     /// The "user version" as read and set by the user_version pragma.
     UserVersion = 6,
+    /// The auto-vacuum mode setting.
+    IncrementalVacuum = 7,
 }

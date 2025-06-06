@@ -1560,6 +1560,20 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::Int64 {
+                _p1,
+                out_reg,
+                _p3,
+                value,
+            } => (
+                "Int64",
+                0,
+                *out_reg as i32,
+                0,
+                Value::Integer(*value),
+                0,
+                format!("r[{}]={}", *out_reg, *value),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",

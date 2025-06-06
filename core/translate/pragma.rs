@@ -1,19 +1,20 @@
 //! VDBE bytecode generation for pragma statements.
 //! More info: https://www.sqlite.org/pragma.html.
 
-use limbo_sqlite3_parser::ast;
 use limbo_sqlite3_parser::ast::PragmaName;
+use limbo_sqlite3_parser::ast::{self, Expr};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
+use crate::storage::pager::AutoVacuumMode;
 use crate::storage::sqlite3_ondisk::{DatabaseHeader, MIN_PAGE_CACHE_SIZE};
 use crate::storage::wal::CheckpointMode;
 use crate::util::{normalize_ident, parse_signed_number};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::{bail_parse_error, Pager, Value};
+use crate::{bail_parse_error, LimboError, Pager, Value};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
@@ -62,6 +63,7 @@ pub fn translate_pragma(
                 schema,
                 None,
                 database_header.clone(),
+                pager,
                 connection,
                 &mut program,
             )?;
@@ -73,6 +75,7 @@ pub fn translate_pragma(
                     schema,
                     Some(value),
                     database_header.clone(),
+                    pager,
                     connection,
                     &mut program,
                 )?;
@@ -97,6 +100,7 @@ pub fn translate_pragma(
                     schema,
                     Some(value),
                     database_header.clone(),
+                    pager,
                     connection,
                     &mut program,
                 )?;
@@ -139,6 +143,7 @@ fn update_pragma(
                 schema,
                 None,
                 header,
+                pager,
                 connection,
                 program,
             )?;
@@ -151,6 +156,7 @@ fn update_pragma(
                 schema,
                 None,
                 header,
+                pager,
                 connection,
                 program,
             )?;
@@ -162,6 +168,7 @@ fn update_pragma(
                 schema,
                 None,
                 header,
+                pager,
                 connection,
                 program,
             )?;
@@ -196,6 +203,62 @@ fn update_pragma(
         PragmaName::PageSize => {
             todo!("updating page_size is not yet implemented")
         }
+        PragmaName::AutoVacuum => {
+            let auto_vacuum_mode = match value {
+                Expr::Name(name) => {
+                    let name = name.0.to_lowercase();
+                    match name.as_str() {
+                        "none" => 0,
+                        "full" => 1,
+                        "incremental" => 2,
+                        _ => {
+                            return Err(LimboError::InvalidArgument(
+                                "invalid auto vacuum mode".to_string(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(LimboError::InvalidArgument(
+                        "invalid auto vacuum mode".to_string(),
+                    ))
+                }
+            };
+            match auto_vacuum_mode {
+                0 => update_auto_vacuum_mode(AutoVacuumMode::None, 0, header, pager)?,
+                1 => update_auto_vacuum_mode(AutoVacuumMode::Full, 1, header, pager)?,
+                2 => update_auto_vacuum_mode(AutoVacuumMode::Incremental, 1, header, pager)?,
+                _ => {
+                    return Err(LimboError::InvalidArgument(
+                        "invalid auto vacuum mode".to_string(),
+                    ))
+                }
+            }
+            let largest_root_page_number_reg = program.alloc_register();
+            program.emit_insn(Insn::ReadCookie {
+                db: 0,
+                dest: largest_root_page_number_reg,
+                cookie: Cookie::LargestRootPageNumber,
+            });
+            let set_cookie_label = program.allocate_label();
+            program.emit_insn(Insn::If {
+                reg: largest_root_page_number_reg,
+                target_pc: set_cookie_label,
+                jump_if_null: false,
+            });
+            program.emit_insn(Insn::Halt {
+                err_code: 0,
+                description: "Early halt because auto vacuum mode is not enabled".to_string(),
+            });
+            program.resolve_label(set_cookie_label, program.offset());
+            program.emit_insn(Insn::SetCookie {
+                db: 0,
+                cookie: Cookie::IncrementalVacuum,
+                value: auto_vacuum_mode - 1,
+                p5: 0,
+            });
+            Ok(())
+        }
     }
 }
 
@@ -204,6 +267,7 @@ fn query_pragma(
     schema: &Schema,
     value: Option<ast::Expr>,
     database_header: Arc<SpinLock<DatabaseHeader>>,
+    pager: Rc<Pager>,
     connection: Weak<crate::Connection>,
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
@@ -305,8 +369,37 @@ fn query_pragma(
             program.emit_int(database_header.lock().get_page_size().into(), register);
             program.emit_result_row(register, 1);
         }
+        PragmaName::AutoVacuum => {
+            let auto_vacuum_mode = pager.get_auto_vacuum_mode();
+            let auto_vacuum_mode_i64: i64 = match auto_vacuum_mode {
+                AutoVacuumMode::None => 0,
+                AutoVacuumMode::Full => 1,
+                AutoVacuumMode::Incremental => 2,
+            };
+            let register = program.alloc_register();
+            program.emit_insn(Insn::Int64 {
+                _p1: 0,
+                out_reg: register,
+                _p3: 0,
+                value: auto_vacuum_mode_i64,
+            });
+            program.emit_result_row(register, 1);
+        }
     }
 
+    Ok(())
+}
+
+fn update_auto_vacuum_mode(
+    auto_vacuum_mode: AutoVacuumMode,
+    largest_root_page_number: u32,
+    header: Arc<SpinLock<DatabaseHeader>>,
+    pager: Rc<Pager>,
+) -> crate::Result<()> {
+    let mut header_guard = header.lock();
+    header_guard.vacuum_mode_largest_root_page = largest_root_page_number;
+    pager.set_auto_vacuum_mode(auto_vacuum_mode);
+    pager.write_database_header(&header_guard)?;
     Ok(())
 }
 

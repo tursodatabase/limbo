@@ -1655,6 +1655,8 @@ pub type PragmaValue = Expr; // TODO
 #[derive(Clone, Debug, PartialEq, Eq, EnumIter, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum PragmaName {
+    /// set the autovacuum mode
+    AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
     /// `journal_mode` pragma

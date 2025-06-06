@@ -75,7 +75,7 @@ const DEFAULT_CACHE_SIZE: i32 = -2000;
 pub const MIN_PAGE_CACHE_SIZE: usize = 10;
 
 /// The minimum page size in bytes.
-const MIN_PAGE_SIZE: u32 = 512;
+pub const MIN_PAGE_SIZE: u32 = 512;
 
 /// The maximum page size in bytes.
 const MAX_PAGE_SIZE: u32 = 65536;
@@ -142,7 +142,7 @@ pub struct DatabaseHeader {
 
     /// The page number of the largest root b-tree page when in auto-vacuum or
     /// incremental-vacuum modes, or zero otherwise.
-    vacuum_mode_largest_root_page: u32,
+    pub vacuum_mode_largest_root_page: u32,
 
     /// The database text encoding. 1=UTF-8, 2=UTF-16le, 3=UTF-16be.
     text_encoding: u32,
@@ -151,7 +151,7 @@ pub struct DatabaseHeader {
     pub user_version: i32,
 
     /// True (non-zero) for incremental-vacuum mode. False (zero) otherwise.
-    incremental_vacuum_enabled: u32,
+    pub incremental_vacuum_enabled: u32,
 
     /// The "Application ID" set by PRAGMA application_id.
     application_id: u32,
