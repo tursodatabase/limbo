@@ -14,6 +14,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
 
+const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
+const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
+
 pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
     // table_name to list of indexes for the table
@@ -26,7 +29,7 @@ impl Schema {
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         #[allow(clippy::arc_with_non_send_sync)]
         tables.insert(
-            "sqlite_schema".to_string(),
+            SCHEMA_TABLE_NAME.to_string(),
             Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
         Self { tables, indexes }
@@ -51,7 +54,12 @@ impl Schema {
 
     pub fn get_table(&self, name: &str) -> Option<Arc<Table>> {
         let name = normalize_ident(name);
-        self.tables.get(&name).cloned()
+        let name = if name.eq_ignore_ascii_case(&SCHEMA_TABLE_NAME_ALT) {
+            SCHEMA_TABLE_NAME
+        } else {
+            &name
+        };
+        self.tables.get(name).cloned()
     }
 
     pub fn remove_table(&mut self, table_name: &str) {
