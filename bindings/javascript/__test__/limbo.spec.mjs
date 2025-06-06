@@ -19,7 +19,7 @@ test("Statement.get() returns data", async (t) => {
   t.is(result2["1"], 1);
 });
 
-test("Statement.get() returns null when no data", async (t) => {
+test("Statement.get() returns undefined when no data", async (t) => {
   const [db] = await connect(":memory:");
   const stmt = db.prepare("SELECT 1 WHERE 1 = 2");
   const result = stmt.get();
@@ -41,11 +41,11 @@ test("Statment.iterate() should correctly return an iterable object", async (t) 
   db.prepare(
     "CREATE TABLE users (name TEXT, age INTEGER, nationality TEXT)",
   ).run();
-  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(
+  db.prepare("INSERT INTO users (name, age, nationality) VALUES (?, ?, ?)").run(
     ["Alice", 42],
     "UK",
   );
-  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(
+  db.prepare("INSERT INTO users (name, age, nationality) VALUES (?, ?, ?)").run(
     "Bob",
     24,
     "USA",
@@ -54,6 +54,7 @@ test("Statment.iterate() should correctly return an iterable object", async (t) 
   let rows = db.prepare("SELECT * FROM users").iterate();
   for (const row of rows) {
     t.truthy(row.name);
+    t.truthy(row.nationality);
     t.true(typeof row.age === "number");
   }
 });
@@ -74,7 +75,7 @@ test("Test pragma()", async (t) => {
   t.true(typeof db.pragma("cache_size", { simple: true }) === "number");
 });
 
-test("Statement binded with bind() shouldn't be binded again", async (t) => {
+test("Statement shouldn't bind twice with bind()", async (t) => {
   const [db] = await connect(":memory:");
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
@@ -98,23 +99,23 @@ test("Test pluck(): Rows should only have the values of the first column", async
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
-  let stmt = db.prepare("SELECT * FROM users").raw().pluck();
+
+  let stmt = db.prepare("SELECT * FROM users").pluck();
 
   for (const row of stmt.iterate()) {
-    t.truthy(row.name);
-    t.true(typeof row.age === "undefined");
+    t.truthy(row);
+    t.assert(typeof row === "string");
   }
 });
 
-
-test("Test raw()", async (t) => {
+test("Test raw(): Rows should be returned as arrays", async (t) => {
   const [db] = await connect(":memory:");
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
-  
-  // Pluck and raw should be exclusive
-  let stmt = db.prepare("SELECT * FROM users").pluck().raw();
+
+
+  let stmt = db.prepare("SELECT * FROM users").raw();
 
   for (const row of stmt.iterate()) {
     t.true(Array.isArray(row));
@@ -140,8 +141,49 @@ test("Test raw()", async (t) => {
   t.deepEqual(rows[1], ["Bob", 24]);
 });
 
+test("Presentation modes should be mutually exclusive", async (t) => {
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
 
-test("Test exec()", async (t) => {
+
+  // test raw()
+  let stmt = db.prepare("SELECT * FROM users").pluck().raw();
+
+  for (const row of stmt.iterate()) {
+    t.true(Array.isArray(row));
+    t.true(typeof row[0] === "string");
+    t.true(typeof row[1] === "number");
+  }
+
+  stmt = db.prepare("SELECT * FROM users WHERE name = ?").raw();
+  const row = stmt.get("Alice");
+  t.true(Array.isArray(row));
+  t.is(row.length, 2);
+  t.is(row[0], "Alice");
+  t.is(row[1], 42);
+
+  const noRow = stmt.get("Charlie");
+  t.is(noRow, undefined);
+
+  stmt = db.prepare("SELECT * FROM users").raw();
+  const rows = stmt.all();
+  t.true(Array.isArray(rows));
+  t.is(rows.length, 2);
+  t.deepEqual(rows[0], ["Alice", 42]);
+  t.deepEqual(rows[1], ["Bob", 24]);
+
+  // test pluck()
+  stmt = db.prepare("SELECT * FROM users").raw().pluck();
+
+  for (const name of stmt.iterate()) {
+    t.truthy(name);
+    t.assert(typeof name === "string");
+  }
+});
+
+test("Test exec(): Should correctly load multiple statements from file", async (t) => {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
 
