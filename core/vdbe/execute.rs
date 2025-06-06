@@ -6430,7 +6430,7 @@ mod tests {
 
     #[test]
     fn test_min_max() {
-        let input_int_vec = vec![
+        let input_int_vec = [
             Register::Value(Value::Integer(-1)),
             Register::Value(Value::Integer(10)),
         ];
@@ -6445,7 +6445,7 @@ mod tests {
 
         let str1 = Register::Value(Value::build_text("A"));
         let str2 = Register::Value(Value::build_text("z"));
-        let input_str_vec = vec![str2, str1.clone()];
+        let input_str_vec = [str2, str1.clone()];
         assert_eq!(
             Value::exec_min(input_str_vec.iter().map(|v| v.get_owned_value())),
             Value::build_text("A")
@@ -6455,7 +6455,7 @@ mod tests {
             Value::build_text("z")
         );
 
-        let input_null_vec = vec![Register::Value(Value::Null), Register::Value(Value::Null)];
+        let input_null_vec = [Register::Value(Value::Null), Register::Value(Value::Null)];
         assert_eq!(
             Value::exec_min(input_null_vec.iter().map(|v| v.get_owned_value())),
             Value::Null
@@ -6465,7 +6465,7 @@ mod tests {
             Value::Null
         );
 
-        let input_mixed_vec = vec![Register::Value(Value::Integer(10)), str1];
+        let input_mixed_vec = [Register::Value(Value::Integer(10)), str1];
         assert_eq!(
             Value::exec_min(input_mixed_vec.iter().map(|v| v.get_owned_value())),
             Value::Integer(10)
