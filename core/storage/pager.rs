@@ -599,6 +599,7 @@ impl Pager {
     // Providing a page is optional, if provided it will be used to avoid reading the page from disk.
     // This is implemented in accordance with sqlite freepage2() function.
     pub fn free_page(&self, page: Option<PageRef>, page_id: usize) -> Result<()> {
+        tracing::info!("free_page(page_id={})", page_id);
         const TRUNK_PAGE_HEADER_SIZE: usize = 8;
         const LEAF_ENTRY_SIZE: usize = 4;
         const RESERVED_SLOTS: usize = 2;

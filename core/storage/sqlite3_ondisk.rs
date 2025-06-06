@@ -377,6 +377,15 @@ pub enum PageType {
     TableLeaf = 13,
 }
 
+impl PageType {
+    pub fn is_table(&self) -> bool {
+        match self {
+            PageType::IndexInterior | PageType::IndexLeaf => false,
+            PageType::TableInterior | PageType::TableLeaf => true,
+        }
+    }
+}
+
 impl TryFrom<u8> for PageType {
     type Error = LimboError;
 
@@ -585,7 +594,12 @@ impl PageContent {
         // the page header is 12 bytes for interior pages, 8 bytes for leaf pages
         // this is because the 4 last bytes in the interior page's header are used for the rightmost pointer.
         let cell_pointer_array_start = self.header_size();
-        assert!(idx < ncells, "cell_get: idx out of bounds");
+        assert!(
+            idx < ncells,
+            "cell_get: idx out of bounds: idx={}, ncells={}",
+            idx,
+            ncells
+        );
         let cell_pointer = cell_pointer_array_start + (idx * 2);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 

@@ -1338,15 +1338,23 @@ pub fn op_column(
         unreachable!("unexpected Insn {:?}", insn)
     };
     if let Some((index_cursor_id, table_cursor_id)) = state.deferred_seeks[*cursor_id].take() {
-        let deferred_seek = {
+        let deferred_seek = 'd: {
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                index_cursor.rowid()?
+                match index_cursor.rowid()? {
+                    CursorResult::IO => {
+                        break 'd Some((index_cursor_id, table_cursor_id));
+                    }
+                    CursorResult::Ok(rowid) => rowid,
+                }
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+            match table_cursor.seek(
+                SeekKey::TableRowId(rowid.unwrap()),
+                SeekOp::GE { eq_only: true },
+            )? {
                 CursorResult::Ok(_) => None,
                 CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
             }
@@ -1363,7 +1371,7 @@ pub fn op_column(
                 let mut cursor =
                     must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Column");
                 let cursor = cursor.as_btree_mut();
-                let record = cursor.record();
+                let record = return_if_io!(cursor.record());
                 let value = if let Some(record) = record.as_ref() {
                     if cursor.get_null_flag() {
                         RefValue::Null
@@ -1894,11 +1902,16 @@ pub fn op_row_id(
         unreachable!("unexpected Insn {:?}", insn)
     };
     if let Some((index_cursor_id, table_cursor_id)) = state.deferred_seeks[*cursor_id].take() {
-        let deferred_seek = {
+        let deferred_seek = 'd: {
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                let record = index_cursor.record();
+                let record = match index_cursor.record()? {
+                    CursorResult::IO => {
+                        break 'd Some((index_cursor_id, table_cursor_id));
+                    }
+                    CursorResult::Ok(record) => record,
+                };
                 let record = record.as_ref().unwrap();
                 let rowid = record.get_values().last().unwrap();
                 match rowid {
@@ -1908,7 +1921,7 @@ pub fn op_row_id(
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            match table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ)? {
+            match table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })? {
                 CursorResult::Ok(_) => None,
                 CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
             }
@@ -1920,7 +1933,7 @@ pub fn op_row_id(
     }
     let mut cursors = state.cursors.borrow_mut();
     if let Some(Cursor::BTree(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap() {
-        if let Some(ref rowid) = btree_cursor.rowid()? {
+        if let Some(ref rowid) = return_if_io!(btree_cursor.rowid()) {
             state.registers[*dest] = Register::Value(Value::Integer(*rowid as i64));
         } else {
             state.registers[*dest] = Register::Value(Value::Null);
@@ -1954,7 +1967,7 @@ pub fn op_idx_row_id(
     let mut cursors = state.cursors.borrow_mut();
     let cursor = cursors.get_mut(*cursor_id).unwrap().as_mut().unwrap();
     let cursor = cursor.as_btree_mut();
-    let rowid = cursor.rowid()?;
+    let rowid = return_if_io!(cursor.rowid());
     state.registers[*dest] = match rowid {
         Some(rowid) => Register::Value(Value::Integer(rowid as i64)),
         None => Register::Value(Value::Null),
@@ -1994,7 +2007,9 @@ pub fn op_seek_rowid(
         };
         match rowid {
             Some(rowid) => {
-                let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ));
+                let found = return_if_io!(
+                    cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
+                );
                 if !found {
                     target_pc.to_offset_int()
                 } else {
@@ -2040,6 +2055,7 @@ pub fn op_seek(
         num_regs,
         target_pc,
         is_index,
+        ..
     }
     | Insn::SeekGT {
         cursor_id,
@@ -2054,6 +2070,7 @@ pub fn op_seek(
         num_regs,
         target_pc,
         is_index,
+        ..
     }
     | Insn::SeekLT {
         cursor_id,
@@ -2070,19 +2087,22 @@ pub fn op_seek(
         "target_pc should be an offset, is: {:?}",
         target_pc
     );
+    let eq_only = match insn {
+        Insn::SeekGE { eq_only, .. } | Insn::SeekLE { eq_only, .. } => *eq_only,
+        _ => false,
+    };
     let op = match insn {
-        Insn::SeekGE { .. } => SeekOp::GE,
+        Insn::SeekGE { eq_only, .. } => SeekOp::GE { eq_only: *eq_only },
         Insn::SeekGT { .. } => SeekOp::GT,
-        Insn::SeekLE { .. } => SeekOp::LE,
+        Insn::SeekLE { eq_only, .. } => SeekOp::LE { eq_only: *eq_only },
         Insn::SeekLT { .. } => SeekOp::LT,
         _ => unreachable!("unexpected Insn {:?}", insn),
     };
     let op_name = match op {
-        SeekOp::GE => "SeekGE",
+        SeekOp::GE { .. } => "SeekGE",
         SeekOp::GT => "SeekGT",
-        SeekOp::LE => "SeekLE",
+        SeekOp::LE { .. } => "SeekLE",
         SeekOp::LT => "SeekLT",
-        _ => unreachable!("unexpected SeekOp {:?}", op),
     };
     if *is_index {
         let found = {
@@ -2154,7 +2174,7 @@ pub fn op_idx_ge(
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-        let pc = if let Some(ref idx_record) = *cursor.record() {
+        let pc = if let Some(idx_record) = return_if_io!(cursor.record()) {
             // Compare against the same number of values
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
@@ -2218,7 +2238,7 @@ pub fn op_idx_le(
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-        let pc = if let Some(ref idx_record) = *cursor.record() {
+        let pc = if let Some(ref idx_record) = return_if_io!(cursor.record()) {
             // Compare against the same number of values
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
@@ -2264,7 +2284,7 @@ pub fn op_idx_gt(
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-        let pc = if let Some(ref idx_record) = *cursor.record() {
+        let pc = if let Some(ref idx_record) = return_if_io!(cursor.record()) {
             // Compare against the same number of values
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
@@ -2310,7 +2330,7 @@ pub fn op_idx_lt(
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-        let pc = if let Some(ref idx_record) = *cursor.record() {
+        let pc = if let Some(ref idx_record) = return_if_io!(cursor.record()) {
             // Compare against the same number of values
             let idx_values = idx_record.get_values();
             let idx_values = &idx_values[..record_from_regs.len()];
@@ -3826,13 +3846,10 @@ pub fn op_insert(
             Value::Integer(i) => *i,
             _ => unreachable!("expected integer key"),
         };
-        // NOTE(pere): Sending moved_before == true is okay because we moved before but
-        // if we were to set to false after starting a balance procedure, it might
-        // leave undefined state.
         return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(record)), true));
         // Only update last_insert_rowid for regular table inserts, not schema modifications
         if cursor.root_page() != 1 {
-            if let Some(rowid) = cursor.rowid()? {
+            if let Some(rowid) = return_if_io!(cursor.rowid()) {
                 if let Some(conn) = program.connection.upgrade() {
                     conn.update_last_rowid(rowid);
                 }
@@ -3858,11 +3875,6 @@ pub fn op_delete(
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
-        tracing::debug!(
-            "op_delete(record={:?}, rowid={:?})",
-            cursor.record(),
-            cursor.rowid()?
-        );
         return_if_io!(cursor.delete());
     }
     let prev_changes = program.n_change.get();
@@ -3891,30 +3903,22 @@ pub fn op_idx_delete(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    tracing::debug!(
+        "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, state={:?})",
+        cursor_id,
+        start_reg,
+        num_regs,
+        state.op_idx_delete_state
+    );
     loop {
         match &state.op_idx_delete_state {
             Some(OpIdxDeleteState::Seeking(record)) => {
                 {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
-                    return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ));
-                    tracing::debug!(
-                        "op_idx_delete(seek={}, record={} rowid={:?})",
-                        &record,
-                        cursor.record().as_ref().unwrap(),
-                        cursor.rowid()
+                    return_if_io!(
+                        cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true })
                     );
-                    if cursor.rowid()?.is_none() {
-                        // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
-                        // index entry is found. This happens when running an UPDATE or DELETE statement and the
-                        // index entry to be updated or deleted is not found. For some uses of IdxDelete
-                        // (example: the EXCEPT operator) it does not matter that no matching entry is found.
-                        // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
-                        return Err(LimboError::Corrupt(format!(
-                            "IdxDelete: no matching index entry found for record {:?}",
-                            record
-                        )));
-                    }
                 }
                 state.op_idx_delete_state = Some(OpIdxDeleteState::Deleting);
             }
@@ -3922,6 +3926,17 @@ pub fn op_idx_delete(
                 {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
+                    if return_if_io!(cursor.rowid()).is_none() {
+                        // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
+                        // index entry is found. This happens when running an UPDATE or DELETE statement and the
+                        // index entry to be updated or deleted is not found. For some uses of IdxDelete
+                        // (example: the EXCEPT operator) it does not matter that no matching entry is found.
+                        // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                        return Err(LimboError::Corrupt(format!(
+                            "IdxDelete: no matching index entry found for record {:?}",
+                            make_record(&state.registers, start_reg, num_regs)
+                        )));
+                    }
                     return_if_io!(cursor.delete());
                 }
                 let n_change = program.n_change.get();
@@ -3961,7 +3976,12 @@ pub fn op_idx_insert(
             let cursor = cursor.as_btree_mut();
             let record = match &state.registers[record_reg] {
                 Register::Record(ref r) => r,
-                _ => return Err(LimboError::InternalError("expected record".into())),
+                o => {
+                    return Err(LimboError::InternalError(format!(
+                        "expected record, got {:?}",
+                        o
+                    )));
+                }
             };
             // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
             // a write/balancing operation. If it did, it means we already moved to the place we wanted.
@@ -4115,7 +4135,8 @@ pub fn op_no_conflict(
         return Ok(InsnFunctionStepResult::Step);
     }
 
-    let conflict = return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::EQ));
+    let conflict =
+        return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::GE { eq_only: true }));
     drop(cursor_ref);
     if !conflict {
         state.pc = target_pc.to_offset_int();
@@ -4871,10 +4892,10 @@ pub fn op_found(
                 }
             };
 
-            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true }))
         } else {
             let record = make_record(&state.registers, record_reg, num_regs);
-            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true }))
         }
     };
 

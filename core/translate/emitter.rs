@@ -870,9 +870,20 @@ fn emit_program_for_update(
     )?;
     // Open indexes for update.
     let mut index_cursors = Vec::with_capacity(plan.indexes_to_update.len());
-    // TODO: do not reopen if there is table reference using it.
-
     for index in &plan.indexes_to_update {
+        if let Some(index_cursor) = program.resolve_cursor_id_safe(&CursorKey::index(
+            plan.table_references
+                .joined_tables()
+                .first()
+                .unwrap()
+                .internal_id,
+            index.clone(),
+        )) {
+            // Don't reopen index if it was already opened as the iteration cursor for this update plan.
+            let record_reg = program.alloc_register();
+            index_cursors.push((index_cursor, record_reg));
+            continue;
+        }
         let index_cursor = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
         program.emit_insn(Insn::OpenWrite {
             cursor_id: index_cursor,
@@ -1296,6 +1307,13 @@ fn emit_update_insns(
             program.emit_insn(Insn::RowId {
                 cursor_id,
                 dest: start_reg + num_regs - 1,
+            });
+
+            program.emit_insn(Insn::MakeRecord {
+                start_reg,
+                count: num_regs,
+                dest_reg: record_reg,
+                index_name: Some(index.name.clone()),
             });
 
             program.emit_insn(Insn::IdxDelete {
