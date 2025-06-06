@@ -110,6 +110,7 @@ impl SimulatorEnv {
             delete_percent,
             drop_percent,
             update_percent,
+            disable_select_optimizer: cli_opts.disable_select_optimizer,
             page_size: 4096, // TODO: randomize this too
             max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
@@ -215,6 +216,9 @@ pub(crate) struct SimulatorOpts {
     pub(crate) delete_percent: f64,
     pub(crate) update_percent: f64,
     pub(crate) drop_percent: f64,
+
+    pub(crate) disable_select_optimizer: bool,
+
     pub(crate) max_interactions: usize,
     pub(crate) page_size: usize,
     pub(crate) max_time_simulation: usize,

@@ -1,4 +1,9 @@
-use std::{fmt::Display, path::Path, rc::Rc, vec};
+use std::{
+    fmt::{Debug, Display},
+    path::Path,
+    rc::Rc,
+    vec,
+};
 
 use limbo_core::{Connection, Result, StepResult, IO};
 use serde::{Deserialize, Serialize};
@@ -106,7 +111,7 @@ pub(crate) enum Interactions {
 }
 
 impl Interactions {
-    pub(crate) fn name(&self) -> Option<String> {
+    pub(crate) fn name(&self) -> Option<&str> {
         match self {
             Interactions::Property(property) => Some(property.name()),
             Interactions::Query(_) => None,
@@ -226,6 +231,7 @@ impl Display for InteractionStats {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum Interaction {
     Query(Query),
     Assumption(Assertion),
@@ -253,6 +259,14 @@ enum AssertionAST {
 pub(crate) struct Assertion {
     pub(crate) func: Box<AssertionFunc>,
     pub(crate) message: String,
+}
+
+impl Debug for Assertion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assertion")
+            .field("message", &self.message)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
