@@ -45,7 +45,7 @@ pub fn translate_pragma(
     program.extend(&opts);
     let mut write = false;
 
-    if name.name.0.to_lowercase() == "pragma_list" {
+    if name.name.0.eq_ignore_ascii_case("pragma_list") {
         list_pragmas(&mut program);
         return Ok(program);
     }
