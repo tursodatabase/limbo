@@ -87,8 +87,9 @@ impl ArbitraryFrom<&Vec<&SimValue>> for LTValue {
             return Self(SimValue(Value::Null));
         }
 
-        let value = pick(values, rng);
-        Self::arbitrary_from(rng, *value)
+        // Get value less than all values
+        let value = Value::exec_min(values.iter().map(|value| &value.0));
+        Self::arbitrary_from(rng, &SimValue(value))
     }
 }
 
@@ -147,9 +148,10 @@ impl ArbitraryFrom<&Vec<&SimValue>> for GTValue {
         if values.is_empty() {
             return Self(SimValue(Value::Null));
         }
+        // Get value greater than all values
+        let value = Value::exec_max(values.iter().map(|value| &value.0));
 
-        let value = pick(values, rng);
-        Self::arbitrary_from(rng, *value)
+        Self::arbitrary_from(rng, &SimValue(value))
     }
 }
 

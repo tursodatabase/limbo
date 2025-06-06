@@ -99,8 +99,10 @@ impl ArbitraryFromMaybe<(&Vec<&SimValue>, bool)> for BitNotValue {
 
 // TODO: have some more complex generation with columns names here as well
 impl SimplePredicate {
-    /// Generates a true [ast::Expr::Unary] [SimplePredicate] from a [Table]
-    pub fn true_unary<R: rand::Rng>(rng: &mut R, table: &Table, column_index: usize) -> Self {
+    /// Generates a true [ast::Expr::Unary] [SimplePredicate] from a [Table] for some values in the table
+    pub fn true_unary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+        // Pick a random column
+        let column_index = rng.gen_range(0..table.columns.len());
         let column_values = table
             .rows
             .iter()
@@ -157,8 +159,10 @@ impl SimplePredicate {
         ))
     }
 
-    /// Generates a false [ast::Expr::Unary] [SimplePredicate] from a [Table]
-    pub fn false_unary<R: rand::Rng>(rng: &mut R, table: &Table, column_index: usize) -> Self {
+    /// Generates a false [ast::Expr::Unary] [SimplePredicate] from a [Table] for some values in the table
+    pub fn false_unary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+        // Pick a random column
+        let column_index = rng.gen_range(0..table.columns.len());
         let column_values = table
             .rows
             .iter()

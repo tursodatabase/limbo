@@ -4,7 +4,7 @@ use limbo_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
     generation::{
-        backtrack, one_of,
+        backtrack, one_of, pick,
         predicate::{CompoundPredicate, SimplePredicate},
         table::{GTValue, LTValue, LikeValue},
         ArbitraryFrom as _, ArbitraryFromMaybe as _,
@@ -209,8 +209,10 @@ impl Predicate {
 }
 
 impl SimplePredicate {
-    /// Generates a true [ast::Expr::Binary] [SimplePredicate] from a [Table]
-    pub fn true_binary<R: rand::Rng>(rng: &mut R, table: &Table, column_index: usize) -> Self {
+    /// Generates a true [ast::Expr::Binary] [SimplePredicate] from a [Table] for some values in the table
+    pub fn true_binary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+        // Pick a random column
+        let column_index = rng.gen_range(0..table.columns.len());
         let column = &table.columns[column_index];
         let column_values = table
             .rows
@@ -220,35 +222,41 @@ impl SimplePredicate {
         let expr = one_of(
             vec![
                 Box::new(|rng| {
+                    let expr = if column_values.is_empty() {
+                        Expr::arbitrary_from(rng, &column_values)
+                    } else {
+                        Expr::Literal((*pick(&column_values, rng)).into())
+                    };
+
                     Expr::Binary(
                         Box::new(ast::Expr::Qualified(
                             ast::Name(table.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Equals,
-                        Box::new(Expr::arbitrary_from(rng, &column_values)),
-                    )
-                }),
-                Box::new(|rng| {
-                    let gt_value = GTValue::arbitrary_from(rng, &column_values).0;
-                    Expr::Binary(
-                        Box::new(ast::Expr::Qualified(
-                            ast::Name(table.name.clone()),
-                            ast::Name(column.name.clone()),
-                        )),
-                        ast::Operator::Greater,
-                        Box::new(Expr::Literal(gt_value.into())),
+                        Box::new(expr),
                     )
                 }),
                 Box::new(|rng| {
                     let lt_value = LTValue::arbitrary_from(rng, &column_values).0;
                     Expr::Binary(
-                        Box::new(ast::Expr::Qualified(
+                        Box::new(Expr::Qualified(
+                            ast::Name(table.name.clone()),
+                            ast::Name(column.name.clone()),
+                        )),
+                        ast::Operator::Greater,
+                        Box::new(Expr::Literal(lt_value.into())),
+                    )
+                }),
+                Box::new(|rng| {
+                    let gt_value = GTValue::arbitrary_from(rng, &column_values).0;
+                    Expr::Binary(
+                        Box::new(Expr::Qualified(
                             ast::Name(table.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Less,
-                        Box::new(Expr::Literal(lt_value.into())),
+                        Box::new(Expr::Literal(gt_value.into())),
                     )
                 }),
             ],
@@ -257,8 +265,10 @@ impl SimplePredicate {
         SimplePredicate(Predicate(expr))
     }
 
-    /// Generates a false [ast::Expr::Binary] [SimplePredicate] from a [Table]
-    pub fn false_binary<R: rand::Rng>(rng: &mut R, table: &Table, column_index: usize) -> Self {
+    /// Generates a false [ast::Expr::Binary] [SimplePredicate] from a [Table] for some values in the table
+    pub fn false_binary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+        // Pick a random column
+        let column_index = rng.gen_range(0..table.columns.len());
         let column = &table.columns[column_index];
         let column_values = table
             .rows
@@ -268,35 +278,40 @@ impl SimplePredicate {
         let expr = one_of(
             vec![
                 Box::new(|rng| {
+                    let expr = if column_values.is_empty() {
+                        Expr::arbitrary_from(rng, &column_values)
+                    } else {
+                        Expr::Literal((*pick(&column_values, rng)).into())
+                    };
                     Expr::Binary(
                         Box::new(Expr::Qualified(
                             ast::Name(table.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::NotEquals,
-                        Box::new(Expr::arbitrary_from(rng, &column_values)),
-                    )
-                }),
-                Box::new(|rng| {
-                    let lt_value = LTValue::arbitrary_from(rng, &column_values).0;
-                    Expr::Binary(
-                        Box::new(Expr::Qualified(
-                            ast::Name(table.name.clone()),
-                            ast::Name(column.name.clone()),
-                        )),
-                        ast::Operator::Greater,
-                        Box::new(Expr::Literal(lt_value.into())),
+                        Box::new(expr),
                     )
                 }),
                 Box::new(|rng| {
                     let gt_value = GTValue::arbitrary_from(rng, &column_values).0;
                     Expr::Binary(
-                        Box::new(Expr::Qualified(
+                        Box::new(ast::Expr::Qualified(
+                            ast::Name(table.name.clone()),
+                            ast::Name(column.name.clone()),
+                        )),
+                        ast::Operator::Greater,
+                        Box::new(Expr::Literal(gt_value.into())),
+                    )
+                }),
+                Box::new(|rng| {
+                    let lt_value = LTValue::arbitrary_from(rng, &column_values).0;
+                    Expr::Binary(
+                        Box::new(ast::Expr::Qualified(
                             ast::Name(table.name.clone()),
                             ast::Name(column.name.clone()),
                         )),
                         ast::Operator::Less,
-                        Box::new(Expr::Literal(gt_value.into())),
+                        Box::new(Expr::Literal(lt_value.into())),
                     )
                 }),
             ],
@@ -400,7 +415,7 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use crate::{
-        generation::{pick, Arbitrary, ArbitraryFrom as _},
+        generation::{pick, predicate::SimplePredicate, Arbitrary, ArbitraryFrom as _},
         model::{
             query::predicate::{expr_to_value, Predicate},
             table::{SimValue, Table},
@@ -418,7 +433,7 @@ mod tests {
     #[test]
     fn fuzz_true_binary_predicate() {
         let mut rng = get_rng();
-        for _ in 0..1000 {
+        for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
             let num_rows = rng.gen_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
@@ -439,6 +454,84 @@ mod tests {
                 predicate,
                 value
             )
+        }
+    }
+
+    #[test]
+    fn fuzz_false_binary_predicate() {
+        let mut rng = get_rng();
+        for _ in 0..10000 {
+            let table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            let row = pick(&values, &mut rng);
+            let predicate = Predicate::false_binary(&mut rng, &table, row);
+            let value = expr_to_value(&predicate.0, row, &table);
+            assert!(
+                !value.as_ref().map_or(false, |value| value.into_bool()),
+                "Predicate: {:#?}\nValue: {:#?}",
+                predicate,
+                value
+            )
+        }
+    }
+
+    #[test]
+    fn fuzz_true_binary_simple_predicate() {
+        let mut rng = get_rng();
+        for _ in 0..10000 {
+            let mut table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            table.rows.extend(values.clone());
+            let predicate = SimplePredicate::true_binary(&mut rng, &table);
+            let result = values
+                .iter()
+                .map(|row| predicate.0.test(row, &table))
+                .reduce(|accum, curr| accum || curr)
+                .unwrap_or(false);
+            assert!(result, "Predicate: {:#?}", predicate)
+        }
+    }
+
+    #[test]
+    fn fuzz_false_binary_simple_predicate() {
+        let mut rng = get_rng();
+        for _ in 0..10000 {
+            let mut table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            table.rows.extend(values.clone());
+            let predicate = SimplePredicate::false_binary(&mut rng, &table);
+            let result = values
+                .iter()
+                .map(|row| predicate.0.test(row, &table))
+                .any(|res| !res);
+            assert!(result, "Predicate: {:#?}", predicate)
         }
     }
 }

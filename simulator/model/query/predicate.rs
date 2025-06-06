@@ -34,13 +34,16 @@ pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Optio
     match expr {
         ast::Expr::DoublyQualified(_, _, ast::Name(col_name))
         | ast::Expr::Qualified(_, ast::Name(col_name))
-        | ast::Expr::Id(ast::Id(col_name)) => table
-            .columns
-            .iter()
-            .zip(row.iter())
-            .find(|(column, _)| column.name == *col_name)
-            .map(|(_, value)| value)
-            .cloned(),
+        | ast::Expr::Id(ast::Id(col_name)) => {
+            assert_eq!(row.len(), table.columns.len());
+            table
+                .columns
+                .iter()
+                .zip(row.iter())
+                .find(|(column, _)| column.name == *col_name)
+                .map(|(_, value)| value)
+                .cloned()
+        }
         ast::Expr::Literal(literal) => Some(literal.into()),
         ast::Expr::Binary(lhs, op, rhs) => {
             let lhs = expr_to_value(lhs, row, table)?;

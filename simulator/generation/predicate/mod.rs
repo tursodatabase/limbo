@@ -11,24 +11,25 @@ use super::{one_of, ArbitraryFrom};
 mod binary;
 mod unary;
 
+#[derive(Debug)]
 struct CompoundPredicate(Predicate);
+
+#[derive(Debug)]
 struct SimplePredicate(Predicate);
 
 impl ArbitraryFrom<(&Table, bool)> for SimplePredicate {
     fn arbitrary_from<R: Rng>(rng: &mut R, (table, predicate_value): (&Table, bool)) -> Self {
-        // Pick a random column
-        let column_index = rng.gen_range(0..table.columns.len());
         let choice = rng.gen_range(0..2);
         // Pick an operator
         match predicate_value {
             true => match choice {
-                0 => SimplePredicate::true_binary(rng, table, column_index),
-                1 => SimplePredicate::true_unary(rng, table, column_index),
+                0 => SimplePredicate::true_binary(rng, table),
+                1 => SimplePredicate::true_unary(rng, table),
                 _ => unreachable!(),
             },
             false => match choice {
-                0 => SimplePredicate::false_binary(rng, table, column_index),
-                1 => SimplePredicate::false_unary(rng, table, column_index),
+                0 => SimplePredicate::false_binary(rng, table),
+                1 => SimplePredicate::false_unary(rng, table),
                 _ => unreachable!(),
             },
         }
