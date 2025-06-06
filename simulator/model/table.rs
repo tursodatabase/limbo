@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::Deref};
+use std::{fmt::Display, hash::Hash, ops::Deref};
 
 use limbo_core::{numeric::Numeric, types};
 use limbo_sqlite3_parser::ast;
@@ -28,6 +28,21 @@ pub(crate) struct Column {
     pub(crate) primary: bool,
     pub(crate) unique: bool,
 }
+
+// Uniquely defined by name in this case
+impl Hash for Column {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
+impl PartialEq for Column {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for Column {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ColumnType {

@@ -422,17 +422,17 @@ mod tests {
         },
     };
 
-    fn get_rng() -> rand_chacha::ChaCha8Rng {
-        let seed = std::time::SystemTime::now()
+    fn get_seed() -> u64 {
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        ChaCha8Rng::seed_from_u64(seed)
+            .as_secs()
     }
 
     #[test]
     fn fuzz_true_binary_predicate() {
-        let mut rng = get_rng();
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
             let num_rows = rng.gen_range(1..10);
@@ -450,16 +450,18 @@ mod tests {
             let value = expr_to_value(&predicate.0, row, &table);
             assert!(
                 value.as_ref().map_or(false, |value| value.into_bool()),
-                "Predicate: {:#?}\nValue: {:#?}",
+                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
                 predicate,
-                value
+                value,
+                seed
             )
         }
     }
 
     #[test]
     fn fuzz_false_binary_predicate() {
-        let mut rng = get_rng();
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
             let num_rows = rng.gen_range(1..10);
@@ -477,16 +479,18 @@ mod tests {
             let value = expr_to_value(&predicate.0, row, &table);
             assert!(
                 !value.as_ref().map_or(false, |value| value.into_bool()),
-                "Predicate: {:#?}\nValue: {:#?}",
+                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
                 predicate,
-                value
+                value,
+                seed
             )
         }
     }
 
     #[test]
     fn fuzz_true_binary_simple_predicate() {
-        let mut rng = get_rng();
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
             let num_rows = rng.gen_range(1..10);
@@ -506,13 +510,14 @@ mod tests {
                 .map(|row| predicate.0.test(row, &table))
                 .reduce(|accum, curr| accum || curr)
                 .unwrap_or(false);
-            assert!(result, "Predicate: {:#?}", predicate)
+            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
         }
     }
 
     #[test]
     fn fuzz_false_binary_simple_predicate() {
-        let mut rng = get_rng();
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
             let num_rows = rng.gen_range(1..10);
@@ -531,7 +536,7 @@ mod tests {
                 .iter()
                 .map(|row| predicate.0.test(row, &table))
                 .any(|res| !res);
-            assert!(result, "Predicate: {:#?}", predicate)
+            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
         }
     }
 }

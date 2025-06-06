@@ -1,4 +1,4 @@
-use limbo_core::{LimboError, Value};
+use limbo_core::LimboError;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -418,14 +418,9 @@ impl Property {
                                     .iter()
                                     .filter(|vs| {
                                         let v = vs.first().unwrap();
-                                        if let Value::Integer(i) = &v.0 {
-                                            *i == 1
-                                        } else {
-                                            false
-                                        }
+                                        v.into_bool()
                                     })
                                     .count();
-
                                 Ok(rows1 == rows2.len())
                             }
                             _ => Ok(false),
