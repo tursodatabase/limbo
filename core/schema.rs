@@ -1031,7 +1031,7 @@ impl Index {
 
                     IndexColumn {
                         name: normalize_ident(col_name),
-                        order: order.clone(),
+                        order: *order,
                         pos_in_table,
                         collation: column.collation,
                         default: column.default.clone(),
