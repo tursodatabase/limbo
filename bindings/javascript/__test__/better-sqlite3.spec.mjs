@@ -10,6 +10,18 @@ test("Open in-memory database", async (t) => {
   t.is(db.memory, true);
 });
 
+test("Property .name of in-memory database", async (t) => {
+  let name = ":memory:";
+  const db = new Database(name);
+  t.is(db.name,name);
+});
+
+test("Property .name of database", async (t) => {
+  let name = "foobar.db";
+  const db = new Database(name);
+  t.is(db.name,name);
+});
+
 test("Statement.get() returns data", async (t) => {
   const [db] = await connect(":memory:");
   const stmt = db.prepare("SELECT 1");

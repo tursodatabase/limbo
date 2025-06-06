@@ -22,6 +22,11 @@ class Database {
           return db.inTransaction();
         },
       },
+      name: {
+        get() {
+          return path;
+        },
+      },
     });
   }
 
