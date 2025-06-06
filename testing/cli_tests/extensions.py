@@ -344,14 +344,20 @@ def test_series():
 
 
 def test_kv():
-    ext_path = "target/debug/liblimbo_ext_tests"
-    limbo = TestLimboShell()
+    _test_kv(exec_name=None, ext_path="target/debug/liblimbo_ext_tests")
+    _test_kv(exec_name="sqlite3", ext_path="target/debug/liblimbo_sqlite_test_ext")
+
+
+def _test_kv(exec_name, ext_path):
+    console.info(f"Running test_kv for {ext_path}")
+
+    limbo = TestLimboShell(exec_name=exec_name,)
     # first, create a normal table to ensure no issues
     limbo.execute_dot("CREATE TABLE other (a,b,c);")
     limbo.execute_dot("INSERT INTO other values (23,32,23);")
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
-        lambda res: "Parse error: no such module: kv_store" in res,
+        lambda res: "no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot(
@@ -421,10 +427,13 @@ def test_kv():
         lambda res: res == "100",
         "can update all rows",
     )
-    limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
-    limbo.run_test_fn(
-        "select count(*) from t;", lambda res: "4" == res, "four rows remain"
-    )
+    if exec_name is None:
+        # Test only on Limbo, since SQLite supports the DELETE ... LIMIT syntax only when compiled
+        # with the SQLITE_ENABLE_UPDATE_DELETE_LIMIT option: https://www.sqlite.org/lang_delete.html
+        limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
+        limbo.run_test_fn(
+            "select count(*) from t;", lambda res: "4" == res, "four rows remain"
+        )
     limbo.run_test_fn(
         "update t set key = '100' where 1;", null, "where clause evaluates properly"
     )

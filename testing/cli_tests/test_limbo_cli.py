@@ -54,8 +54,7 @@ class LimboShell:
             return ""
         self._write_to_pipe(f"SELECT '{end_marker}';")
         output = ""
-        done = False
-        while not done:
+        while True:
             ready, _, errors = select.select(
                 [self.pipe.stdout, self.pipe.stderr],
                 [],
@@ -63,26 +62,23 @@ class LimboShell:
             )
             ready_or_errors = set(ready + errors)
             if self.pipe.stderr in ready_or_errors:
-                done = self._handle_error()
+                fragment = self.pipe.stderr.read(PIPE_BUF).decode()
+                if not fragment:
+                    console.error(output, end="", _stack_offset=2)
+                    raise RuntimeError("Error encountered in Limbo shell.")
+                output += fragment
             if self.pipe.stdout in ready_or_errors:
                 fragment = self.pipe.stdout.read(PIPE_BUF).decode()
                 output += fragment
                 if output.rstrip().endswith(end_marker):
-                    return self._clean_output(output, end_marker)
+                    break
+        return self._clean_output(output, end_marker)
 
     def _write_to_pipe(self, command: str) -> None:
         if not self.pipe.stdin:
             raise RuntimeError("Failed to start Limbo REPL")
         self.pipe.stdin.write((command + "\n").encode())
         self.pipe.stdin.flush()
-
-    def _handle_error(self) -> None:
-        while True:
-            chunk = self.pipe.stderr.read(PIPE_BUF).decode()
-            if not chunk:
-                break  # EOF
-            console.error(chunk, end="", _stack_offset=2)
-        raise RuntimeError("Error encountered in Limbo shell.")
 
     @staticmethod
     def _clean_output(output: str, marker: str) -> str:
