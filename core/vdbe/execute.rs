@@ -3462,11 +3462,15 @@ pub fn op_function(
             }
             ScalarFunc::Min => {
                 let reg_values = &state.registers[*start_reg..*start_reg + arg_count];
-                state.registers[*dest] = Register::Value(exec_min(reg_values));
+                state.registers[*dest] = Register::Value(Value::exec_min(
+                    reg_values.iter().map(|v| v.get_owned_value()),
+                ));
             }
             ScalarFunc::Max => {
                 let reg_values = &state.registers[*start_reg..*start_reg + arg_count];
-                state.registers[*dest] = Register::Value(exec_max(reg_values));
+                state.registers[*dest] = Register::Value(Value::exec_max(
+                    reg_values.iter().map(|v| v.get_owned_value()),
+                ));
             }
             ScalarFunc::Nullif => {
                 let first_value = &state.registers[*start_reg];
@@ -5780,6 +5784,14 @@ impl Value {
             re.is_match(text)
         }
     }
+
+    pub fn exec_min<'a, T: Iterator<Item = &'a Value>>(regs: T) -> Value {
+        regs.min().map(|v| v.to_owned()).unwrap_or(Value::Null)
+    }
+
+    pub fn exec_max<'a, T: Iterator<Item = &'a Value>>(regs: T) -> Value {
+        regs.max().map(|v| v.to_owned()).unwrap_or(Value::Null)
+    }
 }
 
 fn exec_concat_strings(registers: &[Register]) -> Value {
@@ -5860,22 +5872,6 @@ fn construct_like_regex(pattern: &str) -> Regex {
         .dot_matches_new_line(true)
         .build()
         .unwrap()
-}
-
-fn exec_min(regs: &[Register]) -> Value {
-    regs.iter()
-        .map(|v| v.get_owned_value())
-        .min()
-        .map(|v| v.to_owned())
-        .unwrap_or(Value::Null)
-}
-
-fn exec_max(regs: &[Register]) -> Value {
-    regs.iter()
-        .map(|v| v.get_owned_value())
-        .max()
-        .map(|v| v.to_owned())
-        .unwrap_or(Value::Null)
 }
 
 fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
@@ -6353,7 +6349,7 @@ mod tests {
 
     use crate::vdbe::{Bitfield, Register};
 
-    use super::{exec_char, exec_max, exec_min, execute_sqlite_version};
+    use super::{exec_char, execute_sqlite_version};
     use std::collections::HashMap;
 
     #[test]
@@ -6438,22 +6434,46 @@ mod tests {
             Register::Value(Value::Integer(-1)),
             Register::Value(Value::Integer(10)),
         ];
-        assert_eq!(exec_min(&input_int_vec), Value::Integer(-1));
-        assert_eq!(exec_max(&input_int_vec), Value::Integer(10));
+        assert_eq!(
+            Value::exec_min(input_int_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(-1)
+        );
+        assert_eq!(
+            Value::exec_max(input_int_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(10)
+        );
 
         let str1 = Register::Value(Value::build_text("A"));
         let str2 = Register::Value(Value::build_text("z"));
         let input_str_vec = vec![str2, str1.clone()];
-        assert_eq!(exec_min(&input_str_vec), Value::build_text("A"));
-        assert_eq!(exec_max(&input_str_vec), Value::build_text("z"));
+        assert_eq!(
+            Value::exec_min(input_str_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("A")
+        );
+        assert_eq!(
+            Value::exec_max(input_str_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("z")
+        );
 
         let input_null_vec = vec![Register::Value(Value::Null), Register::Value(Value::Null)];
-        assert_eq!(exec_min(&input_null_vec), Value::Null);
-        assert_eq!(exec_max(&input_null_vec), Value::Null);
+        assert_eq!(
+            Value::exec_min(input_null_vec.iter().map(|v| v.get_owned_value())),
+            Value::Null
+        );
+        assert_eq!(
+            Value::exec_max(input_null_vec.iter().map(|v| v.get_owned_value())),
+            Value::Null
+        );
 
         let input_mixed_vec = vec![Register::Value(Value::Integer(10)), str1];
-        assert_eq!(exec_min(&input_mixed_vec), Value::Integer(10));
-        assert_eq!(exec_max(&input_mixed_vec), Value::build_text("A"));
+        assert_eq!(
+            Value::exec_min(input_mixed_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(10)
+        );
+        assert_eq!(
+            Value::exec_max(input_mixed_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("A")
+        );
     }
 
     #[test]
