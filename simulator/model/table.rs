@@ -96,32 +96,37 @@ impl SimValue {
     }
 
     // TODO: support more predicates
-    /// Returns a Value::TRUE or VALUE::FALSE
+    /// Returns a Result of a Binary Operation
+    ///
     /// TODO: forget collations for now
+    /// TODO: have the [ast::Operator::Equals], [ast::Operator::NotEquals], [ast::Operator::Greater],
+    /// [ast::Operator::GreaterEquals], [ast::Operator::Less], [ast::Operator::LessEquals] function to be extracted
+    /// into its functions in limbo_core so that it can be used here
     pub fn binary_compare(&self, other: &Self, operator: ast::Operator) -> SimValue {
         match operator {
-            ast::Operator::Add => todo!(),
-            ast::Operator::And => Self(self.0.exec_and(&other.0)),
+            ast::Operator::Add => self.0.exec_add(&other.0).into(),
+            ast::Operator::And => self.0.exec_and(&other.0).into(),
             ast::Operator::ArrowRight => todo!(),
             ast::Operator::ArrowRightShift => todo!(),
-            ast::Operator::BitwiseAnd => todo!(),
-            ast::Operator::BitwiseOr => todo!(),
-            ast::Operator::BitwiseNot => todo!(),
-            ast::Operator::Concat => todo!(),
+            ast::Operator::BitwiseAnd => self.0.exec_bit_and(&other.0).into(),
+            ast::Operator::BitwiseOr => self.0.exec_bit_or(&other.0).into(),
+            ast::Operator::BitwiseNot => todo!(), // TODO: Do not see any function usage of this operator in Core
+            ast::Operator::Concat => self.0.exec_concat(&other.0).into(),
             ast::Operator::Equals => (self == other).into(),
-            ast::Operator::Divide => todo!(),
+            ast::Operator::Divide => self.0.exec_divide(&other.0).into(),
             ast::Operator::Greater => (self > other).into(),
             ast::Operator::GreaterEquals => (self >= other).into(),
+            // TODO: Should attempt to extract `Is` and `IsNot` handling in a function in Core
             ast::Operator::Is => todo!(),
             ast::Operator::IsNot => todo!(),
-            ast::Operator::LeftShift => todo!(),
+            ast::Operator::LeftShift => self.0.exec_shift_left(&other.0).into(),
             ast::Operator::Less => (self < other).into(),
             ast::Operator::LessEquals => (self <= other).into(),
-            ast::Operator::Modulus => todo!(),
-            ast::Operator::Multiply => todo!(),
+            ast::Operator::Modulus => self.0.exec_remainder(&other.0).into(),
+            ast::Operator::Multiply => self.0.exec_multiply(&other.0).into(),
             ast::Operator::NotEquals => (self != other).into(),
             ast::Operator::Or => self.0.exec_or(&other.0).into(),
-            ast::Operator::RightShift => todo!(),
+            ast::Operator::RightShift => self.0.exec_shift_right(&other.0).into(),
             ast::Operator::Subtract => self.0.exec_subtract(&other.0).into(),
         }
     }
@@ -144,7 +149,8 @@ impl SimValue {
         let new_value = match operator {
             ast::UnaryOperator::BitwiseNot => self.0.exec_bit_not(),
             ast::UnaryOperator::Negative => {
-                self.binary_compare(&SimValue(types::Value::Integer(0)), ast::Operator::Subtract)
+                SimValue(types::Value::Integer(0))
+                    .binary_compare(self, ast::Operator::Subtract)
                     .0
             }
             ast::UnaryOperator::Not => self.0.exec_boolean_not(),
