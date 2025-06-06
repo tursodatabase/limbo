@@ -7,7 +7,9 @@ use crate::storage::pager::CreateBTreeFlags;
 use crate::storage::wal::DummyWAL;
 use crate::types::ImmutableRecord;
 use crate::{
-    error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
+    error::{
+        LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY,
+    },
     ext::ExtValue,
     function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc},
     functions::{
@@ -1595,6 +1597,48 @@ pub fn op_prev(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn halt(
+    program: &Program,
+    state: &mut ProgramState,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+    err_code: usize,
+    description: &str,
+) -> Result<InsnFunctionStepResult> {
+    if err_code > 0 {
+        // invalidate page cache in case of error
+        pager.clear_page_cache();
+    }
+    match err_code {
+        0 => {}
+        SQLITE_CONSTRAINT_PRIMARYKEY => {
+            return Err(LimboError::Constraint(format!(
+                "UNIQUE constraint failed: {} (19)",
+                description
+            )));
+        }
+        SQLITE_CONSTRAINT_NOTNULL => {
+            return Err(LimboError::Constraint(format!(
+                "NOT NULL constraint failed: {} (19)",
+                description
+            )));
+        }
+        _ => {
+            return Err(LimboError::Constraint(format!(
+                "undocumented halt error code {}",
+                description
+            )));
+        }
+    }
+    match program.commit_txn(pager.clone(), state, mv_store)? {
+        StepResult::Done => Ok(InsnFunctionStepResult::Done),
+        StepResult::IO => Ok(InsnFunctionStepResult::IO),
+        StepResult::Row => Ok(InsnFunctionStepResult::Row),
+        StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
+        StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
+    }
+}
+
 pub fn op_halt(
     program: &Program,
     state: &mut ProgramState,
@@ -1621,6 +1665,12 @@ pub fn op_halt(
                 description
             )));
         }
+        SQLITE_CONSTRAINT_NOTNULL => {
+            return Err(LimboError::Constraint(format!(
+                "NOTNULL constraint failed: {} (19)",
+                description
+            )));
+        }
         _ => {
             return Err(LimboError::Constraint(format!(
                 "undocumented halt error code {}",
@@ -1634,6 +1684,29 @@ pub fn op_halt(
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
         StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
         StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
+    }
+}
+
+pub fn op_halt_if_null(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::HaltIfNull {
+        target_reg,
+        err_code,
+        description,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    if state.registers[*target_reg].get_owned_value() == &Value::Null {
+        halt(program, state, pager, mv_store, *err_code, &description)
+    } else {
+        state.pc += 1;
+        Ok(InsnFunctionStepResult::Step)
     }
 }
 

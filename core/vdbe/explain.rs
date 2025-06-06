@@ -634,6 +634,19 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::HaltIfNull {
+                err_code,
+                target_reg,
+                description,
+            } => (
+                "HalfIfNull",
+                *err_code as i32,
+                0,
+                *target_reg as i32,
+                Value::build_text(&description),
+                0,
+                "".to_string(),
+            ),
             Insn::Transaction { write } => (
                 "Transaction",
                 0,

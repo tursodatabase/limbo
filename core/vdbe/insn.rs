@@ -406,6 +406,13 @@ pub enum Insn {
         description: String,
     },
 
+    /// Halt the program if P3 is null.
+    HaltIfNull {
+        target_reg: usize,   // P3
+        description: String, // p4
+        err_code: usize,     // p1
+    },
+
     /// Start a transaction.
     Transaction {
         write: bool,
@@ -957,6 +964,7 @@ impl Insn {
             Insn::Next { .. } => execute::op_next,
             Insn::Prev { .. } => execute::op_prev,
             Insn::Halt { .. } => execute::op_halt,
+            Insn::HaltIfNull { .. } => execute::op_halt_if_null,
             Insn::Transaction { .. } => execute::op_transaction,
             Insn::AutoCommit { .. } => execute::op_auto_commit,
             Insn::Goto { .. } => execute::op_goto,
