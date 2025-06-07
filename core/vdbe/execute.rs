@@ -129,10 +129,11 @@ pub fn op_add(
     let Insn::Add { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_add(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_add(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -147,10 +148,11 @@ pub fn op_subtract(
     let Insn::Subtract { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_subtract(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_subtract(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -165,10 +167,11 @@ pub fn op_multiply(
     let Insn::Multiply { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_multiply(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_multiply(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -183,10 +186,11 @@ pub fn op_divide(
     let Insn::Divide { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_divide(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_divide(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -219,10 +223,11 @@ pub fn op_remainder(
     let Insn::Remainder { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_remainder(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_remainder(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -237,10 +242,11 @@ pub fn op_bit_and(
     let Insn::BitAnd { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_bit_and(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_bit_and(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -255,10 +261,11 @@ pub fn op_bit_or(
     let Insn::BitOr { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_bit_or(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_bit_or(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -273,7 +280,8 @@ pub fn op_bit_not(
     let Insn::BitNot { reg, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_bit_not(state.registers[*reg].get_owned_value()));
+    state.registers[*dest] =
+        Register::Value(state.registers[*reg].get_owned_value().exec_bit_not());
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -861,11 +869,10 @@ pub fn op_if(
         unreachable!("unexpected Insn {:?}", insn)
     };
     assert!(target_pc.is_offset());
-    if exec_if(
-        &state.registers[*reg].get_owned_value(),
-        *jump_if_null,
-        false,
-    ) {
+    if state.registers[*reg]
+        .get_owned_value()
+        .exec_if(*jump_if_null, false)
+    {
         state.pc = target_pc.to_offset_int();
     } else {
         state.pc += 1;
@@ -889,11 +896,10 @@ pub fn op_if_not(
         unreachable!("unexpected Insn {:?}", insn)
     };
     assert!(target_pc.is_offset());
-    if exec_if(
-        &state.registers[*reg].get_owned_value(),
-        *jump_if_null,
-        true,
-    ) {
+    if state.registers[*reg]
+        .get_owned_value()
+        .exec_if(*jump_if_null, true)
+    {
         state.pc = target_pc.to_offset_int();
     } else {
         state.pc += 1;
@@ -2454,7 +2460,7 @@ pub fn op_agg_step(
             let AggContext::Avg(acc, count) = agg.borrow_mut() else {
                 unreachable!();
             };
-            *acc = exec_add(acc, col.get_owned_value());
+            *acc = acc.exec_add(col.get_owned_value());
             *count += 1;
         }
         AggFunc::Sum | AggFunc::Total => {
@@ -3250,10 +3256,9 @@ pub fn op_function(
                 else {
                     unreachable!("Cast with non-text type");
                 };
-                let result = exec_cast(
-                    &reg_value_argument.get_owned_value(),
-                    reg_value_type.as_str(),
-                );
+                let result = reg_value_argument
+                    .get_owned_value()
+                    .exec_cast(reg_value_type.as_str());
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Changes => {
@@ -3299,8 +3304,9 @@ pub fn op_function(
             ScalarFunc::Instr => {
                 let reg_value = &state.registers[*start_reg];
                 let pattern_value = &state.registers[*start_reg + 1];
-                let result =
-                    exec_instr(reg_value.get_owned_value(), pattern_value.get_owned_value());
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_instr(pattern_value.get_owned_value());
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::LastInsertRowid => {
@@ -3317,11 +3323,11 @@ pub fn op_function(
 
                 let pattern = match pattern.get_owned_value() {
                     Value::Text(_) => pattern.get_owned_value(),
-                    _ => &exec_cast(pattern.get_owned_value(), "TEXT"),
+                    _ => &pattern.get_owned_value().exec_cast("TEXT"),
                 };
                 let match_expression = match match_expression.get_owned_value() {
                     Value::Text(_) => match_expression.get_owned_value(),
-                    _ => &exec_cast(match_expression.get_owned_value(), "TEXT"),
+                    _ => &match_expression.get_owned_value().exec_cast("TEXT"),
                 };
 
                 let result = match (pattern, match_expression) {
@@ -3345,9 +3351,11 @@ pub fn op_function(
                         } else {
                             None
                         };
-                        Value::Integer(
-                            exec_like(cache, pattern.as_str(), match_expression.as_str()) as i64,
-                        )
+                        Value::Integer(Value::exec_like(
+                            cache,
+                            pattern.as_str(),
+                            match_expression.as_str(),
+                        ) as i64)
                     }
                     (Value::Null, _) | (_, Value::Null) => Value::Null,
                     _ => {
@@ -3371,38 +3379,37 @@ pub fn op_function(
             | ScalarFunc::ZeroBlob => {
                 let reg_value = state.registers[*start_reg].borrow_mut().get_owned_value();
                 let result = match scalar_func {
-                    ScalarFunc::Sign => exec_sign(reg_value),
-                    ScalarFunc::Abs => Some(exec_abs(reg_value)?),
-                    ScalarFunc::Lower => exec_lower(reg_value),
-                    ScalarFunc::Upper => exec_upper(reg_value),
-                    ScalarFunc::Length => Some(exec_length(reg_value)),
-                    ScalarFunc::OctetLength => Some(exec_octet_length(reg_value)),
-                    ScalarFunc::Typeof => Some(exec_typeof(reg_value)),
-                    ScalarFunc::Unicode => Some(exec_unicode(reg_value)),
-                    ScalarFunc::Quote => Some(exec_quote(reg_value)),
-                    ScalarFunc::RandomBlob => Some(exec_randomblob(reg_value)),
-                    ScalarFunc::ZeroBlob => Some(exec_zeroblob(reg_value)),
-                    ScalarFunc::Soundex => Some(exec_soundex(reg_value)),
+                    ScalarFunc::Sign => reg_value.exec_sign(),
+                    ScalarFunc::Abs => Some(reg_value.exec_abs()?),
+                    ScalarFunc::Lower => reg_value.exec_lower(),
+                    ScalarFunc::Upper => reg_value.exec_upper(),
+                    ScalarFunc::Length => Some(reg_value.exec_length()),
+                    ScalarFunc::OctetLength => Some(reg_value.exec_octet_length()),
+                    ScalarFunc::Typeof => Some(reg_value.exec_typeof()),
+                    ScalarFunc::Unicode => Some(reg_value.exec_unicode()),
+                    ScalarFunc::Quote => Some(reg_value.exec_quote()),
+                    ScalarFunc::RandomBlob => Some(reg_value.exec_randomblob()),
+                    ScalarFunc::ZeroBlob => Some(reg_value.exec_zeroblob()),
+                    ScalarFunc::Soundex => Some(reg_value.exec_soundex()),
                     _ => unreachable!(),
                 };
                 state.registers[*dest] = Register::Value(result.unwrap_or(Value::Null));
             }
             ScalarFunc::Hex => {
                 let reg_value = state.registers[*start_reg].borrow_mut();
-                let result = exec_hex(reg_value.get_owned_value());
+                let result = reg_value.get_owned_value().exec_hex();
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Unhex => {
                 let reg_value = &state.registers[*start_reg];
                 let ignored_chars = state.registers.get(*start_reg + 1);
-                let result = exec_unhex(
-                    reg_value.get_owned_value(),
-                    ignored_chars.map(|x| x.get_owned_value()),
-                );
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_unhex(ignored_chars.map(|x| x.get_owned_value()));
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Random => {
-                state.registers[*dest] = Register::Value(exec_random());
+                state.registers[*dest] = Register::Value(Value::exec_random());
             }
             ScalarFunc::Trim => {
                 let reg_value = &state.registers[*start_reg];
@@ -3411,10 +3418,9 @@ pub fn op_function(
                 } else {
                     None
                 };
-                let result = exec_trim(
-                    reg_value.get_owned_value(),
-                    pattern_value.map(|x| x.get_owned_value()),
-                );
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_trim(pattern_value.map(|x| x.get_owned_value()));
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::LTrim => {
@@ -3424,10 +3430,9 @@ pub fn op_function(
                 } else {
                     None
                 };
-                let result = exec_ltrim(
-                    reg_value.get_owned_value(),
-                    pattern_value.map(|x| x.get_owned_value()),
-                );
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_ltrim(pattern_value.map(|x| x.get_owned_value()));
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::RTrim => {
@@ -3437,10 +3442,9 @@ pub fn op_function(
                 } else {
                     None
                 };
-                let result = exec_rtrim(
-                    &reg_value.get_owned_value(),
-                    pattern_value.map(|x| x.get_owned_value()),
-                );
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_rtrim(pattern_value.map(|x| x.get_owned_value()));
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Round => {
@@ -3451,24 +3455,27 @@ pub fn op_function(
                 } else {
                     None
                 };
-                let result = exec_round(
-                    reg_value.get_owned_value(),
-                    precision_value.map(|x| x.get_owned_value()),
-                );
+                let result = reg_value
+                    .get_owned_value()
+                    .exec_round(precision_value.map(|x| x.get_owned_value()));
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Min => {
                 let reg_values = &state.registers[*start_reg..*start_reg + arg_count];
-                state.registers[*dest] = Register::Value(exec_min(reg_values));
+                state.registers[*dest] = Register::Value(Value::exec_min(
+                    reg_values.iter().map(|v| v.get_owned_value()),
+                ));
             }
             ScalarFunc::Max => {
                 let reg_values = &state.registers[*start_reg..*start_reg + arg_count];
-                state.registers[*dest] = Register::Value(exec_max(reg_values));
+                state.registers[*dest] = Register::Value(Value::exec_max(
+                    reg_values.iter().map(|v| v.get_owned_value()),
+                ));
             }
             ScalarFunc::Nullif => {
                 let first_value = &state.registers[*start_reg];
                 let second_value = &state.registers[*start_reg + 1];
-                state.registers[*dest] = Register::Value(exec_nullif(
+                state.registers[*dest] = Register::Value(Value::exec_nullif(
                     first_value.get_owned_value(),
                     second_value.get_owned_value(),
                 ));
@@ -3481,7 +3488,7 @@ pub fn op_function(
                 } else {
                     None
                 };
-                let result = exec_substring(
+                let result = Value::exec_substring(
                     str_value.get_owned_value(),
                     start_value.get_owned_value(),
                     length_value.map(|x| x.get_owned_value()),
@@ -3564,7 +3571,7 @@ pub fn op_function(
                 let source = &state.registers[*start_reg];
                 let pattern = &state.registers[*start_reg + 1];
                 let replacement = &state.registers[*start_reg + 2];
-                state.registers[*dest] = Register::Value(exec_replace(
+                state.registers[*dest] = Register::Value(Value::exec_replace(
                     source.get_owned_value(),
                     pattern.get_owned_value(),
                     replacement.get_owned_value(),
@@ -3588,15 +3595,16 @@ pub fn op_function(
             }
             ScalarFunc::Likely => {
                 let value = &state.registers[*start_reg].borrow_mut();
-                let result = exec_likely(value.get_owned_value());
+                let result = value.get_owned_value().exec_likely();
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Likelihood => {
                 assert_eq!(arg_count, 2);
                 let value = &state.registers[*start_reg];
                 let probability = &state.registers[*start_reg + 1];
-                let result =
-                    exec_likelihood(value.get_owned_value(), probability.get_owned_value());
+                let result = value
+                    .get_owned_value()
+                    .exec_likelihood(probability.get_owned_value());
                 state.registers[*dest] = Register::Value(result);
             }
         },
@@ -3668,15 +3676,16 @@ pub fn op_function(
 
             MathFuncArity::Unary => {
                 let reg_value = &state.registers[*start_reg];
-                let result = exec_math_unary(reg_value.get_owned_value(), math_func);
+                let result = reg_value.get_owned_value().exec_math_unary(math_func);
                 state.registers[*dest] = Register::Value(result);
             }
 
             MathFuncArity::Binary => {
                 let lhs = &state.registers[*start_reg];
                 let rhs = &state.registers[*start_reg + 1];
-                let result =
-                    exec_math_binary(lhs.get_owned_value(), rhs.get_owned_value(), math_func);
+                let result = lhs
+                    .get_owned_value()
+                    .exec_math_binary(rhs.get_owned_value(), math_func);
                 state.registers[*dest] = Register::Value(result);
             }
 
@@ -3685,12 +3694,13 @@ pub fn op_function(
                     let result = match arg_count {
                         1 => {
                             let arg = &state.registers[*start_reg];
-                            exec_math_log(arg.get_owned_value(), None)
+                            arg.get_owned_value().exec_math_log(None)
                         }
                         2 => {
                             let base = &state.registers[*start_reg];
                             let arg = &state.registers[*start_reg + 1];
-                            exec_math_log(arg.get_owned_value(), Some(base.get_owned_value()))
+                            arg.get_owned_value()
+                                .exec_math_log(Some(base.get_owned_value()))
                         }
                         _ => unreachable!(
                             "{:?} function with unexpected number of arguments",
@@ -4554,10 +4564,11 @@ pub fn op_shift_right(
     let Insn::ShiftRight { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_shift_right(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_shift_right(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4572,10 +4583,11 @@ pub fn op_shift_left(
     let Insn::ShiftLeft { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_shift_left(
-        state.registers[*lhs].get_owned_value(),
-        state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_shift_left(state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4627,7 +4639,7 @@ pub fn op_not(
         unreachable!("unexpected Insn {:?}", insn)
     };
     state.registers[*dest] =
-        Register::Value(exec_boolean_not(state.registers[*reg].get_owned_value()));
+        Register::Value(state.registers[*reg].get_owned_value().exec_boolean_not());
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4642,10 +4654,11 @@ pub fn op_concat(
     let Insn::Concat { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_concat(
-        &state.registers[*lhs].get_owned_value(),
-        &state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_concat(&state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4660,10 +4673,11 @@ pub fn op_and(
     let Insn::And { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_and(
-        &state.registers[*lhs].get_owned_value(),
-        &state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_and(&state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4678,10 +4692,11 @@ pub fn op_or(
     let Insn::Or { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::Value(exec_or(
-        &state.registers[*lhs].get_owned_value(),
-        &state.registers[*rhs].get_owned_value(),
-    ));
+    state.registers[*dest] = Register::Value(
+        state.registers[*lhs]
+            .get_owned_value()
+            .exec_or(&state.registers[*rhs].get_owned_value()),
+    );
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4951,37 +4966,831 @@ pub fn op_count(
     Ok(InsnFunctionStepResult::Step)
 }
 
-fn exec_lower(reg: &Value) -> Option<Value> {
-    match reg {
-        Value::Text(t) => Some(Value::build_text(&t.as_str().to_lowercase())),
-        t => Some(t.to_owned()),
-    }
-}
-
-fn exec_length(reg: &Value) -> Value {
-    match reg {
-        Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
-            Value::Integer(reg.to_string().chars().count() as i64)
+impl Value {
+    pub fn exec_lower(&self) -> Option<Self> {
+        match self {
+            Value::Text(t) => Some(Value::build_text(&t.as_str().to_lowercase())),
+            t => Some(t.to_owned()),
         }
-        Value::Blob(blob) => Value::Integer(blob.len() as i64),
-        _ => reg.to_owned(),
     }
-}
 
-fn exec_octet_length(reg: &Value) -> Value {
-    match reg {
-        Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
-            Value::Integer(reg.to_string().into_bytes().len() as i64)
+    pub fn exec_length(&self) -> Self {
+        match self {
+            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
+                Value::Integer(self.to_string().chars().count() as i64)
+            }
+            Value::Blob(blob) => Value::Integer(blob.len() as i64),
+            _ => self.to_owned(),
         }
-        Value::Blob(blob) => Value::Integer(blob.len() as i64),
-        _ => reg.to_owned(),
     }
-}
 
-fn exec_upper(reg: &Value) -> Option<Value> {
-    match reg {
-        Value::Text(t) => Some(Value::build_text(&t.as_str().to_uppercase())),
-        t => Some(t.to_owned()),
+    pub fn exec_octet_length(&self) -> Self {
+        match self {
+            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
+                Value::Integer(self.to_string().into_bytes().len() as i64)
+            }
+            Value::Blob(blob) => Value::Integer(blob.len() as i64),
+            _ => self.to_owned(),
+        }
+    }
+
+    pub fn exec_upper(&self) -> Option<Self> {
+        match self {
+            Value::Text(t) => Some(Value::build_text(&t.as_str().to_uppercase())),
+            t => Some(t.to_owned()),
+        }
+    }
+
+    pub fn exec_sign(&self) -> Option<Value> {
+        let num = match self {
+            Value::Integer(i) => *i as f64,
+            Value::Float(f) => *f,
+            Value::Text(s) => {
+                if let Ok(i) = s.as_str().parse::<i64>() {
+                    i as f64
+                } else if let Ok(f) = s.as_str().parse::<f64>() {
+                    f
+                } else {
+                    return Some(Value::Null);
+                }
+            }
+            Value::Blob(b) => match std::str::from_utf8(b) {
+                Ok(s) => {
+                    if let Ok(i) = s.parse::<i64>() {
+                        i as f64
+                    } else if let Ok(f) = s.parse::<f64>() {
+                        f
+                    } else {
+                        return Some(Value::Null);
+                    }
+                }
+                Err(_) => return Some(Value::Null),
+            },
+            _ => return Some(Value::Null),
+        };
+
+        let sign = if num > 0.0 {
+            1
+        } else if num < 0.0 {
+            -1
+        } else {
+            0
+        };
+
+        Some(Value::Integer(sign))
+    }
+
+    /// Generates the Soundex code for a given word
+    pub fn exec_soundex(&self) -> Value {
+        let s = match self {
+            Value::Null => return Value::build_text("?000"),
+            Value::Text(s) => {
+                // return ?000 if non ASCII alphabet character is found
+                if !s.as_str().chars().all(|c| c.is_ascii_alphabetic()) {
+                    return Value::build_text("?000");
+                }
+                s.clone()
+            }
+            _ => return Value::build_text("?000"), // For unsupported types, return NULL
+        };
+
+        // Remove numbers and spaces
+        let word: String = s
+            .as_str()
+            .chars()
+            .filter(|c| !c.is_ascii_digit())
+            .collect::<String>()
+            .replace(" ", "");
+        if word.is_empty() {
+            return Value::build_text("0000");
+        }
+
+        let soundex_code = |c| match c {
+            'b' | 'f' | 'p' | 'v' => Some('1'),
+            'c' | 'g' | 'j' | 'k' | 'q' | 's' | 'x' | 'z' => Some('2'),
+            'd' | 't' => Some('3'),
+            'l' => Some('4'),
+            'm' | 'n' => Some('5'),
+            'r' => Some('6'),
+            _ => None,
+        };
+
+        // Convert the word to lowercase for consistent lookups
+        let word = word.to_lowercase();
+        let first_letter = word.chars().next().unwrap();
+
+        // Remove all occurrences of 'h' and 'w' except the first letter
+        let code: String = word
+            .chars()
+            .skip(1)
+            .filter(|&ch| ch != 'h' && ch != 'w')
+            .fold(first_letter.to_string(), |mut acc, ch| {
+                acc.push(ch);
+                acc
+            });
+
+        // Replace consonants with digits based on Soundex mapping
+        let tmp: String = code
+            .chars()
+            .map(|ch| match soundex_code(ch) {
+                Some(code) => code.to_string(),
+                None => ch.to_string(),
+            })
+            .collect();
+
+        // Remove adjacent same digits
+        let tmp = tmp.chars().fold(String::new(), |mut acc, ch| {
+            if !acc.ends_with(ch) {
+                acc.push(ch);
+            }
+            acc
+        });
+
+        // Remove all occurrences of a, e, i, o, u, y except the first letter
+        let mut result = tmp
+            .chars()
+            .enumerate()
+            .filter(|(i, ch)| *i == 0 || !matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+            .map(|(_, ch)| ch)
+            .collect::<String>();
+
+        // If the first symbol is a digit, replace it with the saved first letter
+        if let Some(first_digit) = result.chars().next() {
+            if first_digit.is_ascii_digit() {
+                result.replace_range(0..1, &first_letter.to_string());
+            }
+        }
+
+        // Append zeros if the result contains less than 4 characters
+        while result.len() < 4 {
+            result.push('0');
+        }
+
+        // Retain the first 4 characters and convert to uppercase
+        result.truncate(4);
+        Value::build_text(&result.to_uppercase())
+    }
+
+    pub fn exec_abs(&self) -> Result<Self> {
+        match self {
+            Value::Integer(x) => {
+                match i64::checked_abs(*x) {
+                    Some(y) => Ok(Value::Integer(y)),
+                    // Special case: if we do the abs of "-9223372036854775808", it causes overflow.
+                    // return IntegerOverflow error
+                    None => Err(LimboError::IntegerOverflow),
+                }
+            }
+            Value::Float(x) => {
+                if x < &0.0 {
+                    Ok(Value::Float(-x))
+                } else {
+                    Ok(Value::Float(*x))
+                }
+            }
+            Value::Null => Ok(Value::Null),
+            _ => Ok(Value::Float(0.0)),
+        }
+    }
+
+    pub fn exec_random() -> Self {
+        let mut buf = [0u8; 8];
+        getrandom::getrandom(&mut buf).unwrap();
+        let random_number = i64::from_ne_bytes(buf);
+        Value::Integer(random_number)
+    }
+
+    pub fn exec_randomblob(&self) -> Value {
+        let length = match self {
+            Value::Integer(i) => *i,
+            Value::Float(f) => *f as i64,
+            Value::Text(t) => t.as_str().parse().unwrap_or(1),
+            _ => 1,
+        }
+        .max(1) as usize;
+
+        let mut blob: Vec<u8> = vec![0; length];
+        getrandom::getrandom(&mut blob).expect("Failed to generate random blob");
+        Value::Blob(blob)
+    }
+
+    pub fn exec_quote(&self) -> Self {
+        match self {
+            Value::Null => Value::build_text("NULL"),
+            Value::Integer(_) | Value::Float(_) => self.to_owned(),
+            Value::Blob(_) => todo!(),
+            Value::Text(s) => {
+                let mut quoted = String::with_capacity(s.as_str().len() + 2);
+                quoted.push('\'');
+                for c in s.as_str().chars() {
+                    if c == '\0' {
+                        break;
+                    } else if c == '\'' {
+                        quoted.push('\'');
+                        quoted.push(c);
+                    } else {
+                        quoted.push(c);
+                    }
+                }
+                quoted.push('\'');
+                Value::build_text(&quoted)
+            }
+        }
+    }
+
+    pub fn exec_nullif(&self, second_value: &Self) -> Self {
+        if self != second_value {
+            self.clone()
+        } else {
+            Value::Null
+        }
+    }
+
+    pub fn exec_substring(
+        str_value: &Value,
+        start_value: &Value,
+        length_value: Option<&Value>,
+    ) -> Value {
+        if let (Value::Text(str), Value::Integer(start)) = (str_value, start_value) {
+            let str_len = str.as_str().len() as i64;
+
+            // The left-most character of X is number 1.
+            // If Y is negative then the first character of the substring is found by counting from the right rather than the left.
+            let first_position = if *start < 0 {
+                str_len.saturating_sub((*start).abs())
+            } else {
+                *start - 1
+            };
+            // If Z is negative then the abs(Z) characters preceding the Y-th character are returned.
+            let last_position = match length_value {
+                Some(Value::Integer(length)) => first_position + *length,
+                _ => str_len,
+            };
+            let (start, end) = if first_position <= last_position {
+                (first_position, last_position)
+            } else {
+                (last_position, first_position)
+            };
+            Value::build_text(
+                &str.as_str()[start.clamp(-0, str_len) as usize..end.clamp(0, str_len) as usize],
+            )
+        } else {
+            Value::Null
+        }
+    }
+
+    pub fn exec_instr(&self, pattern: &Value) -> Value {
+        if self == &Value::Null || pattern == &Value::Null {
+            return Value::Null;
+        }
+
+        if let (Value::Blob(reg), Value::Blob(pattern)) = (self, pattern) {
+            let result = reg
+                .windows(pattern.len())
+                .position(|window| window == *pattern)
+                .map_or(0, |i| i + 1);
+            return Value::Integer(result as i64);
+        }
+
+        let reg_str;
+        let reg = match self {
+            Value::Text(s) => s.as_str(),
+            _ => {
+                reg_str = self.to_string();
+                reg_str.as_str()
+            }
+        };
+
+        let pattern_str;
+        let pattern = match pattern {
+            Value::Text(s) => s.as_str(),
+            _ => {
+                pattern_str = pattern.to_string();
+                pattern_str.as_str()
+            }
+        };
+
+        match reg.find(pattern) {
+            Some(position) => Value::Integer(position as i64 + 1),
+            None => Value::Integer(0),
+        }
+    }
+
+    pub fn exec_typeof(&self) -> Value {
+        match self {
+            Value::Null => Value::build_text("null"),
+            Value::Integer(_) => Value::build_text("integer"),
+            Value::Float(_) => Value::build_text("real"),
+            Value::Text(_) => Value::build_text("text"),
+            Value::Blob(_) => Value::build_text("blob"),
+        }
+    }
+
+    pub fn exec_hex(&self) -> Value {
+        match self {
+            Value::Text(_) | Value::Integer(_) | Value::Float(_) | Value::Blob(_) => {
+                let text = self.to_string();
+                Value::build_text(&hex::encode_upper(text))
+            }
+            _ => Value::Null,
+        }
+    }
+
+    pub fn exec_unhex(&self, ignored_chars: Option<&Value>) -> Value {
+        match self {
+            Value::Null => Value::Null,
+            _ => match ignored_chars {
+                None => match hex::decode(self.to_string()) {
+                    Ok(bytes) => Value::Blob(bytes),
+                    Err(_) => Value::Null,
+                },
+                Some(ignore) => match ignore {
+                    Value::Text(_) => {
+                        let pat = ignore.to_string();
+                        let trimmed = self
+                            .to_string()
+                            .trim_start_matches(|x| pat.contains(x))
+                            .trim_end_matches(|x| pat.contains(x))
+                            .to_string();
+                        match hex::decode(trimmed) {
+                            Ok(bytes) => Value::Blob(bytes),
+                            Err(_) => Value::Null,
+                        }
+                    }
+                    _ => Value::Null,
+                },
+            },
+        }
+    }
+
+    pub fn exec_unicode(&self) -> Value {
+        match self {
+            Value::Text(_) | Value::Integer(_) | Value::Float(_) | Value::Blob(_) => {
+                let text = self.to_string();
+                if let Some(first_char) = text.chars().next() {
+                    Value::Integer(first_char as u32 as i64)
+                } else {
+                    Value::Null
+                }
+            }
+            _ => Value::Null,
+        }
+    }
+
+    fn _to_float(&self) -> f64 {
+        match self {
+            Value::Text(x) => match cast_text_to_numeric(x.as_str()) {
+                Value::Integer(i) => i as f64,
+                Value::Float(f) => f,
+                _ => unreachable!(),
+            },
+            Value::Integer(x) => *x as f64,
+            Value::Float(x) => *x,
+            _ => 0.0,
+        }
+    }
+
+    pub fn exec_round(&self, precision: Option<&Value>) -> Value {
+        let reg = self._to_float();
+        let round = |reg: f64, f: f64| {
+            let precision = if f < 1.0 { 0.0 } else { f };
+            Value::Float(reg.round_to_precision(precision as i32))
+        };
+        match precision {
+            Some(Value::Text(x)) => match cast_text_to_numeric(x.as_str()) {
+                Value::Integer(i) => round(reg, i as f64),
+                Value::Float(f) => round(reg, f),
+                _ => unreachable!(),
+            },
+            Some(Value::Integer(i)) => round(reg, *i as f64),
+            Some(Value::Float(f)) => round(reg, *f),
+            None => round(reg, 0.0),
+            _ => Value::Null,
+        }
+    }
+
+    // Implements TRIM pattern matching.
+    pub fn exec_trim(&self, pattern: Option<&Value>) -> Value {
+        match (self, pattern) {
+            (reg, Some(pattern)) => match reg {
+                Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
+                    let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
+                    Value::build_text(reg.to_string().trim_matches(&pattern_chars[..]))
+                }
+                _ => reg.to_owned(),
+            },
+            (Value::Text(t), None) => Value::build_text(t.as_str().trim()),
+            (reg, _) => reg.to_owned(),
+        }
+    }
+    // Implements RTRIM pattern matching.
+    pub fn exec_rtrim(&self, pattern: Option<&Value>) -> Value {
+        match (self, pattern) {
+            (reg, Some(pattern)) => match reg {
+                Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
+                    let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
+                    Value::build_text(reg.to_string().trim_end_matches(&pattern_chars[..]))
+                }
+                _ => reg.to_owned(),
+            },
+            (Value::Text(t), None) => Value::build_text(t.as_str().trim_end()),
+            (reg, _) => reg.to_owned(),
+        }
+    }
+
+    // Implements LTRIM pattern matching.
+    pub fn exec_ltrim(&self, pattern: Option<&Value>) -> Value {
+        match (self, pattern) {
+            (reg, Some(pattern)) => match reg {
+                Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
+                    let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
+                    Value::build_text(reg.to_string().trim_start_matches(&pattern_chars[..]))
+                }
+                _ => reg.to_owned(),
+            },
+            (Value::Text(t), None) => Value::build_text(t.as_str().trim_start()),
+            (reg, _) => reg.to_owned(),
+        }
+    }
+
+    pub fn exec_zeroblob(&self) -> Value {
+        let length: i64 = match self {
+            Value::Integer(i) => *i,
+            Value::Float(f) => *f as i64,
+            Value::Text(s) => s.as_str().parse().unwrap_or(0),
+            _ => 0,
+        };
+        Value::Blob(vec![0; length.max(0) as usize])
+    }
+
+    // exec_if returns whether you should jump
+    pub fn exec_if(&self, jump_if_null: bool, not: bool) -> bool {
+        match self {
+            Value::Integer(0) | Value::Float(0.0) => not,
+            Value::Integer(_) | Value::Float(_) => !not,
+            Value::Null => jump_if_null,
+            _ => false,
+        }
+    }
+
+    pub fn exec_cast(&self, datatype: &str) -> Value {
+        if matches!(self, Value::Null) {
+            return Value::Null;
+        }
+        match affinity(datatype) {
+            // NONE	Casting a value to a type-name with no affinity causes the value to be converted into a BLOB. Casting to a BLOB consists of first casting the value to TEXT in the encoding of the database connection, then interpreting the resulting byte sequence as a BLOB instead of as TEXT.
+            // Historically called NONE, but it's the same as BLOB
+            Affinity::Blob => {
+                // Convert to TEXT first, then interpret as BLOB
+                // TODO: handle encoding
+                let text = self.to_string();
+                Value::Blob(text.into_bytes())
+            }
+            // TEXT To cast a BLOB value to TEXT, the sequence of bytes that make up the BLOB is interpreted as text encoded using the database encoding.
+            // Casting an INTEGER or REAL value into TEXT renders the value as if via sqlite3_snprintf() except that the resulting TEXT uses the encoding of the database connection.
+            Affinity::Text => {
+                // Convert everything to text representation
+                // TODO: handle encoding and whatever sqlite3_snprintf does
+                Value::build_text(&self.to_string())
+            }
+            Affinity::Real => match self {
+                Value::Blob(b) => {
+                    // Convert BLOB to TEXT first
+                    let text = String::from_utf8_lossy(b);
+                    cast_text_to_real(&text)
+                }
+                Value::Text(t) => cast_text_to_real(t.as_str()),
+                Value::Integer(i) => Value::Float(*i as f64),
+                Value::Float(f) => Value::Float(*f),
+                _ => Value::Float(0.0),
+            },
+            Affinity::Integer => match self {
+                Value::Blob(b) => {
+                    // Convert BLOB to TEXT first
+                    let text = String::from_utf8_lossy(b);
+                    cast_text_to_integer(&text)
+                }
+                Value::Text(t) => cast_text_to_integer(t.as_str()),
+                Value::Integer(i) => Value::Integer(*i),
+                // A cast of a REAL value into an INTEGER results in the integer between the REAL value and zero
+                // that is closest to the REAL value. If a REAL is greater than the greatest possible signed integer (+9223372036854775807)
+                // then the result is the greatest possible signed integer and if the REAL is less than the least possible signed integer (-9223372036854775808)
+                // then the result is the least possible signed integer.
+                Value::Float(f) => {
+                    let i = f.trunc() as i128;
+                    if i > i64::MAX as i128 {
+                        Value::Integer(i64::MAX)
+                    } else if i < i64::MIN as i128 {
+                        Value::Integer(i64::MIN)
+                    } else {
+                        Value::Integer(i as i64)
+                    }
+                }
+                _ => Value::Integer(0),
+            },
+            Affinity::Numeric => match self {
+                Value::Blob(b) => {
+                    let text = String::from_utf8_lossy(b);
+                    cast_text_to_numeric(&text)
+                }
+                Value::Text(t) => cast_text_to_numeric(t.as_str()),
+                Value::Integer(i) => Value::Integer(*i),
+                Value::Float(f) => Value::Float(*f),
+                _ => self.clone(), // TODO probably wrong
+            },
+        }
+    }
+
+    pub fn exec_replace(source: &Value, pattern: &Value, replacement: &Value) -> Value {
+        // The replace(X,Y,Z) function returns a string formed by substituting string Z for every occurrence of
+        // string Y in string X. The BINARY collating sequence is used for comparisons. If Y is an empty string
+        // then return X unchanged. If Z is not initially a string, it is cast to a UTF-8 string prior to processing.
+
+        // If any of the arguments is NULL, the result is NULL.
+        if matches!(source, Value::Null)
+            || matches!(pattern, Value::Null)
+            || matches!(replacement, Value::Null)
+        {
+            return Value::Null;
+        }
+
+        let source = source.exec_cast("TEXT");
+        let pattern = pattern.exec_cast("TEXT");
+        let replacement = replacement.exec_cast("TEXT");
+
+        // If any of the casts failed, panic as text casting is not expected to fail.
+        match (&source, &pattern, &replacement) {
+            (Value::Text(source), Value::Text(pattern), Value::Text(replacement)) => {
+                if pattern.as_str().is_empty() {
+                    return Value::Text(source.clone());
+                }
+
+                let result = source
+                    .as_str()
+                    .replace(pattern.as_str(), replacement.as_str());
+                Value::build_text(&result)
+            }
+            _ => unreachable!("text cast should never fail"),
+        }
+    }
+
+    fn to_f64(&self) -> Option<f64> {
+        match self {
+            Value::Integer(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::Text(t) => t.as_str().parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn exec_math_unary(&self, function: &MathFunc) -> Value {
+        // In case of some functions and integer input, return the input as is
+        if let Value::Integer(_) = self {
+            if matches! { function, MathFunc::Ceil | MathFunc::Ceiling | MathFunc::Floor | MathFunc::Trunc }
+            {
+                return self.clone();
+            }
+        }
+
+        let f = match self.to_f64() {
+            Some(f) => f,
+            None => return Value::Null,
+        };
+
+        let result = match function {
+            MathFunc::Acos => libm::acos(f),
+            MathFunc::Acosh => libm::acosh(f),
+            MathFunc::Asin => libm::asin(f),
+            MathFunc::Asinh => libm::asinh(f),
+            MathFunc::Atan => libm::atan(f),
+            MathFunc::Atanh => libm::atanh(f),
+            MathFunc::Ceil | MathFunc::Ceiling => libm::ceil(f),
+            MathFunc::Cos => libm::cos(f),
+            MathFunc::Cosh => libm::cosh(f),
+            MathFunc::Degrees => f.to_degrees(),
+            MathFunc::Exp => libm::exp(f),
+            MathFunc::Floor => libm::floor(f),
+            MathFunc::Ln => libm::log(f),
+            MathFunc::Log10 => libm::log10(f),
+            MathFunc::Log2 => libm::log2(f),
+            MathFunc::Radians => f.to_radians(),
+            MathFunc::Sin => libm::sin(f),
+            MathFunc::Sinh => libm::sinh(f),
+            MathFunc::Sqrt => libm::sqrt(f),
+            MathFunc::Tan => libm::tan(f),
+            MathFunc::Tanh => libm::tanh(f),
+            MathFunc::Trunc => libm::trunc(f),
+            _ => unreachable!("Unexpected mathematical unary function {:?}", function),
+        };
+
+        if result.is_nan() {
+            Value::Null
+        } else {
+            Value::Float(result)
+        }
+    }
+
+    fn exec_math_binary(&self, rhs: &Value, function: &MathFunc) -> Value {
+        let lhs = match self.to_f64() {
+            Some(f) => f,
+            None => return Value::Null,
+        };
+
+        let rhs = match rhs.to_f64() {
+            Some(f) => f,
+            None => return Value::Null,
+        };
+
+        let result = match function {
+            MathFunc::Atan2 => libm::atan2(lhs, rhs),
+            MathFunc::Mod => libm::fmod(lhs, rhs),
+            MathFunc::Pow | MathFunc::Power => libm::pow(lhs, rhs),
+            _ => unreachable!("Unexpected mathematical binary function {:?}", function),
+        };
+
+        if result.is_nan() {
+            Value::Null
+        } else {
+            Value::Float(result)
+        }
+    }
+
+    fn exec_math_log(&self, base: Option<&Value>) -> Value {
+        let f = match self.to_f64() {
+            Some(f) => f,
+            None => return Value::Null,
+        };
+
+        let base = match base {
+            Some(base) => match base.to_f64() {
+                Some(f) => f,
+                None => return Value::Null,
+            },
+            None => 10.0,
+        };
+
+        if f <= 0.0 || base <= 0.0 || base == 1.0 {
+            return Value::Null;
+        }
+        let log_x = libm::log(f);
+        let log_base = libm::log(base);
+        let result = log_x / log_base;
+        Value::Float(result)
+    }
+
+    fn exec_likely(&self) -> Value {
+        self.clone()
+    }
+
+    fn exec_likelihood(&self, _probability: &Value) -> Value {
+        self.clone()
+    }
+
+    pub fn exec_add(&self, rhs: &Value) -> Value {
+        (Numeric::from(self) + Numeric::from(rhs)).into()
+    }
+
+    pub fn exec_subtract(&self, rhs: &Value) -> Value {
+        (Numeric::from(self) - Numeric::from(rhs)).into()
+    }
+
+    pub fn exec_multiply(&self, rhs: &Value) -> Value {
+        (Numeric::from(self) * Numeric::from(rhs)).into()
+    }
+
+    pub fn exec_divide(&self, rhs: &Value) -> Value {
+        (Numeric::from(self) / Numeric::from(rhs)).into()
+    }
+
+    pub fn exec_bit_and(&self, rhs: &Value) -> Value {
+        (NullableInteger::from(self) & NullableInteger::from(rhs)).into()
+    }
+
+    pub fn exec_bit_or(&self, rhs: &Value) -> Value {
+        (NullableInteger::from(self) | NullableInteger::from(rhs)).into()
+    }
+
+    pub fn exec_remainder(&self, rhs: &Value) -> Value {
+        let convert_to_float = matches!(Numeric::from(self), Numeric::Float(_))
+            || matches!(Numeric::from(rhs), Numeric::Float(_));
+
+        match NullableInteger::from(self) % NullableInteger::from(rhs) {
+            NullableInteger::Null => Value::Null,
+            NullableInteger::Integer(v) => {
+                if convert_to_float {
+                    Value::Float(v as f64)
+                } else {
+                    Value::Integer(v)
+                }
+            }
+        }
+    }
+
+    pub fn exec_bit_not(&self) -> Value {
+        (!NullableInteger::from(self)).into()
+    }
+
+    pub fn exec_shift_left(&self, rhs: &Value) -> Value {
+        (NullableInteger::from(self) << NullableInteger::from(rhs)).into()
+    }
+
+    pub fn exec_shift_right(&self, rhs: &Value) -> Value {
+        (NullableInteger::from(self) >> NullableInteger::from(rhs)).into()
+    }
+
+    pub fn exec_boolean_not(&self) -> Value {
+        match Numeric::from(self).try_into_bool() {
+            None => Value::Null,
+            Some(v) => Value::Integer(!v as i64),
+        }
+    }
+
+    pub fn exec_concat(&self, rhs: &Value) -> Value {
+        match (self, rhs) {
+            (Value::Text(lhs_text), Value::Text(rhs_text)) => {
+                Value::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
+            }
+            (Value::Text(lhs_text), Value::Integer(rhs_int)) => {
+                Value::build_text(&(lhs_text.as_str().to_string() + &rhs_int.to_string()))
+            }
+            (Value::Text(lhs_text), Value::Float(rhs_float)) => {
+                Value::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
+            }
+            (Value::Integer(lhs_int), Value::Text(rhs_text)) => {
+                Value::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
+            }
+            (Value::Integer(lhs_int), Value::Integer(rhs_int)) => {
+                Value::build_text(&(lhs_int.to_string() + &rhs_int.to_string()))
+            }
+            (Value::Integer(lhs_int), Value::Float(rhs_float)) => {
+                Value::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
+            }
+            (Value::Float(lhs_float), Value::Text(rhs_text)) => {
+                Value::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
+            }
+            (Value::Float(lhs_float), Value::Integer(rhs_int)) => {
+                Value::build_text(&(lhs_float.to_string() + &rhs_int.to_string()))
+            }
+            (Value::Float(lhs_float), Value::Float(rhs_float)) => {
+                Value::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
+            }
+            (Value::Null, _) | (_, Value::Null) => Value::Null,
+            (Value::Blob(_), _) | (_, Value::Blob(_)) => {
+                todo!("TODO: Handle Blob conversion to String")
+            }
+        }
+    }
+
+    pub fn exec_and(&self, rhs: &Value) -> Value {
+        match (
+            Numeric::from(self).try_into_bool(),
+            Numeric::from(rhs).try_into_bool(),
+        ) {
+            (Some(false), _) | (_, Some(false)) => Value::Integer(0),
+            (None, _) | (_, None) => Value::Null,
+            _ => Value::Integer(1),
+        }
+    }
+
+    pub fn exec_or(&self, rhs: &Value) -> Value {
+        match (
+            Numeric::from(self).try_into_bool(),
+            Numeric::from(rhs).try_into_bool(),
+        ) {
+            (Some(true), _) | (_, Some(true)) => Value::Integer(1),
+            (None, _) | (_, None) => Value::Null,
+            _ => Value::Integer(0),
+        }
+    }
+
+    // Implements LIKE pattern matching. Caches the constructed regex if a cache is provided
+    pub fn exec_like(
+        regex_cache: Option<&mut HashMap<String, Regex>>,
+        pattern: &str,
+        text: &str,
+    ) -> bool {
+        if let Some(cache) = regex_cache {
+            match cache.get(pattern) {
+                Some(re) => re.is_match(text),
+                None => {
+                    let re = construct_like_regex(pattern);
+                    let res = re.is_match(text);
+                    cache.insert(pattern.to_string(), re);
+                    res
+                }
+            }
+        } else {
+            let re = construct_like_regex(pattern);
+            re.is_match(text)
+        }
+    }
+
+    pub fn exec_min<'a, T: Iterator<Item = &'a Value>>(regs: T) -> Value {
+        regs.min().map(|v| v.to_owned()).unwrap_or(Value::Null)
+    }
+
+    pub fn exec_max<'a, T: Iterator<Item = &'a Value>>(regs: T) -> Value {
+        regs.max().map(|v| v.to_owned()).unwrap_or(Value::Null)
     }
 }
 
@@ -5021,203 +5830,6 @@ fn exec_concat_ws(registers: &[Register]) -> Value {
     }
 
     Value::build_text(&result)
-}
-
-fn exec_sign(reg: &Value) -> Option<Value> {
-    let num = match reg {
-        Value::Integer(i) => *i as f64,
-        Value::Float(f) => *f,
-        Value::Text(s) => {
-            if let Ok(i) = s.as_str().parse::<i64>() {
-                i as f64
-            } else if let Ok(f) = s.as_str().parse::<f64>() {
-                f
-            } else {
-                return Some(Value::Null);
-            }
-        }
-        Value::Blob(b) => match std::str::from_utf8(b) {
-            Ok(s) => {
-                if let Ok(i) = s.parse::<i64>() {
-                    i as f64
-                } else if let Ok(f) = s.parse::<f64>() {
-                    f
-                } else {
-                    return Some(Value::Null);
-                }
-            }
-            Err(_) => return Some(Value::Null),
-        },
-        _ => return Some(Value::Null),
-    };
-
-    let sign = if num > 0.0 {
-        1
-    } else if num < 0.0 {
-        -1
-    } else {
-        0
-    };
-
-    Some(Value::Integer(sign))
-}
-
-/// Generates the Soundex code for a given word
-pub fn exec_soundex(reg: &Value) -> Value {
-    let s = match reg {
-        Value::Null => return Value::build_text("?000"),
-        Value::Text(s) => {
-            // return ?000 if non ASCII alphabet character is found
-            if !s.as_str().chars().all(|c| c.is_ascii_alphabetic()) {
-                return Value::build_text("?000");
-            }
-            s.clone()
-        }
-        _ => return Value::build_text("?000"), // For unsupported types, return NULL
-    };
-
-    // Remove numbers and spaces
-    let word: String = s
-        .as_str()
-        .chars()
-        .filter(|c| !c.is_ascii_digit())
-        .collect::<String>()
-        .replace(" ", "");
-    if word.is_empty() {
-        return Value::build_text("0000");
-    }
-
-    let soundex_code = |c| match c {
-        'b' | 'f' | 'p' | 'v' => Some('1'),
-        'c' | 'g' | 'j' | 'k' | 'q' | 's' | 'x' | 'z' => Some('2'),
-        'd' | 't' => Some('3'),
-        'l' => Some('4'),
-        'm' | 'n' => Some('5'),
-        'r' => Some('6'),
-        _ => None,
-    };
-
-    // Convert the word to lowercase for consistent lookups
-    let word = word.to_lowercase();
-    let first_letter = word.chars().next().unwrap();
-
-    // Remove all occurrences of 'h' and 'w' except the first letter
-    let code: String = word
-        .chars()
-        .skip(1)
-        .filter(|&ch| ch != 'h' && ch != 'w')
-        .fold(first_letter.to_string(), |mut acc, ch| {
-            acc.push(ch);
-            acc
-        });
-
-    // Replace consonants with digits based on Soundex mapping
-    let tmp: String = code
-        .chars()
-        .map(|ch| match soundex_code(ch) {
-            Some(code) => code.to_string(),
-            None => ch.to_string(),
-        })
-        .collect();
-
-    // Remove adjacent same digits
-    let tmp = tmp.chars().fold(String::new(), |mut acc, ch| {
-        if !acc.ends_with(ch) {
-            acc.push(ch);
-        }
-        acc
-    });
-
-    // Remove all occurrences of a, e, i, o, u, y except the first letter
-    let mut result = tmp
-        .chars()
-        .enumerate()
-        .filter(|(i, ch)| *i == 0 || !matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
-        .map(|(_, ch)| ch)
-        .collect::<String>();
-
-    // If the first symbol is a digit, replace it with the saved first letter
-    if let Some(first_digit) = result.chars().next() {
-        if first_digit.is_ascii_digit() {
-            result.replace_range(0..1, &first_letter.to_string());
-        }
-    }
-
-    // Append zeros if the result contains less than 4 characters
-    while result.len() < 4 {
-        result.push('0');
-    }
-
-    // Retain the first 4 characters and convert to uppercase
-    result.truncate(4);
-    Value::build_text(&result.to_uppercase())
-}
-
-fn exec_abs(reg: &Value) -> Result<Value> {
-    match reg {
-        Value::Integer(x) => {
-            match i64::checked_abs(*x) {
-                Some(y) => Ok(Value::Integer(y)),
-                // Special case: if we do the abs of "-9223372036854775808", it causes overflow.
-                // return IntegerOverflow error
-                None => Err(LimboError::IntegerOverflow),
-            }
-        }
-        Value::Float(x) => {
-            if x < &0.0 {
-                Ok(Value::Float(-x))
-            } else {
-                Ok(Value::Float(*x))
-            }
-        }
-        Value::Null => Ok(Value::Null),
-        _ => Ok(Value::Float(0.0)),
-    }
-}
-
-fn exec_random() -> Value {
-    let mut buf = [0u8; 8];
-    getrandom::getrandom(&mut buf).unwrap();
-    let random_number = i64::from_ne_bytes(buf);
-    Value::Integer(random_number)
-}
-
-fn exec_randomblob(reg: &Value) -> Value {
-    let length = match reg {
-        Value::Integer(i) => *i,
-        Value::Float(f) => *f as i64,
-        Value::Text(t) => t.as_str().parse().unwrap_or(1),
-        _ => 1,
-    }
-    .max(1) as usize;
-
-    let mut blob: Vec<u8> = vec![0; length];
-    getrandom::getrandom(&mut blob).expect("Failed to generate random blob");
-    Value::Blob(blob)
-}
-
-fn exec_quote(value: &Value) -> Value {
-    match value {
-        Value::Null => Value::build_text("NULL"),
-        Value::Integer(_) | Value::Float(_) => value.to_owned(),
-        Value::Blob(_) => todo!(),
-        Value::Text(s) => {
-            let mut quoted = String::with_capacity(s.as_str().len() + 2);
-            quoted.push('\'');
-            for c in s.as_str().chars() {
-                if c == '\0' {
-                    break;
-                } else if c == '\'' {
-                    quoted.push('\'');
-                    quoted.push(c);
-                } else {
-                    quoted.push(c);
-                }
-            }
-            quoted.push('\'');
-            Value::build_text(&quoted)
-        }
-    }
 }
 
 fn exec_char(values: &[Register]) -> Value {
@@ -5260,272 +5872,6 @@ fn construct_like_regex(pattern: &str) -> Regex {
         .dot_matches_new_line(true)
         .build()
         .unwrap()
-}
-
-// Implements LIKE pattern matching. Caches the constructed regex if a cache is provided
-fn exec_like(regex_cache: Option<&mut HashMap<String, Regex>>, pattern: &str, text: &str) -> bool {
-    if let Some(cache) = regex_cache {
-        match cache.get(pattern) {
-            Some(re) => re.is_match(text),
-            None => {
-                let re = construct_like_regex(pattern);
-                let res = re.is_match(text);
-                cache.insert(pattern.to_string(), re);
-                res
-            }
-        }
-    } else {
-        let re = construct_like_regex(pattern);
-        re.is_match(text)
-    }
-}
-
-fn exec_min(regs: &[Register]) -> Value {
-    regs.iter()
-        .map(|v| v.get_owned_value())
-        .min()
-        .map(|v| v.to_owned())
-        .unwrap_or(Value::Null)
-}
-
-fn exec_max(regs: &[Register]) -> Value {
-    regs.iter()
-        .map(|v| v.get_owned_value())
-        .max()
-        .map(|v| v.to_owned())
-        .unwrap_or(Value::Null)
-}
-
-fn exec_nullif(first_value: &Value, second_value: &Value) -> Value {
-    if first_value != second_value {
-        first_value.clone()
-    } else {
-        Value::Null
-    }
-}
-
-fn exec_substring(str_value: &Value, start_value: &Value, length_value: Option<&Value>) -> Value {
-    if let (Value::Text(str), Value::Integer(start)) = (str_value, start_value) {
-        let str_len = str.as_str().len() as i64;
-
-        // The left-most character of X is number 1.
-        // If Y is negative then the first character of the substring is found by counting from the right rather than the left.
-        let first_position = if *start < 0 {
-            str_len.saturating_sub((*start).abs())
-        } else {
-            *start - 1
-        };
-        // If Z is negative then the abs(Z) characters preceding the Y-th character are returned.
-        let last_position = match length_value {
-            Some(Value::Integer(length)) => first_position + *length,
-            _ => str_len,
-        };
-        let (start, end) = if first_position <= last_position {
-            (first_position, last_position)
-        } else {
-            (last_position, first_position)
-        };
-        Value::build_text(
-            &str.as_str()[start.clamp(-0, str_len) as usize..end.clamp(0, str_len) as usize],
-        )
-    } else {
-        Value::Null
-    }
-}
-
-fn exec_instr(reg: &Value, pattern: &Value) -> Value {
-    if reg == &Value::Null || pattern == &Value::Null {
-        return Value::Null;
-    }
-
-    if let (Value::Blob(reg), Value::Blob(pattern)) = (reg, pattern) {
-        let result = reg
-            .windows(pattern.len())
-            .position(|window| window == *pattern)
-            .map_or(0, |i| i + 1);
-        return Value::Integer(result as i64);
-    }
-
-    let reg_str;
-    let reg = match reg {
-        Value::Text(s) => s.as_str(),
-        _ => {
-            reg_str = reg.to_string();
-            reg_str.as_str()
-        }
-    };
-
-    let pattern_str;
-    let pattern = match pattern {
-        Value::Text(s) => s.as_str(),
-        _ => {
-            pattern_str = pattern.to_string();
-            pattern_str.as_str()
-        }
-    };
-
-    match reg.find(pattern) {
-        Some(position) => Value::Integer(position as i64 + 1),
-        None => Value::Integer(0),
-    }
-}
-
-fn exec_typeof(reg: &Value) -> Value {
-    match reg {
-        Value::Null => Value::build_text("null"),
-        Value::Integer(_) => Value::build_text("integer"),
-        Value::Float(_) => Value::build_text("real"),
-        Value::Text(_) => Value::build_text("text"),
-        Value::Blob(_) => Value::build_text("blob"),
-    }
-}
-
-fn exec_hex(reg: &Value) -> Value {
-    match reg {
-        Value::Text(_) | Value::Integer(_) | Value::Float(_) | Value::Blob(_) => {
-            let text = reg.to_string();
-            Value::build_text(&hex::encode_upper(text))
-        }
-        _ => Value::Null,
-    }
-}
-
-fn exec_unhex(reg: &Value, ignored_chars: Option<&Value>) -> Value {
-    match reg {
-        Value::Null => Value::Null,
-        _ => match ignored_chars {
-            None => match hex::decode(reg.to_string()) {
-                Ok(bytes) => Value::Blob(bytes),
-                Err(_) => Value::Null,
-            },
-            Some(ignore) => match ignore {
-                Value::Text(_) => {
-                    let pat = ignore.to_string();
-                    let trimmed = reg
-                        .to_string()
-                        .trim_start_matches(|x| pat.contains(x))
-                        .trim_end_matches(|x| pat.contains(x))
-                        .to_string();
-                    match hex::decode(trimmed) {
-                        Ok(bytes) => Value::Blob(bytes),
-                        Err(_) => Value::Null,
-                    }
-                }
-                _ => Value::Null,
-            },
-        },
-    }
-}
-
-fn exec_unicode(reg: &Value) -> Value {
-    match reg {
-        Value::Text(_) | Value::Integer(_) | Value::Float(_) | Value::Blob(_) => {
-            let text = reg.to_string();
-            if let Some(first_char) = text.chars().next() {
-                Value::Integer(first_char as u32 as i64)
-            } else {
-                Value::Null
-            }
-        }
-        _ => Value::Null,
-    }
-}
-
-fn _to_float(reg: &Value) -> f64 {
-    match reg {
-        Value::Text(x) => match cast_text_to_numeric(x.as_str()) {
-            Value::Integer(i) => i as f64,
-            Value::Float(f) => f,
-            _ => unreachable!(),
-        },
-        Value::Integer(x) => *x as f64,
-        Value::Float(x) => *x,
-        _ => 0.0,
-    }
-}
-
-fn exec_round(reg: &Value, precision: Option<&Value>) -> Value {
-    let reg = _to_float(reg);
-    let round = |reg: f64, f: f64| {
-        let precision = if f < 1.0 { 0.0 } else { f };
-        Value::Float(reg.round_to_precision(precision as i32))
-    };
-    match precision {
-        Some(Value::Text(x)) => match cast_text_to_numeric(x.as_str()) {
-            Value::Integer(i) => round(reg, i as f64),
-            Value::Float(f) => round(reg, f),
-            _ => unreachable!(),
-        },
-        Some(Value::Integer(i)) => round(reg, *i as f64),
-        Some(Value::Float(f)) => round(reg, *f),
-        None => round(reg, 0.0),
-        _ => Value::Null,
-    }
-}
-
-// Implements TRIM pattern matching.
-fn exec_trim(reg: &Value, pattern: Option<&Value>) -> Value {
-    match (reg, pattern) {
-        (reg, Some(pattern)) => match reg {
-            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
-                let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
-                Value::build_text(reg.to_string().trim_matches(&pattern_chars[..]))
-            }
-            _ => reg.to_owned(),
-        },
-        (Value::Text(t), None) => Value::build_text(t.as_str().trim()),
-        (reg, _) => reg.to_owned(),
-    }
-}
-
-// Implements LTRIM pattern matching.
-fn exec_ltrim(reg: &Value, pattern: Option<&Value>) -> Value {
-    match (reg, pattern) {
-        (reg, Some(pattern)) => match reg {
-            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
-                let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
-                Value::build_text(reg.to_string().trim_start_matches(&pattern_chars[..]))
-            }
-            _ => reg.to_owned(),
-        },
-        (Value::Text(t), None) => Value::build_text(t.as_str().trim_start()),
-        (reg, _) => reg.to_owned(),
-    }
-}
-
-// Implements RTRIM pattern matching.
-fn exec_rtrim(reg: &Value, pattern: Option<&Value>) -> Value {
-    match (reg, pattern) {
-        (reg, Some(pattern)) => match reg {
-            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
-                let pattern_chars: Vec<char> = pattern.to_string().chars().collect();
-                Value::build_text(reg.to_string().trim_end_matches(&pattern_chars[..]))
-            }
-            _ => reg.to_owned(),
-        },
-        (Value::Text(t), None) => Value::build_text(t.as_str().trim_end()),
-        (reg, _) => reg.to_owned(),
-    }
-}
-
-fn exec_zeroblob(req: &Value) -> Value {
-    let length: i64 = match req {
-        Value::Integer(i) => *i,
-        Value::Float(f) => *f as i64,
-        Value::Text(s) => s.as_str().parse().unwrap_or(0),
-        _ => 0,
-    };
-    Value::Blob(vec![0; length.max(0) as usize])
-}
-
-// exec_if returns whether you should jump
-fn exec_if(reg: &Value, jump_if_null: bool, not: bool) -> bool {
-    match reg {
-        Value::Integer(0) | Value::Float(0.0) => not,
-        Value::Integer(_) | Value::Float(_) => !not,
-        Value::Null => jump_if_null,
-        _ => false,
-    }
 }
 
 fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
@@ -5597,107 +5943,6 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
     return true;
 }
 
-fn exec_cast(value: &Value, datatype: &str) -> Value {
-    if matches!(value, Value::Null) {
-        return Value::Null;
-    }
-    match affinity(datatype) {
-        // NONE	Casting a value to a type-name with no affinity causes the value to be converted into a BLOB. Casting to a BLOB consists of first casting the value to TEXT in the encoding of the database connection, then interpreting the resulting byte sequence as a BLOB instead of as TEXT.
-        // Historically called NONE, but it's the same as BLOB
-        Affinity::Blob => {
-            // Convert to TEXT first, then interpret as BLOB
-            // TODO: handle encoding
-            let text = value.to_string();
-            Value::Blob(text.into_bytes())
-        }
-        // TEXT To cast a BLOB value to TEXT, the sequence of bytes that make up the BLOB is interpreted as text encoded using the database encoding.
-        // Casting an INTEGER or REAL value into TEXT renders the value as if via sqlite3_snprintf() except that the resulting TEXT uses the encoding of the database connection.
-        Affinity::Text => {
-            // Convert everything to text representation
-            // TODO: handle encoding and whatever sqlite3_snprintf does
-            Value::build_text(&value.to_string())
-        }
-        Affinity::Real => match value {
-            Value::Blob(b) => {
-                // Convert BLOB to TEXT first
-                let text = String::from_utf8_lossy(b);
-                cast_text_to_real(&text)
-            }
-            Value::Text(t) => cast_text_to_real(t.as_str()),
-            Value::Integer(i) => Value::Float(*i as f64),
-            Value::Float(f) => Value::Float(*f),
-            _ => Value::Float(0.0),
-        },
-        Affinity::Integer => match value {
-            Value::Blob(b) => {
-                // Convert BLOB to TEXT first
-                let text = String::from_utf8_lossy(b);
-                cast_text_to_integer(&text)
-            }
-            Value::Text(t) => cast_text_to_integer(t.as_str()),
-            Value::Integer(i) => Value::Integer(*i),
-            // A cast of a REAL value into an INTEGER results in the integer between the REAL value and zero
-            // that is closest to the REAL value. If a REAL is greater than the greatest possible signed integer (+9223372036854775807)
-            // then the result is the greatest possible signed integer and if the REAL is less than the least possible signed integer (-9223372036854775808)
-            // then the result is the least possible signed integer.
-            Value::Float(f) => {
-                let i = f.trunc() as i128;
-                if i > i64::MAX as i128 {
-                    Value::Integer(i64::MAX)
-                } else if i < i64::MIN as i128 {
-                    Value::Integer(i64::MIN)
-                } else {
-                    Value::Integer(i as i64)
-                }
-            }
-            _ => Value::Integer(0),
-        },
-        Affinity::Numeric => match value {
-            Value::Blob(b) => {
-                let text = String::from_utf8_lossy(b);
-                cast_text_to_numeric(&text)
-            }
-            Value::Text(t) => cast_text_to_numeric(t.as_str()),
-            Value::Integer(i) => Value::Integer(*i),
-            Value::Float(f) => Value::Float(*f),
-            _ => value.clone(), // TODO probably wrong
-        },
-    }
-}
-
-fn exec_replace(source: &Value, pattern: &Value, replacement: &Value) -> Value {
-    // The replace(X,Y,Z) function returns a string formed by substituting string Z for every occurrence of
-    // string Y in string X. The BINARY collating sequence is used for comparisons. If Y is an empty string
-    // then return X unchanged. If Z is not initially a string, it is cast to a UTF-8 string prior to processing.
-
-    // If any of the arguments is NULL, the result is NULL.
-    if matches!(source, Value::Null)
-        || matches!(pattern, Value::Null)
-        || matches!(replacement, Value::Null)
-    {
-        return Value::Null;
-    }
-
-    let source = exec_cast(source, "TEXT");
-    let pattern = exec_cast(pattern, "TEXT");
-    let replacement = exec_cast(replacement, "TEXT");
-
-    // If any of the casts failed, panic as text casting is not expected to fail.
-    match (&source, &pattern, &replacement) {
-        (Value::Text(source), Value::Text(pattern), Value::Text(replacement)) => {
-            if pattern.as_str().is_empty() {
-                return Value::Text(source.clone());
-            }
-
-            let result = source
-                .as_str()
-                .replace(pattern.as_str(), replacement.as_str());
-            Value::build_text(&result)
-        }
-        _ => unreachable!("text cast should never fail"),
-    }
-}
-
 fn execute_sqlite_version(version_integer: i64) -> String {
     let major = version_integer / 1_000_000;
     let minor = (version_integer % 1_000_000) / 1_000;
@@ -5706,239 +5951,9 @@ fn execute_sqlite_version(version_integer: i64) -> String {
     format!("{}.{}.{}", major, minor, release)
 }
 
-fn to_f64(reg: &Value) -> Option<f64> {
-    match reg {
-        Value::Integer(i) => Some(*i as f64),
-        Value::Float(f) => Some(*f),
-        Value::Text(t) => t.as_str().parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn exec_math_unary(reg: &Value, function: &MathFunc) -> Value {
-    // In case of some functions and integer input, return the input as is
-    if let Value::Integer(_) = reg {
-        if matches! { function, MathFunc::Ceil | MathFunc::Ceiling | MathFunc::Floor | MathFunc::Trunc }
-        {
-            return reg.clone();
-        }
-    }
-
-    let f = match to_f64(reg) {
-        Some(f) => f,
-        None => return Value::Null,
-    };
-
-    let result = match function {
-        MathFunc::Acos => libm::acos(f),
-        MathFunc::Acosh => libm::acosh(f),
-        MathFunc::Asin => libm::asin(f),
-        MathFunc::Asinh => libm::asinh(f),
-        MathFunc::Atan => libm::atan(f),
-        MathFunc::Atanh => libm::atanh(f),
-        MathFunc::Ceil | MathFunc::Ceiling => libm::ceil(f),
-        MathFunc::Cos => libm::cos(f),
-        MathFunc::Cosh => libm::cosh(f),
-        MathFunc::Degrees => f.to_degrees(),
-        MathFunc::Exp => libm::exp(f),
-        MathFunc::Floor => libm::floor(f),
-        MathFunc::Ln => libm::log(f),
-        MathFunc::Log10 => libm::log10(f),
-        MathFunc::Log2 => libm::log2(f),
-        MathFunc::Radians => f.to_radians(),
-        MathFunc::Sin => libm::sin(f),
-        MathFunc::Sinh => libm::sinh(f),
-        MathFunc::Sqrt => libm::sqrt(f),
-        MathFunc::Tan => libm::tan(f),
-        MathFunc::Tanh => libm::tanh(f),
-        MathFunc::Trunc => libm::trunc(f),
-        _ => unreachable!("Unexpected mathematical unary function {:?}", function),
-    };
-
-    if result.is_nan() {
-        Value::Null
-    } else {
-        Value::Float(result)
-    }
-}
-
-fn exec_math_binary(lhs: &Value, rhs: &Value, function: &MathFunc) -> Value {
-    let lhs = match to_f64(lhs) {
-        Some(f) => f,
-        None => return Value::Null,
-    };
-
-    let rhs = match to_f64(rhs) {
-        Some(f) => f,
-        None => return Value::Null,
-    };
-
-    let result = match function {
-        MathFunc::Atan2 => libm::atan2(lhs, rhs),
-        MathFunc::Mod => libm::fmod(lhs, rhs),
-        MathFunc::Pow | MathFunc::Power => libm::pow(lhs, rhs),
-        _ => unreachable!("Unexpected mathematical binary function {:?}", function),
-    };
-
-    if result.is_nan() {
-        Value::Null
-    } else {
-        Value::Float(result)
-    }
-}
-
-fn exec_math_log(arg: &Value, base: Option<&Value>) -> Value {
-    let f = match to_f64(arg) {
-        Some(f) => f,
-        None => return Value::Null,
-    };
-
-    let base = match base {
-        Some(base) => match to_f64(base) {
-            Some(f) => f,
-            None => return Value::Null,
-        },
-        None => 10.0,
-    };
-
-    if f <= 0.0 || base <= 0.0 || base == 1.0 {
-        return Value::Null;
-    }
-    let log_x = libm::log(f);
-    let log_base = libm::log(base);
-    let result = log_x / log_base;
-    Value::Float(result)
-}
-
-fn exec_likely(reg: &Value) -> Value {
-    reg.clone()
-}
-
-fn exec_likelihood(reg: &Value, _probability: &Value) -> Value {
-    reg.clone()
-}
-
-pub fn exec_add(lhs: &Value, rhs: &Value) -> Value {
-    (Numeric::from(lhs) + Numeric::from(rhs)).into()
-}
-
-pub fn exec_subtract(lhs: &Value, rhs: &Value) -> Value {
-    (Numeric::from(lhs) - Numeric::from(rhs)).into()
-}
-
-pub fn exec_multiply(lhs: &Value, rhs: &Value) -> Value {
-    (Numeric::from(lhs) * Numeric::from(rhs)).into()
-}
-
-pub fn exec_divide(lhs: &Value, rhs: &Value) -> Value {
-    (Numeric::from(lhs) / Numeric::from(rhs)).into()
-}
-
-pub fn exec_bit_and(lhs: &Value, rhs: &Value) -> Value {
-    (NullableInteger::from(lhs) & NullableInteger::from(rhs)).into()
-}
-
-pub fn exec_bit_or(lhs: &Value, rhs: &Value) -> Value {
-    (NullableInteger::from(lhs) | NullableInteger::from(rhs)).into()
-}
-
-pub fn exec_remainder(lhs: &Value, rhs: &Value) -> Value {
-    let convert_to_float = matches!(Numeric::from(lhs), Numeric::Float(_))
-        || matches!(Numeric::from(rhs), Numeric::Float(_));
-
-    match NullableInteger::from(lhs) % NullableInteger::from(rhs) {
-        NullableInteger::Null => Value::Null,
-        NullableInteger::Integer(v) => {
-            if convert_to_float {
-                Value::Float(v as f64)
-            } else {
-                Value::Integer(v)
-            }
-        }
-    }
-}
-
-pub fn exec_bit_not(reg: &Value) -> Value {
-    (!NullableInteger::from(reg)).into()
-}
-
-pub fn exec_shift_left(lhs: &Value, rhs: &Value) -> Value {
-    (NullableInteger::from(lhs) << NullableInteger::from(rhs)).into()
-}
-
-pub fn exec_shift_right(lhs: &Value, rhs: &Value) -> Value {
-    (NullableInteger::from(lhs) >> NullableInteger::from(rhs)).into()
-}
-
-pub fn exec_boolean_not(reg: &Value) -> Value {
-    match Numeric::from(reg).try_into_bool() {
-        None => Value::Null,
-        Some(v) => Value::Integer(!v as i64),
-    }
-}
-pub fn exec_concat(lhs: &Value, rhs: &Value) -> Value {
-    match (lhs, rhs) {
-        (Value::Text(lhs_text), Value::Text(rhs_text)) => {
-            Value::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
-        }
-        (Value::Text(lhs_text), Value::Integer(rhs_int)) => {
-            Value::build_text(&(lhs_text.as_str().to_string() + &rhs_int.to_string()))
-        }
-        (Value::Text(lhs_text), Value::Float(rhs_float)) => {
-            Value::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
-        }
-        (Value::Integer(lhs_int), Value::Text(rhs_text)) => {
-            Value::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
-        }
-        (Value::Integer(lhs_int), Value::Integer(rhs_int)) => {
-            Value::build_text(&(lhs_int.to_string() + &rhs_int.to_string()))
-        }
-        (Value::Integer(lhs_int), Value::Float(rhs_float)) => {
-            Value::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
-        }
-        (Value::Float(lhs_float), Value::Text(rhs_text)) => {
-            Value::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
-        }
-        (Value::Float(lhs_float), Value::Integer(rhs_int)) => {
-            Value::build_text(&(lhs_float.to_string() + &rhs_int.to_string()))
-        }
-        (Value::Float(lhs_float), Value::Float(rhs_float)) => {
-            Value::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
-        }
-        (Value::Null, _) | (_, Value::Null) => Value::Null,
-        (Value::Blob(_), _) | (_, Value::Blob(_)) => {
-            todo!("TODO: Handle Blob conversion to String")
-        }
-    }
-}
-
-pub fn exec_and(lhs: &Value, rhs: &Value) -> Value {
-    match (
-        Numeric::from(lhs).try_into_bool(),
-        Numeric::from(rhs).try_into_bool(),
-    ) {
-        (Some(false), _) | (_, Some(false)) => Value::Integer(0),
-        (None, _) | (_, None) => Value::Null,
-        _ => Value::Integer(1),
-    }
-}
-
-pub fn exec_or(lhs: &Value, rhs: &Value) -> Value {
-    match (
-        Numeric::from(lhs).try_into_bool(),
-        Numeric::from(rhs).try_into_bool(),
-    ) {
-        (Some(true), _) | (_, Some(true)) => Value::Integer(1),
-        (None, _) | (_, None) => Value::Null,
-        _ => Value::Integer(0),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::types::{Text, Value};
-
-    use super::{exec_add, exec_or};
 
     #[test]
     fn test_exec_add() {
@@ -5995,7 +6010,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_add(lhs, rhs),
+                lhs.exec_add(rhs),
                 outputs[i],
                 "Wrong ADD for lhs: {}, rhs: {}",
                 lhs,
@@ -6003,8 +6018,6 @@ mod tests {
             );
         }
     }
-
-    use super::exec_subtract;
 
     #[test]
     fn test_exec_subtract() {
@@ -6061,7 +6074,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_subtract(lhs, rhs),
+                lhs.exec_subtract(rhs),
                 outputs[i],
                 "Wrong subtract for lhs: {}, rhs: {}",
                 lhs,
@@ -6069,7 +6082,6 @@ mod tests {
             );
         }
     }
-    use super::exec_multiply;
 
     #[test]
     fn test_exec_multiply() {
@@ -6126,7 +6138,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_multiply(lhs, rhs),
+                lhs.exec_multiply(rhs),
                 outputs[i],
                 "Wrong multiply for lhs: {}, rhs: {}",
                 lhs,
@@ -6134,7 +6146,6 @@ mod tests {
             );
         }
     }
-    use super::exec_divide;
 
     #[test]
     fn test_exec_divide() {
@@ -6176,7 +6187,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_divide(lhs, rhs),
+                lhs.exec_divide(rhs),
                 outputs[i],
                 "Wrong divide for lhs: {}, rhs: {}",
                 lhs,
@@ -6185,7 +6196,6 @@ mod tests {
         }
     }
 
-    use super::exec_remainder;
     #[test]
     fn test_exec_remainder() {
         let inputs = vec![
@@ -6248,7 +6258,7 @@ mod tests {
 
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_remainder(lhs, rhs),
+                lhs.exec_remainder(rhs),
                 outputs[i],
                 "Wrong remainder for lhs: {}, rhs: {}",
                 lhs,
@@ -6256,8 +6266,6 @@ mod tests {
             );
         }
     }
-
-    use super::exec_and;
 
     #[test]
     fn test_exec_and() {
@@ -6289,7 +6297,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_and(lhs, rhs),
+                lhs.exec_and(rhs),
                 outputs[i],
                 "Wrong AND for lhs: {}, rhs: {}",
                 lhs,
@@ -6330,7 +6338,7 @@ mod tests {
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
-                exec_or(lhs, rhs),
+                lhs.exec_or(rhs),
                 outputs[i],
                 "Wrong OR for lhs: {}, rhs: {}",
                 lhs,
@@ -6339,291 +6347,307 @@ mod tests {
         }
     }
 
-    use crate::vdbe::{
-        execute::{exec_likelihood, exec_likely, exec_replace},
-        Bitfield, Register,
-    };
+    use crate::vdbe::{Bitfield, Register};
 
-    use super::{
-        exec_abs, exec_char, exec_hex, exec_if, exec_instr, exec_length, exec_like, exec_lower,
-        exec_ltrim, exec_max, exec_min, exec_nullif, exec_quote, exec_random, exec_randomblob,
-        exec_round, exec_rtrim, exec_sign, exec_soundex, exec_substring, exec_trim, exec_typeof,
-        exec_unhex, exec_unicode, exec_upper, exec_zeroblob, execute_sqlite_version,
-    };
+    use super::{exec_char, execute_sqlite_version};
     use std::collections::HashMap;
 
     #[test]
     fn test_length() {
         let input_str = Value::build_text("bob");
         let expected_len = Value::Integer(3);
-        assert_eq!(exec_length(&input_str), expected_len);
+        assert_eq!(input_str.exec_length(), expected_len);
 
         let input_integer = Value::Integer(123);
         let expected_len = Value::Integer(3);
-        assert_eq!(exec_length(&input_integer), expected_len);
+        assert_eq!(input_integer.exec_length(), expected_len);
 
         let input_float = Value::Float(123.456);
         let expected_len = Value::Integer(7);
-        assert_eq!(exec_length(&input_float), expected_len);
+        assert_eq!(input_float.exec_length(), expected_len);
 
         let expected_blob = Value::Blob("example".as_bytes().to_vec());
         let expected_len = Value::Integer(7);
-        assert_eq!(exec_length(&expected_blob), expected_len);
+        assert_eq!(expected_blob.exec_length(), expected_len);
     }
 
     #[test]
     fn test_quote() {
         let input = Value::build_text("abc\0edf");
         let expected = Value::build_text("'abc'");
-        assert_eq!(exec_quote(&input), expected);
+        assert_eq!(input.exec_quote(), expected);
 
         let input = Value::Integer(123);
         let expected = Value::Integer(123);
-        assert_eq!(exec_quote(&input), expected);
+        assert_eq!(input.exec_quote(), expected);
 
         let input = Value::build_text("hello''world");
         let expected = Value::build_text("'hello''''world'");
-        assert_eq!(exec_quote(&input), expected);
+        assert_eq!(input.exec_quote(), expected);
     }
 
     #[test]
     fn test_typeof() {
         let input = Value::Null;
         let expected: Value = Value::build_text("null");
-        assert_eq!(exec_typeof(&input), expected);
+        assert_eq!(input.exec_typeof(), expected);
 
         let input = Value::Integer(123);
         let expected: Value = Value::build_text("integer");
-        assert_eq!(exec_typeof(&input), expected);
+        assert_eq!(input.exec_typeof(), expected);
 
         let input = Value::Float(123.456);
         let expected: Value = Value::build_text("real");
-        assert_eq!(exec_typeof(&input), expected);
+        assert_eq!(input.exec_typeof(), expected);
 
         let input = Value::build_text("hello");
         let expected: Value = Value::build_text("text");
-        assert_eq!(exec_typeof(&input), expected);
+        assert_eq!(input.exec_typeof(), expected);
 
         let input = Value::Blob("limbo".as_bytes().to_vec());
         let expected: Value = Value::build_text("blob");
-        assert_eq!(exec_typeof(&input), expected);
+        assert_eq!(input.exec_typeof(), expected);
     }
 
     #[test]
     fn test_unicode() {
-        assert_eq!(exec_unicode(&Value::build_text("a")), Value::Integer(97));
+        assert_eq!(Value::build_text("a").exec_unicode(), Value::Integer(97));
         assert_eq!(
-            exec_unicode(&Value::build_text("😊")),
+            Value::build_text("😊").exec_unicode(),
             Value::Integer(128522)
         );
-        assert_eq!(exec_unicode(&Value::build_text("")), Value::Null);
-        assert_eq!(exec_unicode(&Value::Integer(23)), Value::Integer(50));
-        assert_eq!(exec_unicode(&Value::Integer(0)), Value::Integer(48));
-        assert_eq!(exec_unicode(&Value::Float(0.0)), Value::Integer(48));
-        assert_eq!(exec_unicode(&Value::Float(23.45)), Value::Integer(50));
-        assert_eq!(exec_unicode(&Value::Null), Value::Null);
+        assert_eq!(Value::build_text("").exec_unicode(), Value::Null);
+        assert_eq!(Value::Integer(23).exec_unicode(), Value::Integer(50));
+        assert_eq!(Value::Integer(0).exec_unicode(), Value::Integer(48));
+        assert_eq!(Value::Float(0.0).exec_unicode(), Value::Integer(48));
+        assert_eq!(Value::Float(23.45).exec_unicode(), Value::Integer(50));
+        assert_eq!(Value::Null.exec_unicode(), Value::Null);
         assert_eq!(
-            exec_unicode(&Value::Blob("example".as_bytes().to_vec())),
+            Value::Blob("example".as_bytes().to_vec()).exec_unicode(),
             Value::Integer(101)
         );
     }
 
     #[test]
     fn test_min_max() {
-        let input_int_vec = vec![
+        let input_int_vec = [
             Register::Value(Value::Integer(-1)),
             Register::Value(Value::Integer(10)),
         ];
-        assert_eq!(exec_min(&input_int_vec), Value::Integer(-1));
-        assert_eq!(exec_max(&input_int_vec), Value::Integer(10));
+        assert_eq!(
+            Value::exec_min(input_int_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(-1)
+        );
+        assert_eq!(
+            Value::exec_max(input_int_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(10)
+        );
 
         let str1 = Register::Value(Value::build_text("A"));
         let str2 = Register::Value(Value::build_text("z"));
-        let input_str_vec = vec![str2, str1.clone()];
-        assert_eq!(exec_min(&input_str_vec), Value::build_text("A"));
-        assert_eq!(exec_max(&input_str_vec), Value::build_text("z"));
+        let input_str_vec = [str2, str1.clone()];
+        assert_eq!(
+            Value::exec_min(input_str_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("A")
+        );
+        assert_eq!(
+            Value::exec_max(input_str_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("z")
+        );
 
-        let input_null_vec = vec![Register::Value(Value::Null), Register::Value(Value::Null)];
-        assert_eq!(exec_min(&input_null_vec), Value::Null);
-        assert_eq!(exec_max(&input_null_vec), Value::Null);
+        let input_null_vec = [Register::Value(Value::Null), Register::Value(Value::Null)];
+        assert_eq!(
+            Value::exec_min(input_null_vec.iter().map(|v| v.get_owned_value())),
+            Value::Null
+        );
+        assert_eq!(
+            Value::exec_max(input_null_vec.iter().map(|v| v.get_owned_value())),
+            Value::Null
+        );
 
-        let input_mixed_vec = vec![Register::Value(Value::Integer(10)), str1];
-        assert_eq!(exec_min(&input_mixed_vec), Value::Integer(10));
-        assert_eq!(exec_max(&input_mixed_vec), Value::build_text("A"));
+        let input_mixed_vec = [Register::Value(Value::Integer(10)), str1];
+        assert_eq!(
+            Value::exec_min(input_mixed_vec.iter().map(|v| v.get_owned_value())),
+            Value::Integer(10)
+        );
+        assert_eq!(
+            Value::exec_max(input_mixed_vec.iter().map(|v| v.get_owned_value())),
+            Value::build_text("A")
+        );
     }
 
     #[test]
     fn test_trim() {
         let input_str = Value::build_text("     Bob and Alice     ");
         let expected_str = Value::build_text("Bob and Alice");
-        assert_eq!(exec_trim(&input_str, None), expected_str);
+        assert_eq!(input_str.exec_trim(None), expected_str);
 
         let input_str = Value::build_text("     Bob and Alice     ");
         let pattern_str = Value::build_text("Bob and");
         let expected_str = Value::build_text("Alice");
-        assert_eq!(exec_trim(&input_str, Some(&pattern_str)), expected_str);
+        assert_eq!(input_str.exec_trim(Some(&pattern_str)), expected_str);
     }
 
     #[test]
     fn test_ltrim() {
         let input_str = Value::build_text("     Bob and Alice     ");
         let expected_str = Value::build_text("Bob and Alice     ");
-        assert_eq!(exec_ltrim(&input_str, None), expected_str);
+        assert_eq!(input_str.exec_ltrim(None), expected_str);
 
         let input_str = Value::build_text("     Bob and Alice     ");
         let pattern_str = Value::build_text("Bob and");
         let expected_str = Value::build_text("Alice     ");
-        assert_eq!(exec_ltrim(&input_str, Some(&pattern_str)), expected_str);
+        assert_eq!(input_str.exec_ltrim(Some(&pattern_str)), expected_str);
     }
 
     #[test]
     fn test_rtrim() {
         let input_str = Value::build_text("     Bob and Alice     ");
         let expected_str = Value::build_text("     Bob and Alice");
-        assert_eq!(exec_rtrim(&input_str, None), expected_str);
+        assert_eq!(input_str.exec_rtrim(None), expected_str);
 
         let input_str = Value::build_text("     Bob and Alice     ");
         let pattern_str = Value::build_text("Bob and");
         let expected_str = Value::build_text("     Bob and Alice");
-        assert_eq!(exec_rtrim(&input_str, Some(&pattern_str)), expected_str);
+        assert_eq!(input_str.exec_rtrim(Some(&pattern_str)), expected_str);
 
         let input_str = Value::build_text("     Bob and Alice     ");
         let pattern_str = Value::build_text("and Alice");
         let expected_str = Value::build_text("     Bob");
-        assert_eq!(exec_rtrim(&input_str, Some(&pattern_str)), expected_str);
+        assert_eq!(input_str.exec_rtrim(Some(&pattern_str)), expected_str);
     }
 
     #[test]
     fn test_soundex() {
         let input_str = Value::build_text("Pfister");
         let expected_str = Value::build_text("P236");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("husobee");
         let expected_str = Value::build_text("H210");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Tymczak");
         let expected_str = Value::build_text("T522");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Ashcraft");
         let expected_str = Value::build_text("A261");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Robert");
         let expected_str = Value::build_text("R163");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Rupert");
         let expected_str = Value::build_text("R163");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Rubin");
         let expected_str = Value::build_text("R150");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Kant");
         let expected_str = Value::build_text("K530");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("Knuth");
         let expected_str = Value::build_text("K530");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("x");
         let expected_str = Value::build_text("X000");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
 
         let input_str = Value::build_text("闪电五连鞭");
         let expected_str = Value::build_text("?000");
-        assert_eq!(exec_soundex(&input_str), expected_str);
+        assert_eq!(input_str.exec_soundex(), expected_str);
     }
 
     #[test]
     fn test_upper_case() {
         let input_str = Value::build_text("Limbo");
         let expected_str = Value::build_text("LIMBO");
-        assert_eq!(exec_upper(&input_str).unwrap(), expected_str);
+        assert_eq!(input_str.exec_upper().unwrap(), expected_str);
 
         let input_int = Value::Integer(10);
-        assert_eq!(exec_upper(&input_int).unwrap(), input_int);
-        assert_eq!(exec_upper(&Value::Null).unwrap(), Value::Null)
+        assert_eq!(input_int.exec_upper().unwrap(), input_int);
+        assert_eq!(Value::Null.exec_upper().unwrap(), Value::Null)
     }
 
     #[test]
     fn test_lower_case() {
         let input_str = Value::build_text("Limbo");
         let expected_str = Value::build_text("limbo");
-        assert_eq!(exec_lower(&input_str).unwrap(), expected_str);
+        assert_eq!(input_str.exec_lower().unwrap(), expected_str);
 
         let input_int = Value::Integer(10);
-        assert_eq!(exec_lower(&input_int).unwrap(), input_int);
-        assert_eq!(exec_lower(&Value::Null).unwrap(), Value::Null)
+        assert_eq!(input_int.exec_lower().unwrap(), input_int);
+        assert_eq!(Value::Null.exec_lower().unwrap(), Value::Null)
     }
 
     #[test]
     fn test_hex() {
         let input_str = Value::build_text("limbo");
         let expected_val = Value::build_text("6C696D626F");
-        assert_eq!(exec_hex(&input_str), expected_val);
+        assert_eq!(input_str.exec_hex(), expected_val);
 
         let input_int = Value::Integer(100);
         let expected_val = Value::build_text("313030");
-        assert_eq!(exec_hex(&input_int), expected_val);
+        assert_eq!(input_int.exec_hex(), expected_val);
 
         let input_float = Value::Float(12.34);
         let expected_val = Value::build_text("31322E3334");
-        assert_eq!(exec_hex(&input_float), expected_val);
+        assert_eq!(input_float.exec_hex(), expected_val);
     }
 
     #[test]
     fn test_unhex() {
         let input = Value::build_text("6f");
         let expected = Value::Blob(vec![0x6f]);
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
 
         let input = Value::build_text("6f");
         let expected = Value::Blob(vec![0x6f]);
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
 
         let input = Value::build_text("611");
         let expected = Value::Null;
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
 
         let input = Value::build_text("");
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
 
         let input = Value::build_text("61x");
         let expected = Value::Null;
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
 
         let input = Value::Null;
         let expected = Value::Null;
-        assert_eq!(exec_unhex(&input, None), expected);
+        assert_eq!(input.exec_unhex(None), expected);
     }
 
     #[test]
     fn test_abs() {
         let int_positive_reg = Value::Integer(10);
         let int_negative_reg = Value::Integer(-10);
-        assert_eq!(exec_abs(&int_positive_reg).unwrap(), int_positive_reg);
-        assert_eq!(exec_abs(&int_negative_reg).unwrap(), int_positive_reg);
+        assert_eq!(int_positive_reg.exec_abs().unwrap(), int_positive_reg);
+        assert_eq!(int_negative_reg.exec_abs().unwrap(), int_positive_reg);
 
         let float_positive_reg = Value::Integer(10);
         let float_negative_reg = Value::Integer(-10);
-        assert_eq!(exec_abs(&float_positive_reg).unwrap(), float_positive_reg);
-        assert_eq!(exec_abs(&float_negative_reg).unwrap(), float_positive_reg);
+        assert_eq!(float_positive_reg.exec_abs().unwrap(), float_positive_reg);
+        assert_eq!(float_negative_reg.exec_abs().unwrap(), float_positive_reg);
 
         assert_eq!(
-            exec_abs(&Value::build_text("a")).unwrap(),
+            Value::build_text("a").exec_abs().unwrap(),
             Value::Float(0.0)
         );
-        assert_eq!(exec_abs(&Value::Null).unwrap(), Value::Null);
+        assert_eq!(Value::Null.exec_abs().unwrap(), Value::Null);
 
         // ABS(i64::MIN) should return RuntimeError
-        assert!(exec_abs(&Value::Integer(i64::MIN)).is_err());
+        assert!(Value::Integer(i64::MIN).exec_abs().is_err());
     }
 
     #[test]
@@ -6648,39 +6672,39 @@ mod tests {
 
     #[test]
     fn test_like_with_escape_or_regexmeta_chars() {
-        assert!(exec_like(None, r#"\%A"#, r#"\A"#));
-        assert!(exec_like(None, "%a%a", "aaaa"));
+        assert!(Value::exec_like(None, r#"\%A"#, r#"\A"#));
+        assert!(Value::exec_like(None, "%a%a", "aaaa"));
     }
 
     #[test]
     fn test_like_no_cache() {
-        assert!(exec_like(None, "a%", "aaaa"));
-        assert!(exec_like(None, "%a%a", "aaaa"));
-        assert!(!exec_like(None, "%a.a", "aaaa"));
-        assert!(!exec_like(None, "a.a%", "aaaa"));
-        assert!(!exec_like(None, "%a.ab", "aaaa"));
+        assert!(Value::exec_like(None, "a%", "aaaa"));
+        assert!(Value::exec_like(None, "%a%a", "aaaa"));
+        assert!(!Value::exec_like(None, "%a.a", "aaaa"));
+        assert!(!Value::exec_like(None, "a.a%", "aaaa"));
+        assert!(!Value::exec_like(None, "%a.ab", "aaaa"));
     }
 
     #[test]
     fn test_like_with_cache() {
         let mut cache = HashMap::new();
-        assert!(exec_like(Some(&mut cache), "a%", "aaaa"));
-        assert!(exec_like(Some(&mut cache), "%a%a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "a.a%", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.ab", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "a%", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "%a%a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "a.a%", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.ab", "aaaa"));
 
         // again after values have been cached
-        assert!(exec_like(Some(&mut cache), "a%", "aaaa"));
-        assert!(exec_like(Some(&mut cache), "%a%a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.a", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "a.a%", "aaaa"));
-        assert!(!exec_like(Some(&mut cache), "%a.ab", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "a%", "aaaa"));
+        assert!(Value::exec_like(Some(&mut cache), "%a%a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.a", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "a.a%", "aaaa"));
+        assert!(!Value::exec_like(Some(&mut cache), "%a.ab", "aaaa"));
     }
 
     #[test]
     fn test_random() {
-        match exec_random() {
+        match Value::exec_random() {
             Value::Integer(value) => {
                 // Check that the value is within the range of i64
                 assert!(
@@ -6743,7 +6767,7 @@ mod tests {
         ];
 
         for test_case in &test_cases {
-            let result = exec_randomblob(&test_case.input);
+            let result = test_case.input.exec_randomblob();
             match result {
                 Value::Blob(blob) => {
                     assert_eq!(blob.len(), test_case.expected_len);
@@ -6757,85 +6781,85 @@ mod tests {
     fn test_exec_round() {
         let input_val = Value::Float(123.456);
         let expected_val = Value::Float(123.0);
-        assert_eq!(exec_round(&input_val, None), expected_val);
+        assert_eq!(input_val.exec_round(None), expected_val);
 
         let input_val = Value::Float(123.456);
         let precision_val = Value::Integer(2);
         let expected_val = Value::Float(123.46);
-        assert_eq!(exec_round(&input_val, Some(&precision_val)), expected_val);
+        assert_eq!(input_val.exec_round(Some(&precision_val)), expected_val);
 
         let input_val = Value::Float(123.456);
         let precision_val = Value::build_text("1");
         let expected_val = Value::Float(123.5);
-        assert_eq!(exec_round(&input_val, Some(&precision_val)), expected_val);
+        assert_eq!(input_val.exec_round(Some(&precision_val)), expected_val);
 
         let input_val = Value::build_text("123.456");
         let precision_val = Value::Integer(2);
         let expected_val = Value::Float(123.46);
-        assert_eq!(exec_round(&input_val, Some(&precision_val)), expected_val);
+        assert_eq!(input_val.exec_round(Some(&precision_val)), expected_val);
 
         let input_val = Value::Integer(123);
         let precision_val = Value::Integer(1);
         let expected_val = Value::Float(123.0);
-        assert_eq!(exec_round(&input_val, Some(&precision_val)), expected_val);
+        assert_eq!(input_val.exec_round(Some(&precision_val)), expected_val);
 
         let input_val = Value::Float(100.123);
         let expected_val = Value::Float(100.0);
-        assert_eq!(exec_round(&input_val, None), expected_val);
+        assert_eq!(input_val.exec_round(None), expected_val);
 
         let input_val = Value::Float(100.123);
         let expected_val = Value::Null;
-        assert_eq!(exec_round(&input_val, Some(&Value::Null)), expected_val);
+        assert_eq!(input_val.exec_round(Some(&Value::Null)), expected_val);
     }
 
     #[test]
     fn test_exec_if() {
         let reg = Value::Integer(0);
-        assert!(!exec_if(&reg, false, false));
-        assert!(exec_if(&reg, false, true));
+        assert!(!reg.exec_if(false, false));
+        assert!(reg.exec_if(false, true));
 
         let reg = Value::Integer(1);
-        assert!(exec_if(&reg, false, false));
-        assert!(!exec_if(&reg, false, true));
+        assert!(reg.exec_if(false, false));
+        assert!(!reg.exec_if(false, true));
 
         let reg = Value::Null;
-        assert!(!exec_if(&reg, false, false));
-        assert!(!exec_if(&reg, false, true));
+        assert!(!reg.exec_if(false, false));
+        assert!(!reg.exec_if(false, true));
 
         let reg = Value::Null;
-        assert!(exec_if(&reg, true, false));
-        assert!(exec_if(&reg, true, true));
+        assert!(reg.exec_if(true, false));
+        assert!(reg.exec_if(true, true));
 
         let reg = Value::Null;
-        assert!(!exec_if(&reg, false, false));
-        assert!(!exec_if(&reg, false, true));
+        assert!(!reg.exec_if(false, false));
+        assert!(!reg.exec_if(false, true));
     }
 
     #[test]
     fn test_nullif() {
         assert_eq!(
-            exec_nullif(&Value::Integer(1), &Value::Integer(1)),
+            Value::Integer(1).exec_nullif(&Value::Integer(1)),
             Value::Null
         );
         assert_eq!(
-            exec_nullif(&Value::Float(1.1), &Value::Float(1.1)),
+            Value::Float(1.1).exec_nullif(&Value::Float(1.1)),
             Value::Null
         );
         assert_eq!(
-            exec_nullif(&Value::build_text("limbo"), &Value::build_text("limbo")),
+            Value::build_text("limbo").exec_nullif(&Value::build_text("limbo")),
             Value::Null
         );
 
         assert_eq!(
-            exec_nullif(&Value::Integer(1), &Value::Integer(2)),
+            Value::Integer(1).exec_nullif(&Value::Integer(2)),
             Value::Integer(1)
         );
         assert_eq!(
-            exec_nullif(&Value::Float(1.1), &Value::Float(1.2)),
+            Value::Float(1.1).exec_nullif(&Value::Float(1.2)),
             Value::Float(1.1)
         );
         assert_eq!(
-            exec_nullif(&Value::build_text("limbo"), &Value::build_text("limb")),
+            Value::build_text("limbo").exec_nullif(&Value::build_text("limb")),
             Value::build_text("limbo")
         );
     }
@@ -6847,7 +6871,7 @@ mod tests {
         let length_value = Value::Integer(3);
         let expected_val = Value::build_text("lim");
         assert_eq!(
-            exec_substring(&str_value, &start_value, Some(&length_value)),
+            Value::exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -6856,7 +6880,7 @@ mod tests {
         let length_value = Value::Integer(10);
         let expected_val = Value::build_text("limbo");
         assert_eq!(
-            exec_substring(&str_value, &start_value, Some(&length_value)),
+            Value::exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -6865,7 +6889,7 @@ mod tests {
         let length_value = Value::Integer(3);
         let expected_val = Value::build_text("");
         assert_eq!(
-            exec_substring(&str_value, &start_value, Some(&length_value)),
+            Value::exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -6874,7 +6898,7 @@ mod tests {
         let length_value = Value::Null;
         let expected_val = Value::build_text("mbo");
         assert_eq!(
-            exec_substring(&str_value, &start_value, Some(&length_value)),
+            Value::exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -6883,7 +6907,7 @@ mod tests {
         let length_value = Value::Null;
         let expected_val = Value::build_text("");
         assert_eq!(
-            exec_substring(&str_value, &start_value, Some(&length_value)),
+            Value::exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
     }
@@ -6893,208 +6917,208 @@ mod tests {
         let input = Value::build_text("limbo");
         let pattern = Value::build_text("im");
         let expected = Value::Integer(2);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("limbo");
         let pattern = Value::build_text("limbo");
         let expected = Value::Integer(1);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("limbo");
         let pattern = Value::build_text("o");
         let expected = Value::Integer(5);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("liiiiimbo");
         let pattern = Value::build_text("ii");
         let expected = Value::Integer(2);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("limbo");
         let pattern = Value::build_text("limboX");
         let expected = Value::Integer(0);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("limbo");
         let pattern = Value::build_text("");
         let expected = Value::Integer(1);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("");
         let pattern = Value::build_text("limbo");
         let expected = Value::Integer(0);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("");
         let pattern = Value::build_text("");
         let expected = Value::Integer(1);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Null;
         let pattern = Value::Null;
         let expected = Value::Null;
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("limbo");
         let pattern = Value::Null;
         let expected = Value::Null;
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Null;
         let pattern = Value::build_text("limbo");
         let expected = Value::Null;
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Integer(123);
         let pattern = Value::Integer(2);
         let expected = Value::Integer(2);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Integer(123);
         let pattern = Value::Integer(5);
         let expected = Value::Integer(0);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Float(12.34);
         let pattern = Value::Float(2.3);
         let expected = Value::Integer(2);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Float(12.34);
         let pattern = Value::Float(5.6);
         let expected = Value::Integer(0);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Float(12.34);
         let pattern = Value::build_text(".");
         let expected = Value::Integer(3);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Blob(vec![1, 2, 3, 4, 5]);
         let pattern = Value::Blob(vec![3, 4]);
         let expected = Value::Integer(3);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Blob(vec![1, 2, 3, 4, 5]);
         let pattern = Value::Blob(vec![3, 2]);
         let expected = Value::Integer(0);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::Blob(vec![0x61, 0x62, 0x63, 0x64, 0x65]);
         let pattern = Value::build_text("cd");
         let expected = Value::Integer(3);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
 
         let input = Value::build_text("abcde");
         let pattern = Value::Blob(vec![0x63, 0x64]);
         let expected = Value::Integer(3);
-        assert_eq!(exec_instr(&input, &pattern), expected);
+        assert_eq!(input.exec_instr(&pattern), expected);
     }
 
     #[test]
     fn test_exec_sign() {
         let input = Value::Integer(42);
         let expected = Some(Value::Integer(1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Integer(-42);
         let expected = Some(Value::Integer(-1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Integer(0);
         let expected = Some(Value::Integer(0));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Float(0.0);
         let expected = Some(Value::Integer(0));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Float(0.1);
         let expected = Some(Value::Integer(1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Float(42.0);
         let expected = Some(Value::Integer(1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Float(-42.0);
         let expected = Some(Value::Integer(-1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::build_text("abc");
         let expected = Some(Value::Null);
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::build_text("42");
         let expected = Some(Value::Integer(1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::build_text("-42");
         let expected = Some(Value::Integer(-1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::build_text("0");
         let expected = Some(Value::Integer(0));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Blob(b"abc".to_vec());
         let expected = Some(Value::Null);
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Blob(b"42".to_vec());
         let expected = Some(Value::Integer(1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Blob(b"-42".to_vec());
         let expected = Some(Value::Integer(-1));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Blob(b"0".to_vec());
         let expected = Some(Value::Integer(0));
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
 
         let input = Value::Null;
         let expected = Some(Value::Null);
-        assert_eq!(exec_sign(&input), expected);
+        assert_eq!(input.exec_sign(), expected);
     }
 
     #[test]
     fn test_exec_zeroblob() {
         let input = Value::Integer(0);
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::Null;
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::Integer(4);
         let expected = Value::Blob(vec![0; 4]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::Integer(-1);
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::build_text("5");
         let expected = Value::Blob(vec![0; 5]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::build_text("-5");
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::build_text("text");
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::Float(2.6);
         let expected = Value::Blob(vec![0; 2]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
 
         let input = Value::Blob(vec![1]);
         let expected = Value::Blob(vec![]);
-        assert_eq!(exec_zeroblob(&input), expected);
+        assert_eq!(input.exec_zeroblob(), expected);
     }
 
     #[test]
@@ -7111,7 +7135,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::build_text("aoa");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7120,7 +7144,7 @@ mod tests {
         let replace_str = Value::build_text("");
         let expected_str = Value::build_text("o");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7129,7 +7153,7 @@ mod tests {
         let replace_str = Value::build_text("abc");
         let expected_str = Value::build_text("abcoabc");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7138,7 +7162,7 @@ mod tests {
         let replace_str = Value::build_text("b");
         let expected_str = Value::build_text("bob");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7147,7 +7171,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::build_text("bob");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7156,7 +7180,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::Null;
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7165,7 +7189,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::build_text("boa");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7174,7 +7198,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::build_text("boa");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7183,7 +7207,7 @@ mod tests {
         let replace_str = Value::build_text("a");
         let expected_str = Value::build_text("bo5");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7192,7 +7216,7 @@ mod tests {
         let replace_str = Value::Float(6.0);
         let expected_str = Value::build_text("bo6.0");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
 
@@ -7202,7 +7226,7 @@ mod tests {
         let replace_str = Value::Float(0.3);
         let expected_str = Value::build_text("tes0.3");
         assert_eq!(
-            exec_replace(&input_str, &pattern_str, &replace_str),
+            Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
     }
@@ -7211,56 +7235,56 @@ mod tests {
     fn test_likely() {
         let input = Value::build_text("limbo");
         let expected = Value::build_text("limbo");
-        assert_eq!(exec_likely(&input), expected);
+        assert_eq!(input.exec_likely(), expected);
 
         let input = Value::Integer(100);
         let expected = Value::Integer(100);
-        assert_eq!(exec_likely(&input), expected);
+        assert_eq!(input.exec_likely(), expected);
 
         let input = Value::Float(12.34);
         let expected = Value::Float(12.34);
-        assert_eq!(exec_likely(&input), expected);
+        assert_eq!(input.exec_likely(), expected);
 
         let input = Value::Null;
         let expected = Value::Null;
-        assert_eq!(exec_likely(&input), expected);
+        assert_eq!(input.exec_likely(), expected);
 
         let input = Value::Blob(vec![1, 2, 3, 4]);
         let expected = Value::Blob(vec![1, 2, 3, 4]);
-        assert_eq!(exec_likely(&input), expected);
+        assert_eq!(input.exec_likely(), expected);
     }
 
     #[test]
     fn test_likelihood() {
         let value = Value::build_text("limbo");
         let prob = Value::Float(0.5);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let value = Value::build_text("database");
         let prob = Value::Float(0.9375);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let value = Value::Integer(100);
         let prob = Value::Float(1.0);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let value = Value::Float(12.34);
         let prob = Value::Float(0.5);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let value = Value::Null;
         let prob = Value::Float(0.5);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let value = Value::Blob(vec![1, 2, 3, 4]);
         let prob = Value::Float(0.5);
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let prob = Value::build_text("0.5");
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
 
         let prob = Value::Null;
-        assert_eq!(exec_likelihood(&value, &prob), value);
+        assert_eq!(value.exec_likelihood(&prob), value);
     }
 
     #[test]
