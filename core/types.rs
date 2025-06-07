@@ -624,14 +624,10 @@ impl std::ops::DivAssign<Value> for Value {
     }
 }
 
-pub trait FromValue<'a> {
-    fn from_value(value: &'a RefValue) -> Result<Self>
-    where
-        Self: Sized + 'a;
-}
+impl<'a> TryFrom<&'a RefValue> for i64 {
+    type Error = LimboError;
 
-impl<'a> FromValue<'a> for i64 {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
+    fn try_from(value: &'a RefValue) -> Result<Self, Self::Error> {
         match value {
             RefValue::Integer(i) => Ok(*i),
             _ => Err(LimboError::ConversionError("Expected integer value".into())),
@@ -639,8 +635,10 @@ impl<'a> FromValue<'a> for i64 {
     }
 }
 
-impl<'a> FromValue<'a> for String {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
+impl<'a> TryFrom<&'a RefValue> for String {
+    type Error = LimboError;
+
+    fn try_from(value: &'a RefValue) -> Result<Self, Self::Error> {
         match value {
             RefValue::Text(s) => Ok(s.as_str().to_string()),
             _ => Err(LimboError::ConversionError("Expected text value".into())),
@@ -648,8 +646,10 @@ impl<'a> FromValue<'a> for String {
     }
 }
 
-impl<'a> FromValue<'a> for &'a str {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
+impl<'a> TryFrom<&'a RefValue> for &'a str {
+    type Error = LimboError;
+
+    fn try_from(value: &'a RefValue) -> Result<Self, Self::Error> {
         match value {
             RefValue::Text(s) => Ok(s.as_str()),
             _ => Err(LimboError::ConversionError("Expected text value".into())),
@@ -743,12 +743,15 @@ impl ImmutableRecord {
         }
     }
 
-    pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
+    pub fn get<'a, T: TryFrom<&'a RefValue, Error = LimboError> + 'a>(
+        &'a self,
+        idx: usize,
+    ) -> Result<T> {
         let value = self
             .values
             .get(idx)
             .ok_or(LimboError::InternalError("Index out of bounds".into()))?;
-        T::from_value(value)
+        T::try_from(value)
     }
 
     pub fn count(&self) -> usize {
