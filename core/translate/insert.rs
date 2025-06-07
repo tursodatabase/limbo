@@ -8,7 +8,7 @@ use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::schema::{IndexColumn, Table};
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
-use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
+use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
 use crate::vdbe::BranchOffset;
 use crate::{
     schema::{Column, Schema},
@@ -212,7 +212,7 @@ pub fn translate_insert(
                         cursor: temp_cursor_id,
                         key_reg: rowid_reg,
                         record_reg,
-                        flag: 0,
+                        flag: InsertFlags::new(),
                         table_name: "".to_string(),
                     });
 
@@ -520,7 +520,7 @@ pub fn translate_insert(
         cursor: cursor_id,
         key_reg: rowid_reg,
         record_reg: record_register,
-        flag: 0,
+        flag: InsertFlags::new(),
         table_name: table_name.to_string(),
     });
 

@@ -82,6 +82,30 @@ impl IdxInsertFlags {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InsertFlags(pub u8);
+
+impl InsertFlags {
+    pub const UPDATE: u8 = 0x01; // Flag indicating this is part of an UPDATE statement
+
+    pub fn new() -> Self {
+        InsertFlags(0)
+    }
+
+    pub fn has(&self, flag: u8) -> bool {
+        (self.0 & flag) != 0
+    }
+
+    pub fn update(mut self, is_update: bool) -> Self {
+        if is_update {
+            self.0 |= InsertFlags::UPDATE;
+        } else {
+            self.0 &= !InsertFlags::UPDATE;
+        }
+        self
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum RegisterOrLiteral<T: Copy + std::fmt::Display> {
     Register(usize),
@@ -665,7 +689,7 @@ pub enum Insn {
         cursor: CursorID,
         key_reg: usize,    // Must be int.
         record_reg: usize, // Blob of record data.
-        flag: usize,       // Flags used by insert, for now not used.
+        flag: InsertFlags, // Flags used by insert, for now not used.
         table_name: String,
     },
 

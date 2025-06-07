@@ -1091,7 +1091,7 @@ pub fn insn_to_str(
                 *record_reg as i32,
                 *key_reg as i32,
                 Value::build_text(&table_name),
-                *flag as u16,
+                flag.0 as u16,
                 format!("intkey=r[{}] data=r[{}]", key_reg, record_reg),
             ),
             Insn::Delete { cursor_id } => (

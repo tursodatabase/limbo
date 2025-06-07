@@ -66,7 +66,10 @@ pub fn translate(
 ) -> Result<Program> {
     let change_cnt_on = matches!(
         stmt,
-        ast::Stmt::CreateIndex { .. } | ast::Stmt::Delete(..) | ast::Stmt::Insert(..)
+        ast::Stmt::CreateIndex { .. }
+            | ast::Stmt::Delete(..)
+            | ast::Stmt::Insert(..)
+            | ast::Stmt::Update(..)
     );
 
     // These options will be extended whithin each translate program
