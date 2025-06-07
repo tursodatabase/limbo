@@ -5,6 +5,7 @@ use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::storage::wal::DummyWAL;
+use crate::translate::collate::CollationSeq;
 use crate::types::ImmutableRecord;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
@@ -523,325 +524,273 @@ pub fn op_not_null(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_eq(
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ComparisonOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl ComparisonOp {
+    fn compare(&self, lhs: &Value, rhs: &Value, collation: &CollationSeq) -> bool {
+        match (lhs, rhs) {
+            (Value::Text(lhs_text), Value::Text(rhs_text)) => {
+                let order = collation.compare_strings(lhs_text.as_str(), rhs_text.as_str());
+                match self {
+                    ComparisonOp::Eq => order.is_eq(),
+                    ComparisonOp::Ne => order.is_ne(),
+                    ComparisonOp::Lt => order.is_lt(),
+                    ComparisonOp::Le => order.is_le(),
+                    ComparisonOp::Gt => order.is_gt(),
+                    ComparisonOp::Ge => order.is_ge(),
+                }
+            }
+            (_, _) => match self {
+                ComparisonOp::Eq => *lhs == *rhs,
+                ComparisonOp::Ne => *lhs != *rhs,
+                ComparisonOp::Lt => *lhs < *rhs,
+                ComparisonOp::Le => *lhs <= *rhs,
+                ComparisonOp::Gt => *lhs > *rhs,
+                ComparisonOp::Ge => *lhs >= *rhs,
+            },
+        }
+    }
+
+    fn compare_integers(&self, lhs: &Value, rhs: &Value) -> bool {
+        match self {
+            ComparisonOp::Eq => lhs == rhs,
+            ComparisonOp::Ne => lhs != rhs,
+            ComparisonOp::Lt => lhs < rhs,
+            ComparisonOp::Le => lhs <= rhs,
+            ComparisonOp::Gt => lhs > rhs,
+            ComparisonOp::Ge => lhs >= rhs,
+        }
+    }
+
+    fn handle_nulls(&self, lhs: &Value, rhs: &Value, null_eq: bool, jump_if_null: bool) -> bool {
+        match self {
+            ComparisonOp::Eq => {
+                let both_null = lhs == rhs;
+                (null_eq && both_null) || (!null_eq && jump_if_null)
+            }
+            ComparisonOp::Ne => {
+                let at_least_one_null = lhs != rhs;
+                (null_eq && at_least_one_null) || (!null_eq && jump_if_null)
+            }
+            ComparisonOp::Lt | ComparisonOp::Le | ComparisonOp::Gt | ComparisonOp::Ge => {
+                jump_if_null
+            }
+        }
+    }
+}
+
+pub fn op_comparison(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Eq {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
+    let (lhs, rhs, target_pc, flags, collation, op) = match insn {
+        Insn::Eq {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Eq,
+        ),
+        Insn::Ne {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Ne,
+        ),
+        Insn::Lt {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Lt,
+        ),
+        Insn::Le {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Le,
+        ),
+        Insn::Gt {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Gt,
+        ),
+        Insn::Ge {
+            lhs,
+            rhs,
+            target_pc,
+            flags,
+            collation,
+        } => (
+            *lhs,
+            *rhs,
+            *target_pc,
+            *flags,
+            collation.unwrap_or_default(),
+            ComparisonOp::Ge,
+        ),
+        _ => unreachable!("unexpected Insn {:?}", insn),
     };
+
     assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let cond = *state.registers[lhs].get_owned_value() == *state.registers[rhs].get_owned_value();
+
     let nulleq = flags.has_nulleq();
     let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if (nulleq && cond) || (!nulleq && jump_if_null) {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_eq() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (lhs, rhs) => {
-            if *lhs == *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-    }
-    Ok(InsnFunctionStepResult::Step)
-}
+    let affinity = flags.get_affinity();
 
-pub fn op_ne(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::Ne {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let cond = *state.registers[lhs].get_owned_value() != *state.registers[rhs].get_owned_value();
-    let nulleq = flags.has_nulleq();
-    let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if (nulleq && cond) || (!nulleq && jump_if_null) {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_ne() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (lhs, rhs) => {
-            if *lhs != *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-    }
-    Ok(InsnFunctionStepResult::Step)
-}
+    let lhs_value = state.registers[lhs].get_owned_value();
+    let rhs_value = state.registers[rhs].get_owned_value();
 
-pub fn op_lt(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::Lt {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if jump_if_null {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
+    // Fast path for integers
+    if matches!(lhs_value, Value::Integer(_)) && matches!(rhs_value, Value::Integer(_)) {
+        if op.compare_integers(lhs_value, rhs_value) {
+            state.pc = target_pc.to_offset_int();
+        } else {
+            state.pc += 1;
         }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_lt() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (lhs, rhs) => {
-            if *lhs < *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
+        return Ok(InsnFunctionStepResult::Step);
     }
-    Ok(InsnFunctionStepResult::Step)
-}
 
-pub fn op_le(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::Le {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if jump_if_null {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
+    // Handle NULL values
+    if matches!(lhs_value, Value::Null) || matches!(rhs_value, Value::Null) {
+        if op.handle_nulls(lhs_value, rhs_value, nulleq, jump_if_null) {
+            state.pc = target_pc.to_offset_int();
+        } else {
+            state.pc += 1;
         }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_le() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (lhs, rhs) => {
-            if *lhs <= *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
+        return Ok(InsnFunctionStepResult::Step);
     }
-    Ok(InsnFunctionStepResult::Step)
-}
 
-pub fn op_gt(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::Gt {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if jump_if_null {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_gt() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-        (lhs, rhs) => {
-            if *lhs > *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
-            }
-        }
-    }
-    Ok(InsnFunctionStepResult::Step)
-}
+    let mut lhs_temp_reg = state.registers[lhs].clone();
+    let mut rhs_temp_reg = state.registers[rhs].clone();
 
-pub fn op_ge(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::Ge {
-        lhs,
-        rhs,
-        target_pc,
-        flags,
-        collation,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    let lhs = *lhs;
-    let rhs = *rhs;
-    let target_pc = *target_pc;
-    let jump_if_null = flags.has_jump_if_null();
-    let collation = collation.unwrap_or_default();
-    match (
-        state.registers[lhs].get_owned_value(),
-        state.registers[rhs].get_owned_value(),
-    ) {
-        (_, Value::Null) | (Value::Null, _) => {
-            if jump_if_null {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
+    let mut lhs_converted = false;
+    let mut rhs_converted = false;
+
+    // Apply affinity conversions
+    match affinity {
+        Affinity::Numeric | Affinity::Integer => {
+            let lhs_is_text = matches!(lhs_temp_reg.get_owned_value(), Value::Text(_));
+            let rhs_is_text = matches!(rhs_temp_reg.get_owned_value(), Value::Text(_));
+
+            if lhs_is_text || rhs_is_text {
+                if lhs_is_text {
+                    lhs_converted = apply_numeric_affinity(&mut lhs_temp_reg, false);
+                }
+                if rhs_is_text {
+                    rhs_converted = apply_numeric_affinity(&mut rhs_temp_reg, false);
+                }
             }
         }
-        (Value::Text(lhs), Value::Text(rhs)) => {
-            let order = collation.compare_strings(lhs.as_str(), rhs.as_str());
-            if order.is_ge() {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
+
+        Affinity::Text => {
+            let lhs_is_text = matches!(lhs_temp_reg.get_owned_value(), Value::Text(_));
+            let rhs_is_text = matches!(rhs_temp_reg.get_owned_value(), Value::Text(_));
+
+            if lhs_is_text || rhs_is_text {
+                if is_numeric_value(&lhs_temp_reg) {
+                    lhs_converted = stringify_register(&mut lhs_temp_reg);
+                }
+
+                if is_numeric_value(&rhs_temp_reg) {
+                    rhs_converted = stringify_register(&mut rhs_temp_reg);
+                }
             }
         }
-        (lhs, rhs) => {
-            if *lhs >= *rhs {
-                state.pc = target_pc.to_offset_int();
-            } else {
-                state.pc += 1;
+
+        Affinity::Real => {
+            if matches!(lhs_temp_reg.get_owned_value(), Value::Text(_)) {
+                lhs_converted = apply_numeric_affinity(&mut lhs_temp_reg, false);
+            }
+
+            if matches!(rhs_temp_reg.get_owned_value(), Value::Text(_)) {
+                rhs_converted = apply_numeric_affinity(&mut rhs_temp_reg, false);
+            }
+
+            if let Value::Integer(i) = lhs_temp_reg.get_owned_value() {
+                lhs_temp_reg = Register::Value(Value::Float(*i as f64));
+                lhs_converted = true;
+            }
+
+            if let Value::Integer(i) = rhs_temp_reg.get_owned_value() {
+                rhs_temp_reg = Register::Value(Value::Float(*i as f64));
+                rhs_converted = true;
             }
         }
+
+        Affinity::Blob => {} // Do nothing for blob affinity.
     }
+
+    let should_jump = op.compare(
+        lhs_temp_reg.get_owned_value(),
+        rhs_temp_reg.get_owned_value(),
+        &collation,
+    );
+
+    if lhs_converted {
+        state.registers[lhs] = lhs_temp_reg;
+    }
+
+    if rhs_converted {
+        state.registers[rhs] = rhs_temp_reg;
+    }
+
+    if should_jump {
+        state.pc = target_pc.to_offset_int();
+    } else {
+        state.pc += 1;
+    }
+
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -1985,13 +1934,22 @@ pub fn op_seek_rowid(
         let rowid = match state.registers[*src_reg].get_owned_value() {
             Value::Integer(rowid) => Some(*rowid),
             Value::Null => None,
+            // For non-integer values try to apply affinity and convert them to integer.
             other => {
-                return Err(LimboError::InternalError(format!(
-                    "SeekRowid: the value in the register is not an integer or NULL: {}",
-                    other
-                )));
+                let mut temp_reg = Register::Value(other.clone());
+                let converted = apply_affinity_char(&mut temp_reg, Affinity::Numeric);
+                if converted {
+                    match temp_reg.get_owned_value() {
+                        Value::Integer(i) => Some(*i),
+                        Value::Float(f) => Some(*f as i64),
+                        _ => unreachable!("apply_affinity_char with Numeric should produce an integer if it returns true"),
+                    }
+                } else {
+                    None
+                }
             }
         };
+
         match rowid {
             Some(rowid) => {
                 let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ));
@@ -2099,34 +2057,102 @@ pub fn op_seek(
         }
     } else {
         let pc = {
+            let original_value = state.registers[*start_reg].get_owned_value().clone();
+            let mut temp_value = original_value.clone();
+
+            let conversion_successful = if matches!(temp_value, Value::Text(_)) {
+                let mut temp_reg = Register::Value(temp_value);
+                let converted = apply_numeric_affinity(&mut temp_reg, false);
+                temp_value = temp_reg.get_owned_value().clone();
+                converted
+            } else {
+                true // Non-text values don't need conversion
+            };
+
+            let int_key = extract_int_value(&temp_value);
+            let lost_precision = !conversion_successful || !matches!(temp_value, Value::Integer(_));
+            let actual_op = if lost_precision {
+                match &temp_value {
+                    Value::Float(f) => {
+                        let int_key_as_float = int_key as f64;
+                        let c = if int_key_as_float > *f {
+                            1
+                        } else if int_key_as_float < *f {
+                            -1
+                        } else {
+                            0
+                        };
+
+                        if c > 0 {
+                            // If approximation is larger than actual search term
+                            match op {
+                                SeekOp::GT => SeekOp::GE, // (x > 4.9) -> (x >= 5)
+                                SeekOp::LE => SeekOp::LT, // (x <= 4.9) -> (x < 5)
+                                other => other,
+                            }
+                        } else if c < 0 {
+                            // If approximation is smaller than actual search term
+                            match op {
+                                SeekOp::LT => SeekOp::LE, // (x < 5.1) -> (x <= 5)
+                                SeekOp::GE => SeekOp::GT, // (x >= 5.1) -> (x > 5)
+                                other => other,
+                            }
+                        } else {
+                            op
+                        }
+                    }
+                    Value::Text(_) | Value::Blob(_) => {
+                        match op {
+                            SeekOp::GT | SeekOp::GE => {
+                                // No integers are > or >= non-numeric text, jump to target (empty result)
+                                state.pc = target_pc.to_offset_int();
+                                return Ok(InsnFunctionStepResult::Step);
+                            }
+                            SeekOp::LT | SeekOp::LE => {
+                                // All integers are < or <= non-numeric text
+                                // Move to last position and then use the normal seek logic
+                                {
+                                    let mut cursor = state.get_cursor(*cursor_id);
+                                    let cursor = cursor.as_btree_mut();
+                                    return_if_io!(cursor.last());
+                                }
+                                state.pc += 1;
+                                return Ok(InsnFunctionStepResult::Step);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => op,
+                }
+            } else {
+                op
+            };
+
+            let rowid = if matches!(original_value, Value::Null) {
+                match actual_op {
+                    SeekOp::GE | SeekOp::GT => {
+                        state.pc = target_pc.to_offset_int();
+                        return Ok(InsnFunctionStepResult::Step);
+                    }
+                    SeekOp::LE | SeekOp::LT => {
+                        // No integers are < NULL, so jump to target
+                        state.pc = target_pc.to_offset_int();
+                        return Ok(InsnFunctionStepResult::Step);
+                    }
+                    _ => unreachable!(),
+                }
+            } else {
+                int_key
+            };
             let mut cursor = state.get_cursor(*cursor_id);
             let cursor = cursor.as_btree_mut();
-            let rowid = match state.registers[*start_reg].get_owned_value() {
-                Value::Null => {
-                    // All integer values are greater than null so we just rewind the cursor
-                    return_if_io!(cursor.rewind());
-                    None
-                }
-                Value::Integer(rowid) => Some(*rowid),
-                _ => {
-                    return Err(LimboError::InternalError(format!(
-                        "{}: the value in the register is not an integer",
-                        op_name
-                    )));
-                }
-            };
-            let found = match rowid {
-                Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), op));
-                    if !found {
-                        target_pc.to_offset_int()
-                    } else {
-                        state.pc + 1
-                    }
-                }
-                None => state.pc + 1,
-            };
-            found
+            let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), actual_op));
+
+            if !found {
+                target_pc.to_offset_int()
+            } else {
+                state.pc + 1
+            }
         };
         state.pc = pc;
     }
@@ -5533,8 +5559,10 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
         if matches!(value, Value::Blob(_)) {
             return true;
         }
+
         match affinity {
             Affinity::Blob => return true,
+
             Affinity::Text => {
                 if matches!(value, Value::Text(_) | Value::Null) {
                     return true;
@@ -5543,6 +5571,7 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
                 *value = Value::Text(text.into());
                 return true;
             }
+
             Affinity::Integer | Affinity::Numeric => {
                 if matches!(value, Value::Integer(_)) {
                     return true;
@@ -5552,49 +5581,88 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
                 }
 
                 if let Value::Float(fl) = *value {
-                    if let Ok(int) = cast_real_to_integer(fl).map(Value::Integer) {
-                        *value = int;
-                        return true;
-                    }
-                    return false;
+                    // For floats, try to convert to integer if it's exact
+                    // This is similar to sqlite3VdbeIntegerAffinity
+                    return try_float_to_integer_affinity(value, fl);
                 }
 
-                let text = value.to_text().unwrap();
-                let Ok(num) = checked_cast_text_to_numeric(&text) else {
-                    return false;
-                };
+                if let Value::Text(t) = value {
+                    let text = t.as_str();
 
-                *value = match &num {
-                    Value::Float(fl) => {
-                        cast_real_to_integer(*fl).map(Value::Integer).unwrap_or(num);
-                        return true;
-                    }
-                    Value::Integer(_) if text.starts_with("0x") => {
+                    // Handle hex numbers - they shouldn't be converted
+                    if text.starts_with("0x") {
                         return false;
                     }
-                    _ => num,
-                };
+
+                    // Try to parse as number (similar to applyNumericAffinity)
+                    let Ok(num) = checked_cast_text_to_numeric(text) else {
+                        return false;
+                    };
+
+                    match num {
+                        Value::Integer(i) => {
+                            *value = Value::Integer(i);
+                            return true;
+                        }
+                        Value::Float(fl) => {
+                            // For Numeric affinity, try to convert float to int if exact
+                            if affinity == Affinity::Numeric {
+                                return try_float_to_integer_affinity(value, fl);
+                            } else {
+                                *value = Value::Float(fl);
+                                return true;
+                            }
+                        }
+                        other => {
+                            *value = other;
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
             }
 
             Affinity::Real => {
-                if let Value::Integer(i) = value {
-                    *value = Value::Float(*i as f64);
+                if let Value::Integer(i) = *value {
+                    *value = Value::Float(i as f64);
                     return true;
-                } else if let Value::Text(t) = value {
-                    if t.as_str().starts_with("0x") {
+                }
+                if let Value::Text(t) = value {
+                    let s = t.as_str();
+                    if s.starts_with("0x") {
                         return false;
                     }
-                    if let Ok(num) = checked_cast_text_to_numeric(t.as_str()) {
+                    if let Ok(num) = checked_cast_text_to_numeric(s) {
                         *value = num;
                         return true;
                     } else {
                         return false;
                     }
                 }
+                return true;
             }
-        };
+        }
     }
-    return true;
+
+    true
+}
+
+fn try_float_to_integer_affinity(value: &mut Value, fl: f64) -> bool {
+    // Check if the float can be exactly represented as an integer
+    if let Ok(int_val) = cast_real_to_integer(fl) {
+        // Additional check: ensure round-trip conversion is exact
+        // and value is within safe bounds (similar to SQLite's checks)
+        if (int_val as f64) == fl && int_val > i64::MIN + 1 && int_val < i64::MAX - 1 {
+            *value = Value::Integer(int_val);
+            return true;
+        }
+    }
+
+    // If we can't convert to exact integer, keep as float for Numeric affinity
+    // but return false to indicate the conversion wasn't "complete"
+    *value = Value::Float(fl);
+    false
 }
 
 fn exec_cast(value: &Value, datatype: &str) -> Value {
@@ -5934,11 +6002,416 @@ pub fn exec_or(lhs: &Value, rhs: &Value) -> Value {
     }
 }
 
+pub fn extract_int_value(value: &Value) -> i64 {
+    match value {
+        Value::Integer(i) => *i,
+        Value::Float(f) => {
+            // Use sqlite3RealToI64 equivalent
+            if *f < -9223372036854774784.0 {
+                i64::MIN
+            } else if *f > 9223372036854774784.0 {
+                i64::MAX
+            } else {
+                *f as i64
+            }
+        }
+        Value::Text(t) => {
+            // Try to parse as integer, return 0 if failed
+            t.as_str().parse::<i64>().unwrap_or(0)
+        }
+        Value::Blob(b) => {
+            // Try to parse blob as string then as integer
+            if let Ok(s) = std::str::from_utf8(b) {
+                s.parse::<i64>().unwrap_or(0)
+            } else {
+                0
+            }
+        }
+        Value::Null => 0,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum NumericParseResult {
+    NotNumeric,      // not a valid number
+    PureInteger,     // pure integer (entire string)
+    HasDecimalOrExp, // has decimal point or exponent (entire string)
+    ValidPrefixOnly, // valid prefix but not entire string
+}
+
+#[derive(Debug)]
+enum ParsedNumber {
+    None,
+    Integer(i64),
+    Float(f64),
+}
+
+impl ParsedNumber {
+    fn as_integer(&self) -> Option<i64> {
+        match self {
+            ParsedNumber::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    fn as_float(&self) -> Option<f64> {
+        match self {
+            ParsedNumber::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
+fn try_for_float(text: &str) -> (NumericParseResult, ParsedNumber) {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return (NumericParseResult::NotNumeric, ParsedNumber::None);
+    }
+
+    let mut pos = 0;
+    let len = bytes.len();
+
+    while pos < len && is_space(bytes[pos]) {
+        pos += 1;
+    }
+
+    if pos >= len {
+        return (NumericParseResult::NotNumeric, ParsedNumber::None);
+    }
+
+    let start_pos = pos;
+
+    let mut sign = 1i64;
+
+    if bytes[pos] == b'-' {
+        sign = -1;
+        pos += 1;
+    } else if bytes[pos] == b'+' {
+        pos += 1;
+    }
+
+    if pos >= len {
+        return (NumericParseResult::NotNumeric, ParsedNumber::None);
+    }
+
+    let mut significand = 0u64;
+    let mut digit_count = 0;
+    let mut decimal_adjust = 0i32;
+    let mut has_digits = false;
+
+    // Parse digits before decimal point
+    while pos < len && bytes[pos].is_ascii_digit() {
+        has_digits = true;
+        let digit = (bytes[pos] - b'0') as u64;
+
+        if significand <= (u64::MAX - 9) / 10 {
+            significand = significand * 10 + digit;
+            digit_count += 1;
+        } else {
+            // Skip overflow digits but adjust exponent
+            decimal_adjust += 1;
+        }
+        pos += 1;
+    }
+
+    let mut has_decimal = false;
+    let mut has_exponent = false;
+
+    // Check for decimal point
+    if pos < len && bytes[pos] == b'.' {
+        has_decimal = true;
+        pos += 1;
+
+        // Parse fractional digits
+        while pos < len && bytes[pos].is_ascii_digit() {
+            has_digits = true;
+            let digit = (bytes[pos] - b'0') as u64;
+
+            if significand <= (u64::MAX - 9) / 10 {
+                significand = significand * 10 + digit;
+                digit_count += 1;
+                decimal_adjust -= 1;
+            }
+            pos += 1;
+        }
+    }
+
+    if !has_digits {
+        return (NumericParseResult::NotNumeric, ParsedNumber::None);
+    }
+
+    // Check for exponent
+    let mut exponent = 0i32;
+    if pos < len && (bytes[pos] == b'e' || bytes[pos] == b'E') {
+        has_exponent = true;
+        pos += 1;
+
+        if pos >= len {
+            // Incomplete exponent, but we have valid digits before
+            return create_result_from_significand(
+                significand,
+                sign,
+                decimal_adjust,
+                has_decimal,
+                has_exponent,
+                NumericParseResult::ValidPrefixOnly,
+            );
+        }
+
+        let mut exp_sign = 1i32;
+        if bytes[pos] == b'-' {
+            exp_sign = -1;
+            pos += 1;
+        } else if bytes[pos] == b'+' {
+            pos += 1;
+        }
+
+        if pos >= len || !bytes[pos].is_ascii_digit() {
+            // Incomplete exponent
+            return create_result_from_significand(
+                significand,
+                sign,
+                decimal_adjust,
+                has_decimal,
+                false,
+                NumericParseResult::ValidPrefixOnly,
+            );
+        }
+
+        // Parse exponent digits
+        while pos < len && bytes[pos].is_ascii_digit() {
+            let digit = (bytes[pos] - b'0') as i32;
+            if exponent < 10000 {
+                exponent = exponent * 10 + digit;
+            } else {
+                exponent = 10000; // Cap at large value
+            }
+            pos += 1;
+        }
+        exponent *= exp_sign;
+    }
+
+    // Skip trailing whitespace
+    while pos < len && is_space(bytes[pos]) {
+        pos += 1;
+    }
+
+    // Determine if we consumed the entire string
+    let consumed_all = pos >= len;
+    let final_exponent = decimal_adjust + exponent;
+
+    let parse_result = if !consumed_all {
+        NumericParseResult::ValidPrefixOnly
+    } else if has_decimal || has_exponent {
+        NumericParseResult::HasDecimalOrExp
+    } else {
+        NumericParseResult::PureInteger
+    };
+
+    create_result_from_significand(
+        significand,
+        sign,
+        final_exponent,
+        has_decimal,
+        has_exponent,
+        parse_result,
+    )
+}
+
+fn create_result_from_significand(
+    significand: u64,
+    sign: i64,
+    exponent: i32,
+    has_decimal: bool,
+    has_exponent: bool,
+    parse_result: NumericParseResult,
+) -> (NumericParseResult, ParsedNumber) {
+    if significand == 0 {
+        match parse_result {
+            NumericParseResult::PureInteger => {
+                return (parse_result, ParsedNumber::Integer(0));
+            }
+            _ => {
+                return (parse_result, ParsedNumber::Float(0.0));
+            }
+        }
+    }
+
+    // For pure integers without exponent, try to return as integer
+    if !has_decimal && !has_exponent && exponent == 0 {
+        let signed_val = (significand as i64).wrapping_mul(sign);
+        if (significand as i64) * sign == signed_val {
+            return (parse_result, ParsedNumber::Integer(signed_val));
+        }
+    }
+
+    // Convert to float
+    let mut result = significand as f64;
+
+    let mut exp = exponent;
+    if exp > 0 {
+        while exp >= 100 {
+            result *= 1e100;
+            exp -= 100;
+        }
+        while exp >= 10 {
+            result *= 1e10;
+            exp -= 10;
+        }
+        while exp >= 1 {
+            result *= 10.0;
+            exp -= 1;
+        }
+    } else if exp < 0 {
+        while exp <= -100 {
+            result *= 1e-100;
+            exp += 100;
+        }
+        while exp <= -10 {
+            result *= 1e-10;
+            exp += 10;
+        }
+        while exp <= -1 {
+            result *= 0.1;
+            exp += 1;
+        }
+    }
+
+    if sign < 0 {
+        result = -result;
+    }
+
+    (parse_result, ParsedNumber::Float(result))
+}
+
+pub fn is_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+}
+
+fn real_to_i64(r: f64) -> i64 {
+    if r < -9223372036854774784.0 {
+        i64::MIN
+    } else if r > 9223372036854774784.0 {
+        i64::MAX
+    } else {
+        r as i64
+    }
+}
+
+fn apply_integer_affinity(register: &mut Register) -> bool {
+    let Register::Value(Value::Float(f)) = register else {
+        return false;
+    };
+
+    let ix = real_to_i64(*f);
+
+    // Only convert if round-trip is exact and not at extreme values
+    if *f == (ix as f64) && ix > i64::MIN && ix < i64::MAX {
+        *register = Register::Value(Value::Integer(ix));
+        true
+    } else {
+        false
+    }
+}
+
+/// Try to convert a value into a numeric representation if we can
+/// do so without loss of information. In other words, if the string
+/// looks like a number, convert it into a number. If it does not
+/// look like a number, leave it alone.
+pub fn apply_numeric_affinity(register: &mut Register, try_for_int: bool) -> bool {
+    let Register::Value(Value::Text(text)) = register else {
+        return false; // Only apply to text values
+    };
+
+    let text_str = text.as_str();
+    let (parse_result, parsed_value) = try_for_float(text_str);
+
+    // Only convert if we have a complete valid number (not just a prefix)
+    match parse_result {
+        NumericParseResult::NotNumeric | NumericParseResult::ValidPrefixOnly => {
+            false // Leave as text
+        }
+        NumericParseResult::PureInteger => {
+            if let Some(int_val) = parsed_value.as_integer() {
+                *register = Register::Value(Value::Integer(int_val));
+                true
+            } else {
+                false
+            }
+        }
+        NumericParseResult::HasDecimalOrExp => {
+            if let Some(float_val) = parsed_value.as_float() {
+                *register = Register::Value(Value::Float(float_val));
+                // If try_for_int is true, try to convert float to int if exact
+                if try_for_int {
+                    apply_integer_affinity(register);
+                }
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn is_numeric_value(reg: &Register) -> bool {
+    matches!(reg.get_owned_value(), Value::Integer(_) | Value::Float(_))
+}
+
+fn stringify_register(reg: &mut Register) -> bool {
+    match reg.get_owned_value() {
+        Value::Integer(i) => {
+            *reg = Register::Value(Value::build_text(&i.to_string()));
+            true
+        }
+        Value::Float(f) => {
+            *reg = Register::Value(Value::build_text(&f.to_string()));
+            true
+        }
+        Value::Text(_) | Value::Null | Value::Blob(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::types::{Text, Value};
 
     use super::{exec_add, exec_or};
+
+    #[test]
+    fn test_apply_numeric_affinity_partial_numbers() {
+        let mut reg = Register::Value(Value::Text(Text::from_str("123abc")));
+        assert!(!apply_numeric_affinity(&mut reg, false));
+        assert!(matches!(reg, Register::Value(Value::Text(_))));
+
+        let mut reg = Register::Value(Value::Text(Text::from_str("-53093015420544-15062897")));
+        assert!(!apply_numeric_affinity(&mut reg, false));
+        assert!(matches!(reg, Register::Value(Value::Text(_))));
+
+        let mut reg = Register::Value(Value::Text(Text::from_str("123.45xyz")));
+        assert!(!apply_numeric_affinity(&mut reg, false));
+        assert!(matches!(reg, Register::Value(Value::Text(_))));
+    }
+
+    #[test]
+    fn test_apply_numeric_affinity_complete_numbers() {
+        let mut reg = Register::Value(Value::Text(Text::from_str("123")));
+        assert!(apply_numeric_affinity(&mut reg, false));
+        assert_eq!(*reg.get_owned_value(), Value::Integer(123));
+
+        let mut reg = Register::Value(Value::Text(Text::from_str("123.45")));
+        assert!(apply_numeric_affinity(&mut reg, false));
+        assert_eq!(*reg.get_owned_value(), Value::Float(123.45));
+
+        let mut reg = Register::Value(Value::Text(Text::from_str("  -456  ")));
+        assert!(apply_numeric_affinity(&mut reg, false));
+        assert_eq!(*reg.get_owned_value(), Value::Integer(-456));
+
+        let mut reg = Register::Value(Value::Text(Text::from_str("0")));
+        assert!(apply_numeric_affinity(&mut reg, false));
+        assert_eq!(*reg.get_owned_value(), Value::Integer(0));
+    }
 
     #[test]
     fn test_exec_add() {

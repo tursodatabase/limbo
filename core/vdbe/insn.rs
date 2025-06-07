@@ -6,7 +6,7 @@ use std::{
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
-    schema::{BTreeTable, Index},
+    schema::{Affinity, BTreeTable, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     translate::collate::CollationSeq,
 };
@@ -20,6 +20,7 @@ pub struct CmpInsFlags(usize);
 impl CmpInsFlags {
     const NULL_EQ: usize = 0x80;
     const JUMP_IF_NULL: usize = 0x10;
+    const AFFINITY_MASK: usize = 0x47;
 
     fn has(&self, flag: usize) -> bool {
         (self.0 & flag) != 0
@@ -41,6 +42,17 @@ impl CmpInsFlags {
 
     pub fn has_nulleq(&self) -> bool {
         self.has(CmpInsFlags::NULL_EQ)
+    }
+
+    pub fn with_affinity(mut self, affinity: Affinity) -> Self {
+        let aff_code = affinity.to_char_code() as usize;
+        self.0 = (self.0 & !Self::AFFINITY_MASK) | aff_code;
+        self
+    }
+
+    pub fn get_affinity(&self) -> Affinity {
+        let aff_code = (self.0 & Self::AFFINITY_MASK) as u8;
+        Affinity::from_char_code(aff_code).unwrap_or(Affinity::Blob)
     }
 }
 
@@ -930,12 +942,12 @@ impl Insn {
             Insn::Move { .. } => execute::op_move,
             Insn::IfPos { .. } => execute::op_if_pos,
             Insn::NotNull { .. } => execute::op_not_null,
-            Insn::Eq { .. } => execute::op_eq,
-            Insn::Ne { .. } => execute::op_ne,
-            Insn::Lt { .. } => execute::op_lt,
-            Insn::Le { .. } => execute::op_le,
-            Insn::Gt { .. } => execute::op_gt,
-            Insn::Ge { .. } => execute::op_ge,
+            Insn::Eq { .. }
+            | Insn::Ne { .. }
+            | Insn::Lt { .. }
+            | Insn::Le { .. }
+            | Insn::Gt { .. }
+            | Insn::Ge { .. } => execute::op_comparison,
             Insn::If { .. } => execute::op_if,
             Insn::IfNot { .. } => execute::op_if_not,
             Insn::OpenRead { .. } => execute::op_open_read,
@@ -971,10 +983,10 @@ impl Insn {
             Insn::IdxRowId { .. } => execute::op_idx_row_id,
             Insn::SeekRowid { .. } => execute::op_seek_rowid,
             Insn::DeferredSeek { .. } => execute::op_deferred_seek,
-            Insn::SeekGE { .. } => execute::op_seek,
-            Insn::SeekGT { .. } => execute::op_seek,
-            Insn::SeekLE { .. } => execute::op_seek,
-            Insn::SeekLT { .. } => execute::op_seek,
+            Insn::SeekGE { .. }
+            | Insn::SeekGT { .. }
+            | Insn::SeekLE { .. }
+            | Insn::SeekLT { .. } => execute::op_seek,
             Insn::SeekEnd { .. } => execute::op_seek_end,
             Insn::IdxGE { .. } => execute::op_idx_ge,
             Insn::IdxGT { .. } => execute::op_idx_gt,

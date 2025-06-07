@@ -740,6 +740,22 @@ impl Affinity {
             ))),
         }
     }
+
+    pub fn to_char_code(&self) -> u8 {
+        self.aff_mask() as u8
+    }
+
+    pub fn from_char_code(code: u8) -> Result<Self, LimboError> {
+        Self::from_char(code as char)
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Affinity::Integer | Affinity::Real | Affinity::Numeric)
+    }
+
+    pub fn has_affinity(&self) -> bool {
+        !matches!(self, Affinity::Blob)
+    }
 }
 
 impl fmt::Display for Type {
