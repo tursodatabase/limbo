@@ -6,7 +6,7 @@ use crate::storage::database::DatabaseStorage;
 use crate::storage::sqlite3_ondisk::{
     self, DatabaseHeader, PageContent, PageType, DATABASE_HEADER_PAGE_ID,
 };
-use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
+use crate::storage::wal::{CheckpointResult, SyncTarget, Wal, WalFsyncStatus};
 use crate::Completion;
 use crate::{Buffer, LimboError, Result};
 use parking_lot::RwLock;
@@ -458,7 +458,7 @@ impl Pager {
                     }
                 }
                 FlushState::SyncWal => {
-                    if WalFsyncStatus::IO == self.wal.borrow_mut().sync()? {
+                    if WalFsyncStatus::IO == self.wal.borrow_mut().sync(SyncTarget::Wal)? {
                         return Ok(PagerCacheflushStatus::IO);
                     }
 

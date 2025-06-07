@@ -18,6 +18,7 @@ use std::{
 use crate::fast_lock::SpinLock;
 use crate::io::{File, SyncCompletion, IO};
 use crate::result::LimboResult;
+use crate::storage::database::DatabaseStorage;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
     WAL_HEADER_SIZE,
@@ -213,7 +214,7 @@ pub trait Wal {
         write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
     ) -> Result<CheckpointStatus>;
-    fn sync(&mut self) -> Result<WalFsyncStatus>;
+    fn sync(&mut self, target: SyncTarget) -> Result<WalFsyncStatus>;
     fn get_max_frame_in_wal(&self) -> u64;
     fn get_max_frame(&self) -> u64;
     fn get_min_frame(&self) -> u64;
@@ -289,7 +290,7 @@ impl Wal for DummyWAL {
         ))
     }
 
-    fn sync(&mut self) -> Result<crate::storage::wal::WalFsyncStatus> {
+    fn sync(&mut self, _target: SyncTarget) -> Result<crate::storage::wal::WalFsyncStatus> {
         Ok(crate::storage::wal::WalFsyncStatus::Done)
     }
 
@@ -306,12 +307,30 @@ impl Wal for DummyWAL {
     }
 }
 
-// Syncing requires a state machine because we need to schedule a sync and then wait until it is
-// finished. If we don't wait there will be undefined behaviour that no one wants to debug.
+/// Syncing requires a state machine because we need to schedule a sync and then wait until it is
+/// finished. If we don't wait there will be undefined behaviour that no one wants to debug.
 #[derive(Copy, Clone, Debug)]
 enum SyncState {
     NotSyncing,
     Syncing,
+}
+
+/// SyncTarget is used to determine what we are syncing, either the WAL or the DB file.
+pub enum SyncTarget {
+    Wal,
+    Db { db_file: Arc<dyn DatabaseStorage> },
+}
+
+impl std::fmt::Debug for SyncTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Wal => write!(f, "Wal"),
+            Self::Db { .. } => f
+                .debug_struct("Db")
+                .field("db_file", &"<DatabaseStorage>")
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -336,14 +355,14 @@ pub enum CheckpointStatus {
     IO,
 }
 
-// Checkpointing is a state machine that has multiple steps. Since there are multiple steps we save
-// in flight information of the checkpoint in OngoingCheckpoint. page is just a helper Page to do
-// page operations like reading a frame to a page, and writing a page to disk. This page should not
-// be placed back in pager page cache or anything, it's just a helper.
-// min_frame and max_frame is the range of frames that can be safely transferred from WAL to db
-// file.
-// current_page is a helper to iterate through all the pages that might have a frame in the safe
-// range. This is inefficient for now.
+/// Checkpointing is a state machine that has multiple steps. Since there are multiple steps we save
+/// in flight information of the checkpoint in OngoingCheckpoint. page is just a helper Page to do
+/// page operations like reading a frame to a page, and writing a page to disk. This page should not
+/// be placed back in pager page cache or anything, it's just a helper.
+/// min_frame and max_frame is the range of frames that can be safely transferred from WAL to db
+/// file.
+/// current_page is a helper to iterate through all the pages that might have a frame in the safe
+/// range. This is inefficient for now.
 struct OngoingCheckpoint {
     page: PageRef,
     state: CheckpointState,
@@ -368,8 +387,7 @@ pub struct WalFile {
     io: Arc<dyn IO>,
     buffer_pool: Rc<BufferPool>,
 
-    sync_state: RefCell<SyncState>,
-    syncing: Rc<RefCell<bool>>,
+    sync_state: Rc<RefCell<SyncState>>,
     page_size: u32,
 
     shared: Arc<UnsafeCell<WalFileShared>>,
@@ -389,7 +407,6 @@ impl fmt::Debug for WalFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WalFile")
             .field("sync_state", &self.sync_state)
-            .field("syncing", &self.syncing)
             .field("page_size", &self.page_size)
             .field("shared", &self.shared)
             .field("ongoing_checkpoint", &self.ongoing_checkpoint)
@@ -411,14 +428,14 @@ pub struct WalFileShared {
     pub min_frame: AtomicU64,
     pub max_frame: AtomicU64,
     pub nbackfills: AtomicU64,
-    // Frame cache maps a Page to all the frames it has stored in WAL in ascending order.
-    // This is to easily find the frame it must checkpoint each connection if a checkpoint is
-    // necessary.
-    // One difference between SQLite and limbo is that we will never support multi process, meaning
-    // we don't need WAL's index file. So we can do stuff like this without shared memory.
+    /// Frame cache maps a Page to all the frames it has stored in WAL in ascending order.
+    /// This is to easily find the frame it must checkpoint each connection if a checkpoint is
+    /// necessary.
+    /// One difference between SQLite and limbo is that we will never support multi process, meaning
+    /// we don't need WAL's index file. So we can do stuff like this without shared memory.
     // TODO: this will need refactoring because this is incredible memory inefficient.
     pub frame_cache: Arc<SpinLock<HashMap<u64, Vec<u64>>>>,
-    // Another memory inefficient array made to just keep track of pages that are in frame_cache.
+    /// Another memory inefficient array made to just keep track of pages that are in frame_cache.
     pub pages_in_frames: Arc<SpinLock<Vec<u64>>>,
     pub last_checksum: (u32, u32), // Check of last frame in WAL, this is a cumulative checksum over all frames in the WAL
     pub file: Arc<dyn File>,
@@ -762,24 +779,39 @@ impl Wal for WalFile {
                     if *write_counter.borrow() > 0 {
                         return Ok(CheckpointStatus::IO);
                     }
-                    let shared = self.get_shared();
 
-                    // Record two num pages fields to return as checkpoint result to caller.
-                    // Ref: pnLog, pnCkpt on https://www.sqlite.org/c3ref/wal_checkpoint_v2.html
-                    let checkpoint_result = CheckpointResult {
-                        num_wal_frames: shared.max_frame.load(Ordering::SeqCst),
-                        num_checkpointed_frames: self.ongoing_checkpoint.max_frame,
-                    };
-                    let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
-                        == self.ongoing_checkpoint.max_frame;
+                    let checkpoint_result;
+                    let everything_backfilled;
+                    {
+                        let shared = self.get_shared();
+
+                        // Record two num pages fields to return as checkpoint result to caller.
+                        // Ref: pnLog, pnCkpt on https://www.sqlite.org/c3ref/wal_checkpoint_v2.html
+                        checkpoint_result = CheckpointResult {
+                            num_wal_frames: shared.max_frame.load(Ordering::SeqCst),
+                            num_checkpointed_frames: self.ongoing_checkpoint.max_frame,
+                        };
+                        everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
+                            == self.ongoing_checkpoint.max_frame;
+                    }
+
                     if everything_backfilled {
                         // TODO: Even in Passive mode, if everything was backfilled we should
-                        // truncate and fsync the *db file*
+                        // truncate
+                        debug!("Everything backfilled");
+                        let sync_result = self.sync(SyncTarget::Db {
+                            db_file: pager.db_file.clone(),
+                        })?;
+
+                        if matches!(sync_result, WalFsyncStatus::IO) {
+                            pager.io.run_once()?;
+                        }
 
                         // To properly reset the *wal file* we will need restart and/or truncate mode.
                         // Currently, it will grow the WAL file indefinetly, but don't resetting is better than breaking.
                         // Check: https://github.com/sqlite/sqlite/blob/2bd9f69d40dd240c4122c6d02f1ff447e7b5c098/src/wal.c#L2193
                         if !matches!(mode, CheckpointMode::Passive) {
+                            let shared = self.get_shared();
                             // Here we know that we backfilled everything, therefore we can safely
                             // reset the wal.
                             shared.frame_cache.lock().clear();
@@ -790,6 +822,7 @@ impl Wal for WalFile {
                             // TODO(pere): truncate wal file here.
                         }
                     } else {
+                        let shared = self.get_shared();
                         shared
                             .nbackfills
                             .store(self.ongoing_checkpoint.max_frame, Ordering::SeqCst);
@@ -801,33 +834,49 @@ impl Wal for WalFile {
         }
     }
 
-    fn sync(&mut self) -> Result<WalFsyncStatus> {
-        let state = *self.sync_state.borrow();
-        match state {
+    fn sync(&mut self, target: SyncTarget) -> Result<WalFsyncStatus> {
+        let binding = self.sync_state.clone();
+        let state_value = {
+            let state = binding.borrow();
+            *state
+        };
+        let target_name = match target {
+            SyncTarget::Wal => "wal",
+            SyncTarget::Db { .. } => "db",
+        };
+        match state_value {
             SyncState::NotSyncing => {
                 let shared = self.get_shared();
-                debug!("wal_sync");
+                debug!("{}_sync", target_name);
                 {
-                    let syncing = self.syncing.clone();
-                    *syncing.borrow_mut() = true;
                     let completion = Completion::Sync(SyncCompletion {
-                        complete: Box::new(move |_| {
-                            debug!("wal_sync finish");
-                            *syncing.borrow_mut() = false;
+                        complete: Box::new({
+                            let sync_state = self.sync_state.clone();
+                            move |_| {
+                                debug!("{}_sync finished", target_name);
+                                *sync_state.borrow_mut() = SyncState::NotSyncing;
+                            }
                         }),
                         is_completed: Cell::new(false),
                     });
-                    shared.file.sync(Arc::new(completion))?;
+
+                    match target {
+                        SyncTarget::Wal => {
+                            shared.file.sync(Arc::new(completion))?;
+                        }
+                        SyncTarget::Db { db_file } => {
+                            db_file.sync(Arc::new(completion))?;
+                        }
+                    }
                 }
                 self.sync_state.replace(SyncState::Syncing);
                 Ok(WalFsyncStatus::IO)
             }
             SyncState::Syncing => {
-                if *self.syncing.borrow() {
-                    Ok(WalFsyncStatus::IO)
-                } else {
-                    self.sync_state.replace(SyncState::NotSyncing);
-                    Ok(WalFsyncStatus::Done)
+                debug!("{}_sync already syncing", target_name);
+                match *self.sync_state.clone().borrow() {
+                    SyncState::NotSyncing => Ok(WalFsyncStatus::IO),
+                    SyncState::Syncing => Ok(WalFsyncStatus::Done),
                 }
             }
         }
@@ -875,11 +924,10 @@ impl WalFile {
                 max_frame: 0,
                 current_page: 0,
             },
-            syncing: Rc::new(RefCell::new(false)),
             checkpoint_threshold: 1000,
             page_size,
             buffer_pool,
-            sync_state: RefCell::new(SyncState::NotSyncing),
+            sync_state: Rc::new(RefCell::new(SyncState::NotSyncing)),
             max_frame: 0,
             min_frame: 0,
             max_frame_read_lock_index: 0,
