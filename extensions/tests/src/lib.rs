@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use limbo_ext::{
     register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
     ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
@@ -6,12 +5,12 @@ use limbo_ext::{
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::NonZeroUsize;
 use std::rc::Rc;
-use std::sync::Mutex;
 
 register_extension! {
     vtabs: { KVStoreVTabModule, TableStatsVtabModule },
@@ -19,9 +18,7 @@ register_extension! {
     vfs: { TestFS },
 }
 
-lazy_static! {
-    static ref GLOBAL_STORE: Mutex<BTreeMap<i64, (String, String)>> = Mutex::new(BTreeMap::new());
-}
+type Store = Rc<RefCell<BTreeMap<i64, (String, String)>>>;
 
 #[derive(VTabModuleDerive, Default)]
 pub struct KVStoreVTabModule;
@@ -30,6 +27,7 @@ pub struct KVStoreVTabModule;
 pub struct KVStoreCursor {
     rows: Vec<(i64, String, String)>,
     index: Option<usize>,
+    store: Store,
 }
 
 impl VTabModule for KVStoreVTabModule {
@@ -39,7 +37,12 @@ impl VTabModule for KVStoreVTabModule {
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
         let schema = "CREATE TABLE x (key TEXT PRIMARY KEY, value TEXT);".to_string();
-        Ok((schema, KVStoreTable {}))
+        Ok((
+            schema,
+            KVStoreTable {
+                store: Rc::new(RefCell::new(BTreeMap::new())),
+            },
+        ))
     }
 }
 
@@ -63,8 +66,7 @@ impl VTabCursor for KVStoreCursor {
                 log::debug!("idx_str found: key_eq\n value: {:?}", key);
                 if let Some(key) = key {
                     let rowid = hash_key(&key);
-                    let store = GLOBAL_STORE.lock().unwrap();
-                    if let Some((k, v)) = store.get(&rowid) {
+                    if let Some((k, v)) = self.store.borrow().get(&rowid) {
                         self.rows.push((rowid, k.clone(), v.clone()));
                         self.index = Some(0);
                     } else {
@@ -79,8 +81,9 @@ impl VTabCursor for KVStoreCursor {
                 ResultCode::OK
             }
             _ => {
-                let store = GLOBAL_STORE.lock().unwrap();
-                self.rows = store
+                self.rows = self
+                    .store
+                    .borrow()
                     .iter()
                     .map(|(&rowid, (k, v))| (rowid, k.clone(), v.clone()))
                     .collect();
@@ -133,7 +136,9 @@ impl VTabCursor for KVStoreCursor {
     }
 }
 
-pub struct KVStoreTable {}
+pub struct KVStoreTable {
+    store: Store,
+}
 
 impl VTable for KVStoreTable {
     type Cursor = KVStoreCursor;
@@ -144,6 +149,7 @@ impl VTable for KVStoreTable {
         Ok(KVStoreCursor {
             rows: Vec::new(),
             index: None,
+            store: Rc::clone(&self.store),
         })
     }
 
@@ -201,22 +207,19 @@ impl VTable for KVStoreTable {
             .to_string();
         let rowid = hash_key(&key);
         {
-            let mut store = GLOBAL_STORE.lock().unwrap();
-            store.insert(rowid, (key, val));
+            self.store.borrow_mut().insert(rowid, (key, val));
         }
         Ok(rowid)
     }
 
     fn delete(&mut self, rowid: i64) -> Result<(), Self::Error> {
-        let mut store = GLOBAL_STORE.lock().unwrap();
-        store.remove(&rowid);
+        self.store.borrow_mut().remove(&rowid);
         Ok(())
     }
 
     fn update(&mut self, rowid: i64, values: &[Value]) -> Result<(), Self::Error> {
         {
-            let mut store = GLOBAL_STORE.lock().unwrap();
-            store.remove(&rowid);
+            self.store.borrow_mut().remove(&rowid);
         }
         let _ = self.insert(values)?;
         Ok(())
