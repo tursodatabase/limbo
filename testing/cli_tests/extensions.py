@@ -328,6 +328,16 @@ def _test_series(limbo: TestLimboShell):
         "SELECT * FROM generate_series(10, 1, -2);",
         lambda res: res == "10\n8\n6\n4\n2",
     )
+    limbo.run_test_fn(
+        "SELECT "
+        "   a.value a_val, "
+        "   b.value b_val "
+        "FROM "
+        "   generate_series(1, 3) a "
+        "JOIN "
+        "   generate_series(1, 1) b ON a.value = b.value;",
+        lambda res: res == "1|1",
+    )
     limbo.execute_dot("CREATE TABLE target (id integer primary key);")
     limbo.execute_dot("INSERT INTO target SELECT * FROM generate_series(1, 5);")
     limbo.run_test_fn(
@@ -919,11 +929,22 @@ def _test_hidden_columns(exec_name, ext_path):
         "SELECT * FROM l JOIN r ON l.comment = r.comment;",
         lambda res: "2|3|comment1|4|5" == res,
     )
-    # TODO: Limbo panics for:
-    # - SELECT * FROM l NATURAL JOIN r NATURAL JOIN r;
-    # - SELECT * FROM l NATURAL JOIN r NATURAL JOIN l;
-    # - SELECT * FROM r NATURAL JOIN l;
-    # - SELECT * FROM r NATURAL JOIN l NATURAL JOIN r;
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r NATURAL JOIN r;",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r NATURAL JOIN l;",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM r NATURAL JOIN l;",
+        lambda res: "comment0|2|3" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM r NATURAL JOIN l NATURAL JOIN r;",
+        lambda res: "comment0|2|3" == res,
+    )
 
     limbo.quit()
 
