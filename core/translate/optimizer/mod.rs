@@ -243,13 +243,13 @@ fn optimize_table_access(
         if access_method.is_scan() {
             let is_leftmost_table = i == 0;
             let uses_index = access_method.index.is_some();
-            let source_table_is_from_clause_subquery = matches!(
+            let source_table_does_not_support_search = matches!(
                 &joined_tables[table_idx].table,
-                Table::FromClauseSubquery(_)
+                Table::FromClauseSubquery(_) | Table::Virtual(_)
             );
 
             let try_to_build_ephemeral_index =
-                !is_leftmost_table && !uses_index && !source_table_is_from_clause_subquery;
+                !is_leftmost_table && !uses_index && !source_table_does_not_support_search;
             if !try_to_build_ephemeral_index {
                 joined_tables[table_idx].op = Operation::Scan {
                     iter_dir: access_method.iter_dir,
