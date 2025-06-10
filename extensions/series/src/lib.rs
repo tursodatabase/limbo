@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use turso_ext::{
-    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
-    VTable, Value,
+    register_extension, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo,
+    OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
 };
 
 register_extension! {
@@ -52,6 +52,66 @@ impl VTable for GenerateSeriesTable {
             step: 0,
             current: 0,
         })
+    }
+
+    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+        // The bits of `idx_num` are used to indicate which arguments are available to the filter method:
+        // - Bit 0 set -> 'start' is available
+        // - Bit 1 set -> 'stop' is available
+        // - Bit 2 set -> 'step' is available
+        let mut idx_num = 0;
+        let mut start_idx = None;
+        let mut stop_idx = None;
+        let mut step_idx = None;
+
+        for (i, c) in constraints.iter().enumerate() {
+            if !c.usable || c.op != ConstraintOp::Eq {
+                continue;
+            }
+            match c.column_index {
+                1 => {
+                    start_idx = Some(i);
+                    idx_num |= 1;
+                }
+                2 => {
+                    stop_idx = Some(i);
+                    idx_num |= 2;
+                }
+                3 => {
+                    step_idx = Some(i);
+                    idx_num |= 4;
+                }
+                _ => {}
+            }
+        }
+
+        let mut argv_idx = 1;
+        let constraint_usages = constraints
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if Some(i) == start_idx || Some(i) == stop_idx || Some(i) == step_idx {
+                    let usage = ConstraintUsage {
+                        argv_index: Some(argv_idx),
+                        omit: true,
+                    };
+                    argv_idx += 1;
+                    usage
+                } else {
+                    ConstraintUsage {
+                        argv_index: Some(0),
+                        omit: false,
+                    }
+                }
+            })
+            .collect();
+
+        IndexInfo {
+            idx_num,
+            idx_str: Some(idx_num.to_string()),
+            constraint_usages,
+            ..Default::default()
+        }
     }
 }
 

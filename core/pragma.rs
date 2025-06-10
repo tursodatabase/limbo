@@ -1,6 +1,7 @@
 use crate::{Connection, LimboError, Statement, StepResult, Value};
 use bitflags::bitflags;
 use std::str::FromStr;
+use turso_ext::{ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo};
 use std::sync::Arc;
 use turso_sqlite3_parser::ast::PragmaName;
 
@@ -156,6 +157,53 @@ impl PragmaVirtualTable {
             max_arg_count: self.max_arg_count,
             has_pragma_arg: self.has_pragma_arg,
         })
+    }
+
+    pub(crate) fn best_index(&self, constraints: &[ConstraintInfo]) -> IndexInfo {
+        let mut arg0_idx = None;
+        let mut arg1_idx = None;
+
+        for (i, c) in constraints.iter().enumerate() {
+            if !c.usable || c.op != ConstraintOp::Eq {
+                continue;
+            }
+            let visible_count = self.visible_column_count as u32;
+            if c.column_index < visible_count {
+                continue;
+            }
+            let hidden_idx = c.column_index - visible_count;
+            match hidden_idx {
+                0 => arg0_idx = Some(i),
+                1 => arg1_idx = Some(i),
+                _ => unreachable!("Unexpected hidden column index: {}", hidden_idx),
+            }
+        }
+
+        let mut argv_idx = 1;
+        let constraint_usages = constraints
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if Some(i) == arg0_idx || Some(i) == arg1_idx {
+                    let usage = ConstraintUsage {
+                        argv_index: Some(argv_idx),
+                        omit: true,
+                    };
+                    argv_idx += 1;
+                    usage
+                } else {
+                    ConstraintUsage {
+                        argv_index: Some(0),
+                        omit: false,
+                    }
+                }
+            })
+            .collect();
+
+        IndexInfo {
+            constraint_usages,
+            ..Default::default()
+        }
     }
 }
 

@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use keywords::KEYWORDS;
 use turso_ext::{
-    register_extension, Connection, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, VTable,
-    Value,
+    register_extension, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo,
+    OrderByInfo, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, VTable, Value,
 };
 
 register_extension! {
@@ -89,6 +89,60 @@ impl VTable for CompletionTable {
 
     fn open(&self, _conn: Option<Arc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         Ok(CompletionCursor::default())
+    }
+
+    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+        // The bits of `idx_num` are used to indicate which arguments are available to the filter method:
+        // - Bit 0 set -> 'prefix' is available
+        // - Bit 1 set -> 'wholeline' is available
+        let mut idx_num = 0;
+        let mut prefix_idx = None;
+        let mut wholeline_idx = None;
+
+        for (i, c) in constraints.iter().enumerate() {
+            if !c.usable || c.op != ConstraintOp::Eq {
+                continue;
+            }
+            match c.column_index {
+                1 => {
+                    prefix_idx = Some(i);
+                    idx_num |= 1;
+                }
+                2 => {
+                    wholeline_idx = Some(i);
+                    idx_num |= 2;
+                }
+                _ => {}
+            }
+        }
+
+        let mut argv_idx = 1;
+        let constraint_usages = constraints
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if Some(i) == prefix_idx || Some(i) == wholeline_idx {
+                    let usage = ConstraintUsage {
+                        argv_index: Some(argv_idx),
+                        omit: true,
+                    };
+                    argv_idx += 1;
+                    usage
+                } else {
+                    ConstraintUsage {
+                        argv_index: Some(0),
+                        omit: false,
+                    }
+                }
+            })
+            .collect();
+
+        IndexInfo {
+            idx_num,
+            idx_str: Some(idx_num.to_string()),
+            constraint_usages,
+            ..Default::default()
+        }
     }
 }
 
