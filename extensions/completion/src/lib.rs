@@ -15,12 +15,13 @@ register_extension! {
     vtabs: { CompletionVTabModule }
 }
 
-macro_rules! try_option {
-    ($expr:expr, $err:expr) => {
-        match $expr {
-            Some(val) => val,
-            None => return $err,
-        }
+macro_rules! extract_arg_text {
+    ($args:expr, $idx:expr) => {
+        $args
+            .get($idx)
+            .map(|v| v.to_text().unwrap_or(""))
+            .unwrap_or("")
+            .to_string()
     };
 }
 
@@ -170,19 +171,21 @@ impl CompletionCursor {
 impl VTabCursor for CompletionCursor {
     type Error = ResultCode;
 
-    fn filter(&mut self, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
-        if args.is_empty() || args.len() > 2 {
-            return ResultCode::InvalidArgs;
-        }
+    fn filter(&mut self, args: &[Value], idx_info: Option<(&str, i32)>) -> ResultCode {
         self.reset();
-        let prefix = try_option!(args[0].to_text(), ResultCode::InvalidArgs);
 
-        let wholeline = args.get(1).map(|v| v.to_text().unwrap_or("")).unwrap_or("");
+        if let Some((_, idx_num)) = idx_info {
+            let mut arg_idx = 0;
+            // For the semantics of `idx_num`, see the comment in the `best_index` method.
+            if idx_num & 1 != 0 {
+                self.prefix = extract_arg_text!(args, arg_idx);
+                arg_idx += 1;
+            }
+            if idx_num & 2 != 0 {
+                self.line = extract_arg_text!(args, arg_idx);
+            }
+        }
 
-        self.line = wholeline.to_string();
-        self.prefix = prefix.to_string();
-
-        // Currently best index is not implemented so the correct arg parsing is not done here
         if !self.line.is_empty() && self.prefix.is_empty() {
             let mut i = self.line.len();
             while let Some(ch) = self.line.chars().next() {
