@@ -35,6 +35,9 @@ impl Schema {
             SCHEMA_TABLE_NAME.to_string(),
             Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
+        for function in VirtualTable::builtin_functions() {
+            tables.insert(function.name.to_owned(), Arc::new(Table::Virtual(function)));
+        }
         Self {
             tables,
             indexes,

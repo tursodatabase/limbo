@@ -1,8 +1,8 @@
 use crate::{Connection, LimboError, Statement, StepResult, Value};
 use bitflags::bitflags;
-use std::str::FromStr;
-use turso_ext::{ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo};
 use std::sync::Arc;
+use strum::IntoEnumIterator;
+use turso_ext::{ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo};
 use turso_sqlite3_parser::ast::PragmaName;
 
 bitflags! {
@@ -31,7 +31,7 @@ impl Pragma {
     }
 }
 
-fn pragma_for(pragma: PragmaName) -> Pragma {
+fn pragma_for(pragma: &PragmaName) -> Pragma {
     use PragmaName::*;
 
     match pragma {
@@ -83,67 +83,65 @@ fn pragma_for(pragma: PragmaName) -> Pragma {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PragmaVirtualTable {
-    pragma_name: String,
+    pub(crate) pragma_name: String,
     visible_column_count: usize,
     max_arg_count: usize,
     has_pragma_arg: bool,
 }
 
 impl PragmaVirtualTable {
-    pub(crate) fn create(pragma_name: &str) -> crate::Result<(Self, String)> {
-        if let Ok(pragma) = PragmaName::from_str(pragma_name) {
-            if pragma == PragmaName::LegacyFileFormat {
-                return Err(Self::no_such_pragma(pragma_name));
-            }
-            let pragma = pragma_for(pragma);
-            if pragma
-                .flags
-                .intersects(PragmaFlags::Result0 | PragmaFlags::Result1)
-            {
-                let mut max_arg_count = 0;
-                let mut has_pragma_arg = false;
-
-                let mut sql = String::from("CREATE TABLE x(");
-                let col_defs = pragma
-                    .columns
-                    .iter()
-                    .map(|col| format!("\"{col}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                sql.push_str(&col_defs);
-                if pragma.flags.contains(PragmaFlags::Result1) {
-                    sql.push_str(", arg HIDDEN");
-                    max_arg_count += 1;
-                    has_pragma_arg = true;
-                }
+    pub(crate) fn functions() -> Vec<(PragmaVirtualTable, String)> {
+        PragmaName::iter()
+            .filter(|name| *name != PragmaName::LegacyFileFormat)
+            .filter_map(|name| {
+                let pragma = pragma_for(&name);
                 if pragma
                     .flags
-                    .intersects(PragmaFlags::SchemaOpt | PragmaFlags::SchemaReq)
+                    .intersects(PragmaFlags::Result0 | PragmaFlags::Result1)
                 {
-                    sql.push_str(", schema HIDDEN");
-                    max_arg_count += 1;
+                    Some(Self::create(name.to_string(), pragma))
+                } else {
+                    None
                 }
-                sql.push(')');
-
-                return Ok((
-                    PragmaVirtualTable {
-                        pragma_name: pragma_name.to_owned(),
-                        visible_column_count: pragma.columns.len(),
-                        max_arg_count,
-                        has_pragma_arg,
-                    },
-                    sql,
-                ));
-            }
-        }
-        Err(Self::no_such_pragma(pragma_name))
+            })
+            .collect()
     }
 
-    fn no_such_pragma(pragma_name: &str) -> LimboError {
-        LimboError::ParseError(format!(
-            "No such table-valued function: pragma_{}",
-            pragma_name
-        ))
+    fn create(pragma_name: String, pragma: Pragma) -> (Self, String) {
+        let mut max_arg_count = 0;
+        let mut has_pragma_arg = false;
+
+        let mut sql = String::from("CREATE TABLE x(");
+        let col_defs = pragma
+            .columns
+            .iter()
+            .map(|col| format!("\"{col}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql.push_str(&col_defs);
+        if pragma.flags.contains(PragmaFlags::Result1) {
+            sql.push_str(", arg HIDDEN");
+            max_arg_count += 1;
+            has_pragma_arg = true;
+        }
+        if pragma
+            .flags
+            .intersects(PragmaFlags::SchemaOpt | PragmaFlags::SchemaReq)
+        {
+            sql.push_str(", schema HIDDEN");
+            max_arg_count += 1;
+        }
+        sql.push(')');
+
+        (
+            PragmaVirtualTable {
+                pragma_name,
+                visible_column_count: pragma.columns.len(),
+                max_arg_count,
+                has_pragma_arg,
+            },
+            sql,
+        )
     }
 
     pub(crate) fn open(&self, conn: Arc<Connection>) -> crate::Result<PragmaVirtualTableCursor> {

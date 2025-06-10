@@ -19,6 +19,7 @@ use crate::{
     vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
+use turso_sqlite3_parser::ast::Literal::Null;
 use turso_sqlite3_parser::ast::{
     self, As, Expr, FromClause, JoinType, Limit, Materialized, QualifiedName, TableInternalId,
     UnaryOperator, With,
@@ -246,6 +247,7 @@ fn parse_from_clause_table(
     schema: &Schema,
     table: ast::SelectTable,
     table_references: &mut TableReferences,
+    out_where_clause: &mut Vec<WhereTerm>,
     ctes: &mut Vec<JoinedTable>,
     syms: &SymbolTable,
     table_ref_counter: &mut TableRefIdCounter,
@@ -256,8 +258,10 @@ fn parse_from_clause_table(
             table_references,
             ctes,
             table_ref_counter,
+            out_where_clause,
             qualified_name,
             maybe_alias,
+            None,
         ),
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(subplan) = prepare_select_plan(
@@ -289,42 +293,30 @@ fn parse_from_clause_table(
             ));
             Ok(())
         }
-        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
-            let normalized_name = &normalize_ident(qualified_name.name.0.as_str());
-            let vtab = crate::VirtualTable::function(normalized_name, maybe_args, syms)?;
-            let alias = maybe_alias
-                .as_ref()
-                .map(|a| match a {
-                    ast::As::As(id) => id.0.clone(),
-                    ast::As::Elided(id) => id.0.clone(),
-                })
-                .unwrap_or(normalized_name.to_string());
-
-            table_references.add_joined_table(JoinedTable {
-                op: Operation::Scan {
-                    iter_dir: IterationDirection::Forwards,
-                    index: None,
-                },
-                join_info: None,
-                table: Table::Virtual(vtab),
-                identifier: alias,
-                internal_id: table_ref_counter.next(),
-                col_used_mask: ColumnUsedMask::default(),
-            });
-
-            Ok(())
-        }
+        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => parse_table(
+            schema,
+            table_references,
+            ctes,
+            table_ref_counter,
+            out_where_clause,
+            qualified_name,
+            maybe_alias,
+            maybe_args,
+        ),
         _ => todo!(),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_table(
     schema: &Schema,
     table_references: &mut TableReferences,
     ctes: &mut Vec<JoinedTable>,
     table_ref_counter: &mut TableRefIdCounter,
+    out_where_clause: &mut Vec<WhereTerm>,
     qualified_name: QualifiedName,
     maybe_alias: Option<As>,
+    maybe_args: Option<Vec<Expr>>,
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.0.as_str());
     // Check if the FROM clause table is referring to a CTE in the current scope.
@@ -346,7 +338,16 @@ fn parse_table(
                 ast::As::Elided(id) => id,
             })
             .map(|a| a.0);
+        let internal_id = table_ref_counter.next();
         let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
+            if let Some(args) = maybe_args {
+                transform_args_into_where_terms(
+                    args,
+                    internal_id,
+                    out_where_clause,
+                    table.as_ref(),
+                )?;
+            }
             Table::Virtual(tbl.clone())
         } else if let Table::BTree(table) = table.as_ref() {
             Table::BTree(table.clone())
@@ -362,7 +363,7 @@ fn parse_table(
             },
             table: tbl_ref,
             identifier: alias.unwrap_or(normalized_qualified_name),
-            internal_id: table_ref_counter.next(),
+            internal_id,
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
         });
@@ -396,6 +397,72 @@ fn parse_table(
     }
 
     crate::bail_parse_error!("Table {} not found", normalized_qualified_name);
+}
+
+fn transform_args_into_where_terms(
+    args: Vec<Expr>,
+    internal_id: TableInternalId,
+    out_where_clause: &mut Vec<WhereTerm>,
+    table: &Table,
+) -> Result<()> {
+    let mut args_iter = args.into_iter();
+    let mut hidden_count = 0;
+    for (i, col) in table.columns().iter().enumerate() {
+        if !col.hidden {
+            continue;
+        }
+        hidden_count += 1;
+
+        if let Some(arg_expr) = args_iter.next() {
+            if contains_column_reference(&arg_expr)? {
+                crate::bail_parse_error!(
+                    "Column references are not supported as table-valued function arguments yet"
+                );
+            }
+            let column_expr = Expr::Column {
+                database: None,
+                table: internal_id,
+                column: i,
+                is_rowid_alias: col.is_rowid_alias,
+            };
+            let expr = match arg_expr {
+                Expr::Literal(Null) => Expr::IsNull(Box::new(column_expr)),
+                other => Expr::Binary(
+                    Box::new(column_expr),
+                    ast::Operator::Equals,
+                    Box::new(other),
+                ),
+            };
+            out_where_clause.push(WhereTerm {
+                expr,
+                from_outer_join: None,
+                consumed: Cell::new(false),
+            });
+        }
+    }
+
+    if args_iter.next().is_some() {
+        return Err(crate::LimboError::ParseError(format!(
+            "Too many arguments for {}: expected at most {}, got {}",
+            table.get_name(),
+            hidden_count,
+            hidden_count + 1 + args_iter.count()
+        )));
+    }
+
+    Ok(())
+}
+
+fn contains_column_reference(top_level_expr: &Expr) -> Result<bool> {
+    let mut contains = false;
+    walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
+        match expr {
+            Expr::Id(_) | Expr::Qualified(_, _) | Expr::Column { .. } => contains = true,
+            _ => {}
+        };
+        Ok(WalkControl::Continue)
+    })?;
+    Ok(contains)
 }
 
 pub fn parse_from(
@@ -488,6 +555,7 @@ pub fn parse_from(
         schema,
         select_owned,
         table_references,
+        out_where_clause,
         &mut ctes_as_subqueries,
         syms,
         table_ref_counter,
@@ -726,6 +794,7 @@ fn parse_join(
         schema,
         table,
         table_references,
+        out_where_clause,
         ctes,
         syms,
         table_ref_counter,

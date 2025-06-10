@@ -1030,35 +1030,6 @@ pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
     }
 }
 
-// for TVF's we need these at planning time so we cannot emit translate_expr
-pub fn vtable_args(args: &[ast::Expr]) -> Vec<turso_ext::Value> {
-    let mut vtable_args = Vec::new();
-    for arg in args {
-        match arg {
-            Expr::Literal(lit) => match lit {
-                Literal::Numeric(i) => {
-                    if i.contains('.') {
-                        vtable_args.push(turso_ext::Value::from_float(i.parse().unwrap()));
-                    } else {
-                        vtable_args.push(turso_ext::Value::from_integer(i.parse().unwrap()));
-                    }
-                }
-                Literal::String(s) => {
-                    vtable_args.push(turso_ext::Value::from_text(s.clone()));
-                }
-                Literal::Blob(b) => {
-                    vtable_args.push(turso_ext::Value::from_blob(b.as_bytes().into()));
-                }
-                _ => {
-                    vtable_args.push(turso_ext::Value::null());
-                }
-            },
-            _ => vtable_args.push(turso_ext::Value::null()),
-        }
-    }
-    vtable_args
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;

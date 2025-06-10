@@ -317,12 +317,40 @@ def _test_series(limbo: TestLimboShell):
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
     )
     limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10;",
+        lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series(1, 10) WHERE value < 5;",
+        lambda res: res == "1\n2\n3\n4",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND value < 5;",
+        lambda res: res == "1\n2\n3\n4",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND start = 5;",
+        lambda res: res == "",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND start > 5;",
+        lambda res: res == "",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series;",
+        lambda res: "Invalid Argument" in res or 'first argument to "generate_series()" missing or unusable' in res,
+    )
+    limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2);",
         lambda res: res == "1\n3\n5\n7\n9",
     )
     limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND step = 2;",
+        lambda res: res == "1\n3\n5\n7\n9",
+    )
+    limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2, 3);",
-        lambda res: "Invalid Argument" in res or "too many arguments" in res,
+        lambda res: "too many arguments" in res.lower(),
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(10, 1, -2);",
@@ -948,6 +976,22 @@ def _test_hidden_columns(exec_name, ext_path):
     limbo.run_test_fn(
         "SELECT * FROM r NATURAL JOIN l NATURAL JOIN r;",
         lambda res: "comment0|2|3" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM (SELECT * FROM l JOIN r USING(key, value)) JOIN r USING(comment, key, value);",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM (SELECT * FROM l NATURAL JOIN r) JOIN r USING(comment, key, value);",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l JOIN r USING(key, value) JOIN r USING(comment, key, value);",
+        lambda res: "" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r JOIN r USING(comment, key, value);",
+        lambda res: "" == res,
     )
 
     limbo.quit()

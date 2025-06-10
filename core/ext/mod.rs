@@ -1,6 +1,7 @@
 #[cfg(feature = "fs")]
 mod dynamic;
 mod vtab_xconnect;
+use crate::vtab::VirtualTable;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
@@ -151,6 +152,13 @@ impl Connection {
             .borrow_mut()
             .vtab_modules
             .insert(name.to_string(), vmodule.into());
+        if kind == VTabKind::TableValuedFunction {
+            if let Ok(vtab) = VirtualTable::function(name, &self.syms.borrow()) {
+                self.schema.write().add_virtual_table(vtab);
+            } else {
+                return ResultCode::Error;
+            }
+        }
         ResultCode::OK
     }
 
