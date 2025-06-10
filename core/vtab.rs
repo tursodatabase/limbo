@@ -120,12 +120,7 @@ impl VirtualTable {
         order_by: &[OrderByInfo],
     ) -> IndexInfo {
         match &self.vtab_type {
-            VirtualTableType::Pragma(_) => {
-                // SQLite tries to estimate cost and row count for pragma_ TVFs,
-                // but since Limbo doesn't have cost-based planning yet, this
-                // estimation is not currently implemented.
-                Default::default()
-            }
+            VirtualTableType::Pragma(table) => table.best_index(constraints),
             VirtualTableType::External(table) => table.best_index(constraints, order_by),
         }
     }
