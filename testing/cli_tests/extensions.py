@@ -311,6 +311,7 @@ def test_crypto():
 
 
 def test_series():
+    console.info(f"Running test_series for Limbo")
     limbo = TestLimboShell()
     ext_path = "./target/debug/liblimbo_series"
     limbo.run_test_fn(
@@ -318,6 +319,14 @@ def test_series():
         lambda res: "No such table-valued function: generate_series" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
+    _test_series(limbo)
+
+    console.info(f"Running test_series for SQLite")
+    limbo = TestLimboShell(exec_name="sqlite3")
+    _test_series(limbo)
+
+
+def _test_series(limbo: TestLimboShell):
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10);",
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
@@ -328,7 +337,7 @@ def test_series():
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2, 3);",
-        lambda res: "Invalid Argument" in res,
+        lambda res: "Invalid Argument" in res or "too many arguments" in res,
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(10, 1, -2);",
