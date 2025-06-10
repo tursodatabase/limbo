@@ -20,7 +20,8 @@ use crate::{
     Result,
 };
 use turso_sqlite3_parser::ast::{
-    self, Expr, FromClause, JoinType, Limit, Materialized, TableInternalId, UnaryOperator, With,
+    self, As, Expr, FromClause, JoinType, Limit, Materialized, QualifiedName, TableInternalId,
+    UnaryOperator, With,
 };
 
 pub const ROWID: &str = "rowid";
@@ -250,78 +251,14 @@ fn parse_from_clause_table(
     table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<()> {
     match table {
-        ast::SelectTable::Table(qualified_name, maybe_alias, _) => {
-            let normalized_qualified_name = normalize_ident(qualified_name.name.0.as_str());
-            // Check if the FROM clause table is referring to a CTE in the current scope.
-            if let Some(cte_idx) = ctes
-                .iter()
-                .position(|cte| cte.identifier == normalized_qualified_name)
-            {
-                // TODO: what if the CTE is referenced multiple times?
-                let cte_table = ctes.remove(cte_idx);
-                table_references.add_joined_table(cte_table);
-                return Ok(());
-            };
-
-            // Check if our top level schema has this table.
-            if let Some(table) = schema.get_table(&normalized_qualified_name) {
-                let alias = maybe_alias
-                    .map(|a| match a {
-                        ast::As::As(id) => id,
-                        ast::As::Elided(id) => id,
-                    })
-                    .map(|a| a.0);
-                let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
-                    Table::Virtual(tbl.clone())
-                } else if let Table::BTree(table) = table.as_ref() {
-                    Table::BTree(table.clone())
-                } else {
-                    return Err(crate::LimboError::InvalidArgument(
-                        "Table type not supported".to_string(),
-                    ));
-                };
-                table_references.add_joined_table(JoinedTable {
-                    op: Operation::Scan {
-                        iter_dir: IterationDirection::Forwards,
-                        index: None,
-                    },
-                    table: tbl_ref,
-                    identifier: alias.unwrap_or(normalized_qualified_name),
-                    internal_id: table_ref_counter.next(),
-                    join_info: None,
-                    col_used_mask: ColumnUsedMask::default(),
-                });
-                return Ok(());
-            };
-
-            // CTEs are transformed into FROM clause subqueries.
-            // If we find a CTE with this name in our outer query references,
-            // we can use it as a joined table, but we must clone it since it's not MATERIALIZED.
-            //
-            // For other types of tables in the outer query references, we do not add them as joined tables,
-            // because the query can simply _reference_ them in e.g. the SELECT columns or the WHERE clause,
-            // but it's not part of the join order.
-            if let Some(outer_ref) =
-                table_references.find_outer_query_ref_by_identifier(&normalized_qualified_name)
-            {
-                if matches!(outer_ref.table, Table::FromClauseSubquery(_)) {
-                    table_references.add_joined_table(JoinedTable {
-                        op: Operation::Scan {
-                            iter_dir: IterationDirection::Forwards,
-                            index: None,
-                        },
-                        table: outer_ref.table.clone(),
-                        identifier: outer_ref.identifier.clone(),
-                        internal_id: table_ref_counter.next(),
-                        join_info: None,
-                        col_used_mask: ColumnUsedMask::default(),
-                    });
-                    return Ok(());
-                }
-            }
-
-            crate::bail_parse_error!("Table {} not found", normalized_qualified_name);
-        }
+        ast::SelectTable::Table(qualified_name, maybe_alias, _) => parse_table(
+            schema,
+            table_references,
+            ctes,
+            table_ref_counter,
+            qualified_name,
+            maybe_alias,
+        ),
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(subplan) = prepare_select_plan(
                 schema,
@@ -379,6 +316,86 @@ fn parse_from_clause_table(
         }
         _ => todo!(),
     }
+}
+
+fn parse_table(
+    schema: &Schema,
+    table_references: &mut TableReferences,
+    ctes: &mut Vec<JoinedTable>,
+    table_ref_counter: &mut TableRefIdCounter,
+    qualified_name: QualifiedName,
+    maybe_alias: Option<As>,
+) -> Result<()> {
+    let normalized_qualified_name = normalize_ident(qualified_name.name.0.as_str());
+    // Check if the FROM clause table is referring to a CTE in the current scope.
+    if let Some(cte_idx) = ctes
+        .iter()
+        .position(|cte| cte.identifier == normalized_qualified_name)
+    {
+        // TODO: what if the CTE is referenced multiple times?
+        let cte_table = ctes.remove(cte_idx);
+        table_references.add_joined_table(cte_table);
+        return Ok(());
+    };
+
+    // Check if our top level schema has this table.
+    if let Some(table) = schema.get_table(&normalized_qualified_name) {
+        let alias = maybe_alias
+            .map(|a| match a {
+                ast::As::As(id) => id,
+                ast::As::Elided(id) => id,
+            })
+            .map(|a| a.0);
+        let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
+            Table::Virtual(tbl.clone())
+        } else if let Table::BTree(table) = table.as_ref() {
+            Table::BTree(table.clone())
+        } else {
+            return Err(crate::LimboError::InvalidArgument(
+                "Table type not supported".to_string(),
+            ));
+        };
+        table_references.add_joined_table(JoinedTable {
+            op: Operation::Scan {
+                iter_dir: IterationDirection::Forwards,
+                index: None,
+            },
+            table: tbl_ref,
+            identifier: alias.unwrap_or(normalized_qualified_name),
+            internal_id: table_ref_counter.next(),
+            join_info: None,
+            col_used_mask: ColumnUsedMask::default(),
+        });
+        return Ok(());
+    };
+
+    // CTEs are transformed into FROM clause subqueries.
+    // If we find a CTE with this name in our outer query references,
+    // we can use it as a joined table, but we must clone it since it's not MATERIALIZED.
+    //
+    // For other types of tables in the outer query references, we do not add them as joined tables,
+    // because the query can simply _reference_ them in e.g. the SELECT columns or the WHERE clause,
+    // but it's not part of the join order.
+    if let Some(outer_ref) =
+        table_references.find_outer_query_ref_by_identifier(&normalized_qualified_name)
+    {
+        if matches!(outer_ref.table, Table::FromClauseSubquery(_)) {
+            table_references.add_joined_table(JoinedTable {
+                op: Operation::Scan {
+                    iter_dir: IterationDirection::Forwards,
+                    index: None,
+                },
+                table: outer_ref.table.clone(),
+                identifier: outer_ref.identifier.clone(),
+                internal_id: table_ref_counter.next(),
+                join_info: None,
+                col_used_mask: ColumnUsedMask::default(),
+            });
+            return Ok(());
+        }
+    }
+
+    crate::bail_parse_error!("Table {} not found", normalized_qualified_name);
 }
 
 pub fn parse_from(
