@@ -60,7 +60,7 @@ impl CheckpointResult {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum CheckpointMode {
     /// Checkpoint as many frames as possible without waiting for any database readers or writers to finish, then sync the database file if all frames in the log were checkpointed.
     Passive,
@@ -339,11 +339,14 @@ enum SyncState {
 #[derive(Debug, Copy, Clone)]
 pub enum CheckpointState {
     Start,
+    CollectPages,
     ReadFrame,
     WaitReadFrame,
     WritePage,
     WaitWritePage,
-    Done,
+    ProcessingComplete,
+    WriteWalHeader,
+    WaitHeaderWrite,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -372,6 +375,10 @@ struct OngoingCheckpoint {
     min_frame: u64,
     max_frame: u64,
     current_page: u64,
+    pages_to_checkpoint: Vec<(u64, u64)>, // (page_id, frame_id)
+    header_write_complete: Rc<Cell<bool>>,
+    truncate_complete: Rc<Cell<bool>>,
+    checkpoint_result: CheckpointResult,
 }
 
 impl fmt::Debug for OngoingCheckpoint {
@@ -673,24 +680,27 @@ impl Wal for WalFile {
         write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
     ) -> Result<CheckpointStatus> {
-        assert!(
-            matches!(mode, CheckpointMode::Passive),
-            "only passive mode supported for now"
-        );
         'checkpoint_loop: loop {
             let state = self.ongoing_checkpoint.state;
             debug!("checkpoint(state={:?})", state);
             match state {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
+                    //
+                    // start: decide min|max frame range that is safe to copy
                     self.ongoing_checkpoint.min_frame = self.min_frame;
                     let shared = self.get_shared();
                     let mut max_safe_frame = shared.max_frame.load(Ordering::SeqCst);
+                    //
+                    // If a reader is positioned before max_frame we either:
+                    // a. bump its mark up (if we can take the slot write-lock) OR
+                    // b. lower max_frame (reader is busy, cannot overtake).
                     for (read_lock_idx, read_lock) in shared.read_locks.iter_mut().enumerate() {
                         let this_mark = read_lock.value.load(Ordering::SeqCst);
                         if this_mark < max_safe_frame as u32 {
                             let busy = !read_lock.write();
                             if !busy {
+                                // Slot 0: update to max_frame; others: UNUSED
                                 let new_mark = if read_lock_idx == 0 {
                                     max_safe_frame as u32
                                 } else {
@@ -699,63 +709,97 @@ impl Wal for WalFile {
                                 read_lock.value.store(new_mark, Ordering::SeqCst);
                                 read_lock.unlock();
                             } else {
-                                max_safe_frame = this_mark as u64;
+                                max_safe_frame = this_mark as u64; // reader still active
                             }
                         }
                     }
                     self.ongoing_checkpoint.max_frame = max_safe_frame;
                     self.ongoing_checkpoint.current_page = 0;
-                    self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
+                    self.ongoing_checkpoint.state = CheckpointState::CollectPages;
                     trace!(
                         "checkpoint_start(min_frame={}, max_frame={})",
                         self.ongoing_checkpoint.max_frame,
                         self.ongoing_checkpoint.min_frame
                     );
                 }
-                CheckpointState::ReadFrame => {
-                    let shared = self.get_shared();
+                CheckpointState::CollectPages => {
+                    // Build a snapshot of (page, frame) pairs we intend to back-fill.
+                    // This guarantees bounded loop length and no mutex churn for each page
+
                     let min_frame = self.ongoing_checkpoint.min_frame;
                     let max_frame = self.ongoing_checkpoint.max_frame;
-                    let pages_in_frames = shared.pages_in_frames.clone();
-                    let pages_in_frames = pages_in_frames.lock();
+                    // Snapshot only once per checkpoint run.
+                    if self.ongoing_checkpoint.current_page == 0 {
+                        let pages_to_checkpoint = {
+                            let shared = self.get_shared();
+                            let pages_in_frames = shared.pages_in_frames.lock();
+                            let frame_cache = shared.frame_cache.lock();
 
-                    let frame_cache = shared.frame_cache.clone();
-                    let frame_cache = frame_cache.lock();
-                    assert!(self.ongoing_checkpoint.current_page as usize <= pages_in_frames.len());
-                    if self.ongoing_checkpoint.current_page as usize == pages_in_frames.len() {
-                        self.ongoing_checkpoint.state = CheckpointState::Done;
+                            let mut pages_to_checkpoint = Vec::with_capacity(pages_in_frames.len());
+                            for page in pages_in_frames.iter() {
+                                if let Some(frames) = frame_cache.get(page) {
+                                    // newest-to-oldest, pick first within range
+                                    for frame in frames.iter().rev() {
+                                        if *frame >= min_frame && *frame <= max_frame {
+                                            pages_to_checkpoint.push((*page, *frame));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            pages_to_checkpoint // drop borrows
+                        };
+                        trace!("checkpoint_collect_pages({})", pages_to_checkpoint.len());
+                        self.ongoing_checkpoint.pages_to_checkpoint = pages_to_checkpoint;
+                    }
+                    self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
+                }
+                CheckpointState::ReadFrame => {
+                    // Check if we've processed all pages
+                    if self.ongoing_checkpoint.current_page
+                        >= self.ongoing_checkpoint.pages_to_checkpoint.len() as u64
+                    {
+                        self.ongoing_checkpoint.state = CheckpointState::ProcessingComplete;
                         continue 'checkpoint_loop;
                     }
-                    let page = pages_in_frames[self.ongoing_checkpoint.current_page as usize];
-                    let frames = frame_cache
-                        .get(&page)
-                        .expect("page must be in frame cache if it's in list");
 
-                    for frame in frames.iter().rev() {
-                        if *frame >= min_frame && *frame <= max_frame {
-                            debug!(
-                                "checkpoint page(state={:?}, page={}, frame={})",
-                                state, page, *frame
-                            );
-                            self.ongoing_checkpoint.page.get().id = page as usize;
+                    // Process the current page
+                    let (page, frame) = self.ongoing_checkpoint.pages_to_checkpoint
+                        [self.ongoing_checkpoint.current_page as usize];
+                    debug!(
+                        "checkpoint page(state={:?}, page={}, frame={})",
+                        state, page, frame
+                    );
 
-                            self.read_frame(
-                                *frame,
-                                self.ongoing_checkpoint.page.clone(),
-                                self.buffer_pool.clone(),
-                            )?;
-                            self.ongoing_checkpoint.state = CheckpointState::WaitReadFrame;
-                            self.ongoing_checkpoint.current_page += 1;
-                            continue 'checkpoint_loop;
-                        }
-                    }
-                    self.ongoing_checkpoint.current_page += 1;
+                    self.ongoing_checkpoint.page.get().id = page as usize;
+                    self.read_frame(
+                        frame,
+                        self.ongoing_checkpoint.page.clone(),
+                        self.buffer_pool.clone(),
+                    )?;
+                    // we could skip writes if we increment current_page here and then return IO
+                    self.ongoing_checkpoint.state = CheckpointState::WaitReadFrame;
                 }
                 CheckpointState::WaitReadFrame => {
                     if self.ongoing_checkpoint.page.is_locked() {
                         return Ok(CheckpointStatus::IO);
                     } else {
                         self.ongoing_checkpoint.state = CheckpointState::WritePage;
+                    }
+                }
+                CheckpointState::WaitWritePage => {
+                    if *write_counter.borrow() > 0 {
+                        return Ok(CheckpointStatus::IO);
+                    }
+                    // increment only after successful write
+                    self.ongoing_checkpoint.current_page += 1;
+
+                    if self.ongoing_checkpoint.current_page
+                        < self.ongoing_checkpoint.pages_to_checkpoint.len() as u64
+                    {
+                        self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
+                    } else {
+                        self.ongoing_checkpoint.state = CheckpointState::ProcessingComplete;
                     }
                 }
                 CheckpointState::WritePage => {
@@ -767,56 +811,124 @@ impl Wal for WalFile {
                     )?;
                     self.ongoing_checkpoint.state = CheckpointState::WaitWritePage;
                 }
-                CheckpointState::WaitWritePage => {
+                CheckpointState::ProcessingComplete => {
                     if *write_counter.borrow() > 0 {
                         return Ok(CheckpointStatus::IO);
                     }
-                    let shared = self.get_shared();
-                    if (self.ongoing_checkpoint.current_page as usize)
-                        < shared.pages_in_frames.lock().len()
-                    {
-                        self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
-                    } else {
-                        self.ongoing_checkpoint.state = CheckpointState::Done;
-                    }
-                }
-                CheckpointState::Done => {
-                    if *write_counter.borrow() > 0 {
-                        return Ok(CheckpointStatus::IO);
-                    }
+                    // Handle mode-specific post-processing and produce result.
+
                     let shared = self.get_shared();
 
-                    // Record two num pages fields to return as checkpoint result to caller.
-                    // Ref: pnLog, pnCkpt on https://www.sqlite.org/c3ref/wal_checkpoint_v2.html
                     let checkpoint_result = CheckpointResult {
                         num_wal_frames: shared.max_frame.load(Ordering::SeqCst),
                         num_checkpointed_frames: self.ongoing_checkpoint.max_frame,
                     };
+
                     let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
                         == self.ongoing_checkpoint.max_frame;
-                    if everything_backfilled {
-                        // TODO: Even in Passive mode, if everything was backfilled we should
-                        // truncate and fsync the *db file*
 
-                        // To properly reset the *wal file* we will need restart and/or truncate mode.
-                        // Currently, it will grow the WAL file indefinetly, but don't resetting is better than breaking.
-                        // Check: https://github.com/sqlite/sqlite/blob/2bd9f69d40dd240c4122c6d02f1ff447e7b5c098/src/wal.c#L2193
-                        if !matches!(mode, CheckpointMode::Passive) {
-                            // Here we know that we backfilled everything, therefore we can safely
-                            // reset the wal.
-                            shared.frame_cache.lock().clear();
-                            shared.pages_in_frames.lock().clear();
-                            shared.max_frame.store(0, Ordering::SeqCst);
-                            shared.nbackfills.store(0, Ordering::SeqCst);
-                            // TODO: if all frames were backfilled into the db file, calls fsync
-                            // TODO(pere): truncate wal file here.
+                    if everything_backfilled {
+                        match mode {
+                            CheckpointMode::Restart => {
+                                // Force new readers to start at WAL-frame 0 next time.
+                                for read_lock in shared.read_locks.iter_mut() {
+                                    read_lock.value.store(READMARK_NOT_USED, Ordering::SeqCst);
+                                }
+                                // The next writer will restart the WAL from frame 1
+                            }
+                            CheckpointMode::Truncate => {
+                                // Generate new salt values and update header
+                                let new_salt_1 = self.io.generate_random_number() as u32;
+                                let new_salt_2 = self.io.generate_random_number() as u32;
+
+                                {
+                                    let mut header = shared.wal_header.lock();
+                                    header.salt_1 = new_salt_1;
+                                    header.salt_2 = new_salt_2;
+                                    header.checkpoint_seq += 1;
+
+                                    // Recalculate checksum
+                                    let mut header_data = [0u8; 24];
+                                    header_data[0..4].copy_from_slice(&header.magic.to_be_bytes());
+                                    header_data[4..8]
+                                        .copy_from_slice(&header.file_format.to_be_bytes());
+                                    header_data[8..12]
+                                        .copy_from_slice(&header.page_size.to_be_bytes());
+                                    header_data[12..16]
+                                        .copy_from_slice(&header.checkpoint_seq.to_be_bytes());
+                                    header_data[16..20]
+                                        .copy_from_slice(&header.salt_1.to_be_bytes());
+                                    header_data[20..24]
+                                        .copy_from_slice(&header.salt_2.to_be_bytes());
+
+                                    let use_native_endian =
+                                        cfg!(target_endian = "big") == ((header.magic & 1) != 0);
+                                    let checksum = checksum_wal(
+                                        &header_data,
+                                        &header,
+                                        (0, 0),
+                                        use_native_endian,
+                                    );
+                                    header.checksum_1 = checksum.0;
+                                    header.checksum_2 = checksum.1;
+                                }
+
+                                let header_write_complete = Rc::new(Cell::new(false));
+                                let header = *shared.wal_header.lock();
+                                sqlite3_ondisk::begin_write_wal_header(
+                                    &shared.file,
+                                    &header,
+                                    Some(header_write_complete.clone()),
+                                )?;
+
+                                // Store the checkpoint result before transitioning
+                                self.ongoing_checkpoint.checkpoint_result = checkpoint_result;
+                                self.ongoing_checkpoint.state = CheckpointState::WriteWalHeader;
+                                self.ongoing_checkpoint.header_write_complete =
+                                    header_write_complete;
+                                return Ok(CheckpointStatus::IO);
+                            }
+                            // Passive mode or Full modes don't modify the WAL, nothing to do
+                            _ => {}
                         }
                     } else {
+                        // not everything backfilled, partial checkpoint: remember how far we got.
                         shared
                             .nbackfills
                             .store(self.ongoing_checkpoint.max_frame, Ordering::SeqCst);
                     }
+
                     self.ongoing_checkpoint.state = CheckpointState::Start;
+                    self.ongoing_checkpoint.pages_to_checkpoint.clear();
+                    self.ongoing_checkpoint.current_page = 0;
+                    return Ok(CheckpointStatus::Done(checkpoint_result));
+                }
+
+                CheckpointState::WriteWalHeader => {
+                    assert_eq!(
+                        mode,
+                        CheckpointMode::Truncate,
+                        "Should only be reaching this state in Truncate mode"
+                    );
+                    // Check if header write is complete
+                    if !self.ongoing_checkpoint.header_write_complete.get() {
+                        return Ok(CheckpointStatus::IO);
+                    }
+                    self.ongoing_checkpoint.state = CheckpointState::WaitHeaderWrite;
+                    // after header is written, we can truncate the WAL file
+                    self.ongoing_checkpoint.truncate_complete = self.schedule_wal_truncate()?;
+                    return Ok(CheckpointStatus::IO);
+                }
+                CheckpointState::WaitHeaderWrite => {
+                    if !self.ongoing_checkpoint.truncate_complete.get() {
+                        return Ok(CheckpointStatus::IO);
+                    }
+                    // Reset state and return
+                    self.ongoing_checkpoint.state = CheckpointState::Start;
+                    self.ongoing_checkpoint.pages_to_checkpoint.clear();
+
+                    self.ongoing_checkpoint.current_page = 0;
+                    let checkpoint_result = self.ongoing_checkpoint.checkpoint_result;
                     return Ok(CheckpointStatus::Done(checkpoint_result));
                 }
             }
@@ -893,9 +1005,13 @@ impl WalFile {
             ongoing_checkpoint: OngoingCheckpoint {
                 page: checkpoint_page,
                 state: CheckpointState::Start,
+                pages_to_checkpoint: Vec::new(),
                 min_frame: 0,
                 max_frame: 0,
                 current_page: 0,
+                header_write_complete: Rc::new(Cell::new(false)),
+                truncate_complete: Rc::new(Cell::new(false)),
+                checkpoint_result: CheckpointResult::default(),
             },
             syncing: Rc::new(RefCell::new(false)),
             checkpoint_threshold: 1000,
@@ -906,6 +1022,30 @@ impl WalFile {
             min_frame: 0,
             max_frame_read_lock_index: 0,
         }
+    }
+
+    fn schedule_wal_truncate(&self) -> Result<Rc<Cell<bool>>> {
+        let shared = self.get_shared();
+
+        // Clear in-memory structures
+        shared.frame_cache.lock().clear();
+        shared.pages_in_frames.lock().clear();
+        shared.max_frame.store(0, Ordering::SeqCst);
+        shared.nbackfills.store(0, Ordering::SeqCst);
+        let header = shared.wal_header.lock();
+        shared.last_checksum = (header.checksum_1, header.checksum_2);
+
+        // Truncate the WAL file to just the header
+        let truncate_complete = Rc::new(Cell::new(false));
+        let truncate_flag = truncate_complete.clone();
+        let completion = Completion::Write(crate::WriteCompletion::new(Box::new(move |_| {
+            truncate_flag.set(true);
+        })));
+
+        shared
+            .file
+            .truncate(WAL_HEADER_SIZE as u64, Arc::new(completion))?;
+        Ok(truncate_complete)
     }
 
     fn frame_offset(&self, frame_id: u64) -> usize {
@@ -973,7 +1113,7 @@ impl WalFileShared {
             );
             wal_header.checksum_1 = checksums.0;
             wal_header.checksum_2 = checksums.1;
-            sqlite3_ondisk::begin_write_wal_header(&file, &wal_header)?;
+            sqlite3_ondisk::begin_write_wal_header(&file, &wal_header, None)?;
             Arc::new(SpinLock::new(wal_header))
         };
         let checksum = {

@@ -23,6 +23,10 @@ export class VFS {
     return self.vfs.size(fd);
   }
 
+  truncate(fd, size) {
+    return self.vfs.truncate(fd,size)
+  }
+
   sync(fd) {
     return self.vfs.sync(fd);
   }

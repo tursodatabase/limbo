@@ -25,6 +25,10 @@ class VFS {
     return BigInt(stats.size);
   }
 
+  truncate(fd, size) {
+    return fs.truncateSync(fd, size);
+  }
+
   sync(fd) {
     fs.fsyncSync(fd);
   }
