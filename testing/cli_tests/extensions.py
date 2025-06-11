@@ -442,6 +442,10 @@ def _test_kv(exec_name, ext_path):
         lambda res: res == "100|updated2",
         "there is only 1 key remaining after setting all keys to same value",
     )
+    limbo.run_test_fn(
+        "select * from t a, other b where b.c = 23 and a.key='100';",
+        lambda res: "100|updated2|23|32|23" == res,
+    )
     limbo.quit()
 
 

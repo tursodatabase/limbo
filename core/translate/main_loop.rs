@@ -430,8 +430,8 @@ pub fn open_loop(
                                 // We then materialise the RHS/LHS into registers before issuing VFilter.
                                 let converted_constraints = predicates
                                     .iter()
-                                    .filter(|p| p.should_eval_at_loop(join_index, join_order))
                                     .enumerate()
+                                    .filter(|(_, p)| p.should_eval_at_loop(join_index, join_order))
                                     .filter_map(|(i, p)| {
                                         // Build ConstraintInfo from the predicates
                                         convert_where_to_vtab_constraint(
