@@ -531,7 +531,8 @@ fn get_new_rowid<R: Rng>(cursor: &mut BTreeCursor, mut rng: R) -> Result<CursorR
 }
 
 fn make_record(registers: &[Register], start_reg: &usize, count: &usize) -> ImmutableRecord {
-    ImmutableRecord::from_registers(&registers[*start_reg..*start_reg + *count])
+    let regs = &registers[*start_reg..*start_reg + *count];
+    ImmutableRecord::from_registers(regs, regs.len())
 }
 
 #[instrument(skip(program), level = Level::TRACE)]
