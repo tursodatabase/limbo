@@ -212,3 +212,10 @@ do_execsql_test_on_specific_db {:memory:} update_where_or_regression_test {
     SELECT * from t;
 } {lovely_revolt
 lovely_revolt}
+
+do_execsql_test_in_memory_any_error update_primary_key_constraint_error {
+    CREATE TABLE eye (study REAL, spring BLOB, save TEXT, thank REAL, election INTEGER, PRIMARY KEY (election));                  
+    INSERT INTO eye VALUES (183559032.521585, x'6625d092', 'Trial six should.', 2606132742.43174, 2817);
+    INSERT INTO eye VALUES (78255586.9204539, x'651061e8', 'World perhaps.', -5815764.49018679, 1917);
+    UPDATE eye SET election = 6150;
+}
