@@ -346,6 +346,7 @@ pub fn open_loop(
     table_references: &TableReferences,
     join_order: &[JoinOrderMember],
     predicates: &[WhereTerm],
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     for (join_index, join) in join_order.iter().enumerate() {
         let joined_table_index = join.original_idx;
@@ -378,8 +379,11 @@ pub fn open_loop(
             Operation::Scan { iter_dir, .. } => {
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                            table_cursor_id.expect("Either index or table cursor must be opened")
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id
+                                    .expect("Either index or table cursor must be opened")
+                            })
                         });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Last {
@@ -970,6 +974,7 @@ pub fn close_loop(
     t_ctx: &mut TranslateCtx,
     tables: &TableReferences,
     join_order: &[JoinOrderMember],
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     // We close the loops for all tables in reverse order, i.e. innermost first.
     // OPEN t1
@@ -994,8 +999,11 @@ pub fn close_loop(
                 program.resolve_label(loop_labels.next, program.offset());
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                            table_cursor_id.expect("Either index or table cursor must be opened")
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id
+                                    .expect("Either index or table cursor must be opened")
+                            })
                         });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Prev {

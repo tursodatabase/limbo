@@ -23,12 +23,13 @@ use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
-use crate::schema::{Index, IndexColumn, Schema};
+use crate::schema::{BTreeTable, Column, Index, IndexColumn, Schema, Table, Type};
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::translate::values::emit_values;
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::{CursorKey, CursorType, ProgramBuilder};
 use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
+use crate::vdbe::CursorID;
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -604,13 +605,20 @@ pub fn emit_query<'a>(
         &plan.table_references,
         &plan.join_order,
         &mut plan.where_clause,
+        None,
     )?;
 
     // Process result columns and expressions in the inner loop
     emit_loop(program, t_ctx, plan)?;
 
     // Clean up and close the main execution loop
-    close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;
+    close_loop(
+        program,
+        t_ctx,
+        &plan.table_references,
+        &plan.join_order,
+        None,
+    )?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
 
@@ -694,6 +702,7 @@ fn emit_program_for_delete(
         &plan.table_references,
         &[JoinOrderMember::default()],
         &mut plan.where_clause,
+        None,
     )?;
 
     emit_delete_insns(program, &mut t_ctx, &plan.table_references)?;
@@ -704,6 +713,7 @@ fn emit_program_for_delete(
         &mut t_ctx,
         &plan.table_references,
         &[JoinOrderMember::default()],
+        None,
     )?;
     program.preassign_label_to_next_insn(after_main_loop_label);
 
@@ -858,6 +868,29 @@ fn emit_program_for_update(
         });
     }
 
+    let temp_cursor_id = {
+        // Sqlite determines we should create an ephemeral table if we do not have a FROM clause
+        // Difficult to say what items from the plan can be checked for this so currently just checking the where clause
+        // https://github.com/sqlite/sqlite/blob/master/src/update.c#L395
+        // https://github.com/sqlite/sqlite/blob/master/src/update.c#L670
+        if !plan.where_clause.is_empty() {
+            None
+        } else {
+            let table_ref = plan
+                .table_references
+                .joined_tables()
+                .first()
+                .expect("at least one table needs to be referenced for UPDATE");
+            let columns = table_ref.columns();
+
+            let rowid_alias_used = plan.set_clauses.iter().fold(false, |accum, (idx, _)| {
+                accum || columns[*idx].is_rowid_alias
+            });
+
+            rowid_alias_used.then(|| emit_ephemeral(program, &table_ref.table))
+        }
+    };
+
     init_loop(
         program,
         &mut t_ctx,
@@ -897,14 +930,16 @@ fn emit_program_for_update(
         &plan.table_references,
         &[JoinOrderMember::default()],
         &mut plan.where_clause,
+        temp_cursor_id,
     )?;
-    emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
+    emit_update_insns(&plan, &t_ctx, program, index_cursors, temp_cursor_id)?;
 
     close_loop(
         program,
         &mut t_ctx,
         &plan.table_references,
         &[JoinOrderMember::default()],
+        temp_cursor_id,
     )?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
@@ -924,12 +959,13 @@ fn emit_update_insns(
     t_ctx: &TranslateCtx,
     program: &mut ProgramBuilder,
     index_cursors: Vec<(usize, usize)>,
+    temp_cursor_id: Option<CursorID>,
 ) -> crate::Result<()> {
     let table_ref = plan.table_references.joined_tables().first().unwrap();
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
-    let (cursor_id, index, is_virtual) = match &table_ref.op {
+    let cursor_id = program.resolve_cursor_id(&CursorKey::table(table_ref.internal_id));
+    let (index, is_virtual) = match &table_ref.op {
         Operation::Scan { index, .. } => (
-            program.resolve_cursor_id(&CursorKey::table(table_ref.internal_id)),
             index.as_ref().map(|index| {
                 (
                     index.clone(),
@@ -940,15 +976,10 @@ fn emit_update_insns(
             table_ref.virtual_table().is_some(),
         ),
         Operation::Search(search) => match search {
-            &Search::RowidEq { .. } | Search::Seek { index: None, .. } => (
-                program.resolve_cursor_id(&CursorKey::table(table_ref.internal_id)),
-                None,
-                false,
-            ),
+            &Search::RowidEq { .. } | Search::Seek { index: None, .. } => (None, false),
             Search::Seek {
                 index: Some(index), ..
             } => (
-                program.resolve_cursor_id(&CursorKey::table(table_ref.internal_id)),
                 Some((
                     index.clone(),
                     program
@@ -988,7 +1019,7 @@ fn emit_update_insns(
             },
     );
     program.emit_insn(Insn::RowId {
-        cursor_id,
+        cursor_id: temp_cursor_id.unwrap_or(cursor_id),
         dest: beg,
     });
 
@@ -1386,4 +1417,78 @@ fn init_limit(
             combined_reg,
         });
     }
+}
+
+/// Emits an ephemeral table that reads the rowids from `table`
+fn emit_ephemeral(program: &mut ProgramBuilder, table: &Table) -> CursorID {
+    let cursor_type = CursorType::BTreeTable(table.btree().unwrap());
+    let cursor_id = program.alloc_cursor_id(cursor_type);
+
+    let simple_table_rc = Rc::new(BTreeTable {
+        root_page: 0, // Not relevant for ephemeral table definition
+        name: "ephemeral_scratch".to_string(),
+        has_rowid: true,
+        primary_key_columns: vec![],
+        columns: vec![Column {
+            name: Some("rowid".to_string()),
+            ty: Type::Integer,
+            ty_str: "INTEGER".to_string(),
+            primary_key: false,
+            is_rowid_alias: false,
+            notnull: false,
+            default: None,
+            unique: false,
+            collation: None,
+        }],
+        is_strict: false,
+        unique_sets: None,
+    });
+    let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(simple_table_rc));
+
+    let null_data_reg = program.alloc_register();
+    let rowid_reg = program.alloc_register();
+    program.emit_insn(Insn::Null {
+        dest: null_data_reg,
+        dest_end: Some(rowid_reg),
+    });
+
+    program.emit_insn(Insn::OpenEphemeral {
+        cursor_id: temp_cursor_id,
+        is_table: true,
+    });
+
+    program.emit_insn(Insn::OpenRead {
+        cursor_id,
+        root_page: table.get_root_page(),
+    });
+
+    let loop_labels = LoopLabels::new(program);
+
+    program.emit_insn(Insn::Rewind {
+        cursor_id,
+        pc_if_empty: loop_labels.loop_end,
+    });
+
+    program.preassign_label_to_next_insn(loop_labels.loop_start);
+
+    program.emit_insn(Insn::RowId {
+        cursor_id,
+        dest: rowid_reg,
+    });
+    program.emit_insn(Insn::Insert {
+        cursor: temp_cursor_id,
+        key_reg: rowid_reg,
+        record_reg: null_data_reg,
+        flag: 0, // TODO: when we use the flags see if this needs to change
+        table_name: table.get_name().to_string(),
+    });
+
+    program.preassign_label_to_next_insn(loop_labels.next);
+    program.emit_insn(Insn::Next {
+        cursor_id,
+        pc_if_next: loop_labels.loop_start,
+    });
+    program.preassign_label_to_next_insn(loop_labels.loop_end);
+
+    temp_cursor_id
 }
