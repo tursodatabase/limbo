@@ -664,11 +664,7 @@ pub fn exec_timediff(values: &[Register]) -> Value {
 fn format_time_duration(duration: &chrono::Duration) -> Value {
     let is_negative = duration.num_seconds() < 0;
 
-    let abs_duration = if is_negative {
-        -duration.clone()
-    } else {
-        duration.clone()
-    };
+    let abs_duration = if is_negative { -*duration } else { *duration };
 
     let total_seconds = abs_duration.num_seconds();
     let hours = (total_seconds % 86400) / 3600;

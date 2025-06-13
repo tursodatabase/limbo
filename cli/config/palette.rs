@@ -174,7 +174,7 @@ impl<'de> Deserialize<'de> for LimboColor {
     {
         struct LimboColorVisitor;
 
-        impl<'de> Visitor<'de> for LimboColorVisitor {
+        impl Visitor<'_> for LimboColorVisitor {
             type Value = LimboColor;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

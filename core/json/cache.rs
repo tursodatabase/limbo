@@ -90,7 +90,7 @@ impl JsonCacheCell {
 
     #[cfg(test)]
     pub fn lookup(&self, key: &Value) -> Option<Jsonb> {
-        assert_eq!(self.accessed.get(), false);
+        assert!(!self.accessed.get());
 
         self.accessed.set(true);
 
@@ -116,7 +116,7 @@ impl JsonCacheCell {
         key: &Value,
         value: impl Fn(&Value) -> crate::Result<Jsonb>,
     ) -> crate::Result<Jsonb> {
-        assert_eq!(self.accessed.get(), false);
+        assert!(!self.accessed.get());
 
         self.accessed.set(true);
         let result = unsafe {
@@ -139,8 +139,7 @@ impl JsonCacheCell {
                     }
                 }
             } else {
-                let result = value(key);
-                result
+                value(key)
             }
         };
         self.accessed.set(false);
@@ -149,7 +148,7 @@ impl JsonCacheCell {
     }
 
     pub fn clear(&mut self) {
-        assert_eq!(self.accessed.get(), false);
+        assert!(!self.accessed.get());
         self.accessed.set(true);
         unsafe {
             let cache_ptr = self.inner.get();

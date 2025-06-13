@@ -1516,7 +1516,7 @@ pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     buffer_pool: Rc<BufferPool>,
-    complete: Box<dyn Fn(Arc<RefCell<Buffer>>) -> ()>,
+    complete: Box<dyn Fn(Arc<RefCell<Buffer>>)>,
 ) -> Result<Arc<Completion>> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();

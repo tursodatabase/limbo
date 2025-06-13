@@ -5,7 +5,6 @@ use antithesis_sdk::random::{get_random, AntithesisRng};
 use antithesis_sdk::*;
 use clap::Parser;
 use core::panic;
-use hex;
 use limbo::Builder;
 use opts::Opts;
 use std::collections::HashSet;
@@ -444,7 +443,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             for query_index in 0..nr_iterations {
                 let sql = &plan.queries_per_thread[thread][query_index];
                 println!("executing: {}", sql);
-                if let Err(e) = conn.execute(&sql, ()).await {
+                if let Err(e) = conn.execute(sql, ()).await {
                     match e {
                         limbo::Error::SqlExecutionFailure(e) => {
                             if e.contains("Corrupt database") {
