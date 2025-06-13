@@ -10,7 +10,7 @@ use crate::translate::collate::CollationSeq;
 use crate::types::{ImmutableRecord, Text};
 use crate::util::normalize_ident;
 use crate::{
-    error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
+    error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_CHECK, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
     function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc},
     functions::{
@@ -1598,6 +1598,12 @@ pub fn op_halt(
         SQLITE_CONSTRAINT_PRIMARYKEY => {
             return Err(LimboError::Constraint(format!(
                 "UNIQUE constraint failed: {} (19)",
+                description
+            )));
+        }
+        SQLITE_CONSTRAINT_CHECK => {
+            return Err(LimboError::Constraint(format!(
+                "CHECK constraint failed: {} (19)",
                 description
             )));
         }

@@ -1608,6 +1608,7 @@ mod tests {
             ty_str: c.ty.to_string(),
             is_rowid_alias: c.is_rowid_alias,
             primary_key: false,
+            check_constraint: None,
             notnull: false,
             default: None,
             unique: false,
