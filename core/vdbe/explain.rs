@@ -1576,6 +1576,18 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::Expire {
+                expire_all,
+                deferred,
+            } => (
+                "Expire",
+                *expire_all as i32,
+                *deferred as i32,
+                0,
+                Value::build_text(""),
+                0,
+                "".to_string(),
+            ),
             Insn::Int64 {
                 _p1,
                 out_reg,

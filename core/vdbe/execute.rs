@@ -55,7 +55,7 @@ use crate::{
 
 use super::{
     insn::{Cookie, RegisterOrLiteral},
-    CommitState,
+    CommitState, ExpirationStatus,
 };
 use fallible_iterator::FallibleIterator;
 use limbo_sqlite3_parser::ast;
@@ -5427,6 +5427,36 @@ pub fn op_count(
     };
 
     state.registers[*target_reg] = Register::Value(Value::Integer(count as i64));
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_expire(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Expire {
+        expire_all,
+        deferred,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    if *expire_all {
+        if let Some(conn) = program.connection.upgrade() {
+            conn.expire_all_programs(*deferred)
+        }
+    } else {
+        state.expiration_status = match deferred {
+            false => Some(ExpirationStatus::Expired),
+            true => Some(ExpirationStatus::Pending),
+        }
+    }
 
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)

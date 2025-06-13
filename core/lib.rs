@@ -34,6 +34,7 @@ mod numeric;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use crate::vdbe::{ExpirationStatus, Program};
 use crate::vtab::VirtualTable;
 use crate::{fast_lock::SpinLock, translate::optimizer::optimize_plan};
 use core::str;
@@ -50,6 +51,7 @@ pub use io::{
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
+use std::ptr::NonNull;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -241,6 +243,7 @@ impl Database {
             total_changes: Cell::new(0),
             _shared_cache: false,
             cache_size: Cell::new(self.header.lock().default_page_cache_size),
+            program_head: Cell::new(None),
         });
         if let Err(e) = conn.register_builtins() {
             return Err(LimboError::ExtensionError(e));
@@ -341,6 +344,7 @@ pub struct Connection {
     syms: RefCell<SymbolTable>,
     _shared_cache: bool,
     cache_size: Cell<i32>,
+    program_head: Cell<Option<NonNull<Program>>>,
 }
 
 impl Connection {
@@ -381,6 +385,7 @@ impl Connection {
                     program,
                     self._db.mv_store.clone(),
                     self.pager.clone(),
+                    input,
                 ))
             }
             Cmd::Explain(_stmt) => todo!(),
@@ -413,7 +418,7 @@ impl Connection {
         let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
-                let program = translate::translate(
+                let program = Rc::new(translate::translate(
                     self.schema
                         .try_read()
                         .ok_or(LimboError::SchemaLocked)?
@@ -425,11 +430,13 @@ impl Connection {
                     &syms,
                     cmd.into(),
                     input,
-                )?;
+                )?);
+                self.track_program(&program);
                 let stmt = Statement::new(
-                    program.into(),
+                    program,
                     self._db.mv_store.clone(),
                     self.pager.clone(),
+                    input,
                 );
                 Ok(Some(stmt))
             }
@@ -733,6 +740,110 @@ impl Connection {
 
         Ok(results)
     }
+
+    pub fn recompile_program(self: &Rc<Connection>, original_sql: &str) -> Result<Program> {
+        let mut parser = Parser::new(original_sql.as_bytes());
+        let cmd = parser.next()?.unwrap();
+        let syms = self.syms.borrow();
+        match cmd {
+            Cmd::Stmt(stmt) => {
+                let program = translate::translate(
+                    self.schema
+                        .try_read()
+                        .ok_or(LimboError::SchemaLocked)?
+                        .deref(),
+                    stmt,
+                    self.header.clone(),
+                    self.pager.clone(),
+                    Rc::downgrade(self),
+                    &syms,
+                    QueryMode::Normal,
+                    original_sql,
+                )?;
+                Ok(program)
+            }
+            Cmd::Explain(_stmt) => todo!(),
+            Cmd::ExplainQueryPlan(_stmt) => todo!(),
+        }
+    }
+
+    pub fn track_program(&self, program_rc: &Rc<Program>) {
+        let new_head_ptr = NonNull::from(&**program_rc);
+        let old_head = self.program_head.get();
+
+        unsafe {
+            let new_head = new_head_ptr.as_ref();
+            new_head.next_program.set(old_head);
+            new_head.prev_program.set(None);
+
+            if let Some(old_head_ptr) = old_head {
+                old_head_ptr.as_ref().prev_program.set(Some(new_head_ptr));
+            }
+
+            self.program_head.set(Some(new_head_ptr));
+        }
+    }
+
+    fn untrack_program(&self, program: &mut Program) {
+        let curr_program_ptr = NonNull::from(&*program);
+        let prev_program = program.prev_program.get();
+        let next_program = program.next_program.get();
+
+        unsafe {
+            if let Some(prev_program_ptr) = prev_program {
+                prev_program_ptr.as_ref().next_program.set(next_program);
+            } else if self.program_head.get() == Some(curr_program_ptr) {
+                self.program_head.set(next_program);
+            }
+
+            if let Some(next_program_ptr) = next_program {
+                next_program_ptr.as_ref().prev_program.set(prev_program);
+            }
+        }
+
+        program.prev_program.set(None);
+        program.next_program.set(None);
+    }
+
+    fn expire_all_programs(&self, deferred: bool) {
+        let mut curr_program = self.program_head.get();
+        while let Some(curr_program_ptr) = curr_program {
+            unsafe {
+                let node = curr_program_ptr.as_ptr();
+                (*node).expired = match deferred {
+                    true => Some(ExpirationStatus::Pending),
+                    false => Some(ExpirationStatus::Expired),
+                };
+                curr_program = (*node).next_program.get();
+            }
+        }
+    }
+
+    pub fn replace_tracked_program(&self, old_program: &Rc<Program>, new_program: &Rc<Program>) {
+        let old_program_ptr = NonNull::from(&**old_program);
+        let new_program_ptr = NonNull::from(&**new_program);
+
+        let old_program_prev = old_program.prev_program.get();
+        let old_program_next = old_program.next_program.get();
+
+        unsafe {
+            new_program_ptr.as_ref().prev_program.set(old_program_prev);
+            new_program_ptr.as_ref().next_program.set(old_program_next);
+
+            if let Some(prev_ptr) = old_program_prev {
+                prev_ptr.as_ref().next_program.set(Some(new_program_ptr));
+            } else if self.program_head.get() == Some(old_program_ptr) {
+                self.program_head.set(Some(new_program_ptr));
+            }
+
+            if let Some(next_ptr) = old_program_next {
+                next_ptr.as_ref().prev_program.set(Some(new_program_ptr));
+            }
+        }
+
+        old_program.prev_program.set(None);
+        old_program.next_program.set(None);
+    }
 }
 
 pub struct Statement {
@@ -740,6 +851,7 @@ pub struct Statement {
     state: vdbe::ProgramState,
     mv_store: Option<Rc<MvStore>>,
     pager: Rc<Pager>,
+    sql: String,
 }
 
 impl Statement {
@@ -747,6 +859,7 @@ impl Statement {
         program: Rc<vdbe::Program>,
         mv_store: Option<Rc<MvStore>>,
         pager: Rc<Pager>,
+        sql: &str,
     ) -> Self {
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
         Self {
@@ -754,6 +867,7 @@ impl Statement {
             state,
             mv_store,
             pager,
+            sql: sql.to_string(),
         }
     }
 
@@ -766,8 +880,27 @@ impl Statement {
     }
 
     pub fn step(&mut self) -> Result<StepResult> {
-        self.program
-            .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
+        loop {
+            match self
+                .program
+                .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
+            {
+                Ok(result) => return Ok(result),
+                Err(LimboError::Schema) => match self.reprepare() {
+                    Ok(()) => {
+                        println!("Statement: Re-prepare successful. Retrying step.");
+                        continue;
+                    }
+                    Err(reprepare_err) => {
+                        eprintln!("Statement: Re-prepare attempt failed: {:?}", reprepare_err);
+                        return Err(reprepare_err);
+                    }
+                },
+
+                // Any other error is final.
+                Err(other_err) => return Err(other_err),
+            }
+        }
     }
 
     pub fn run_once(&self) -> Result<()> {
@@ -808,6 +941,23 @@ impl Statement {
 
     pub fn explain(&self) -> String {
         self.program.explain()
+    }
+
+    fn reprepare(&mut self) -> Result<()> {
+        if let Some(conn_rc) = self.program.connection.upgrade() {
+            let new_program_value = conn_rc.recompile_program(&self.sql);
+            if let Ok(new_program) = new_program_value {
+                let new_program_rc = Rc::new(new_program);
+                conn_rc.replace_tracked_program(&self.program, &new_program_rc);
+                self.program = new_program_rc;
+                self.state.reset(); // Reset the VDBE state for the new program.
+                Ok(())
+            } else {
+                Err(LimboError::Schema)
+            }
+        } else {
+            Err(LimboError::Schema)
+        }
     }
 }
 

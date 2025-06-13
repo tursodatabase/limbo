@@ -50,6 +50,7 @@ use rand::{
     Rng,
 };
 use regex::Regex;
+use std::ptr::NonNull;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -249,6 +250,7 @@ pub struct ProgramState {
     #[cfg(feature = "json")]
     json_cache: JsonCacheCell,
     op_idx_delete_state: Option<OpIdxDeleteState>,
+    expiration_status: Option<ExpirationStatus>,
 }
 
 impl ProgramState {
@@ -273,6 +275,7 @@ impl ProgramState {
             #[cfg(feature = "json")]
             json_cache: JsonCacheCell::new(),
             op_idx_delete_state: None,
+            expiration_status: None,
         }
     }
 
@@ -313,7 +316,8 @@ impl ProgramState {
         self.interrupted = false;
         self.parameters.clear();
         #[cfg(feature = "json")]
-        self.json_cache.clear()
+        self.json_cache.clear();
+        self.expiration_status = None;
     }
 
     pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
@@ -325,6 +329,12 @@ impl ProgramState {
                 .unwrap_or_else(|| panic!("cursor id {} is None", cursor_id))
         })
     }
+}
+
+#[derive(Debug)]
+pub enum ExpirationStatus {
+    Pending,
+    Expired,
 }
 
 impl Register {
@@ -364,6 +374,9 @@ pub struct Program {
     pub change_cnt_on: bool,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: TableReferences,
+    pub prev_program: Cell<Option<NonNull<Program>>>,
+    pub next_program: Cell<Option<NonNull<Program>>>,
+    pub expired: Option<ExpirationStatus>,
 }
 
 impl Program {
@@ -373,9 +386,18 @@ impl Program {
         mv_store: Option<Rc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Result<StepResult> {
+        if self.expired.is_some() || state.expiration_status.is_some() {
+            return Err(LimboError::Schema);
+        }
+
         loop {
             if state.is_interrupted() {
                 return Ok(StepResult::Interrupt);
+            }
+
+            if let Some(ExpirationStatus::Expired) = state.expiration_status {
+                return Err(LimboError::Schema);
+            } else if let Some(ExpirationStatus::Pending) = state.expiration_status {
             }
             // invalidate row
             let _ = state.result_row.take();
@@ -494,6 +516,14 @@ impl Program {
             prev_insn = Some(insn);
         }
         buff
+    }
+}
+
+impl Drop for Program {
+    fn drop(&mut self) {
+        if let Some(conn_rc) = self.connection.upgrade() {
+            conn_rc.untrack_program(self);
+        }
     }
 }
 

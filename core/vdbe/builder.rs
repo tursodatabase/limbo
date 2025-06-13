@@ -878,6 +878,9 @@ impl ProgramBuilder {
             change_cnt_on,
             result_columns: self.result_columns,
             table_references: self.table_references,
+            prev_program: Cell::new(None),
+            next_program: Cell::new(None),
+            expired: None,
         }
     }
 }
