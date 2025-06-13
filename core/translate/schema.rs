@@ -15,7 +15,7 @@ use crate::translate::ProgramBuilderOpts;
 use crate::translate::QueryMode;
 use crate::util::PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX;
 use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::{CmpInsFlags, Insn};
+use crate::vdbe::insn::{CmpInsFlags, InsertFlags, Insn};
 use crate::LimboError;
 use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
@@ -227,7 +227,7 @@ pub fn emit_schema_entry(
         cursor: sqlite_schema_cursor_id,
         key_reg: rowid_reg,
         record_reg,
-        flag: 0,
+        flag: InsertFlags::new(),
         table_name: tbl_name.to_string(),
     });
 }
@@ -828,7 +828,7 @@ pub fn translate_drop_table(
             cursor: ephemeral_cursor_id,
             key_reg: schema_row_id_register,
             record_reg: schema_data_register,
-            flag: 0,
+            flag: InsertFlags::new(),
             table_name: "scratch_table".to_string(),
         });
 
@@ -894,7 +894,7 @@ pub fn translate_drop_table(
             cursor: sqlite_schema_cursor_id_1,
             key_reg: schema_row_id_register,
             record_reg: new_record_register,
-            flag: 0,
+            flag: InsertFlags::new(),
             table_name: SQLITE_TABLEID.to_string(),
         });
 

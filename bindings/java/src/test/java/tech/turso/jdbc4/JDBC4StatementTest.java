@@ -11,7 +11,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import tech.turso.TestUtils;
 
@@ -83,11 +82,9 @@ class JDBC4StatementTest {
   }
 
   @Test
-  @Disabled("limbo's total_changes() works differently from sqlite's total_changes()")
   void execute_update_should_return_number_of_updated_elements() throws Exception {
     assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1 INT);")).isEqualTo(0);
     assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2), (3);")).isEqualTo(3);
-
     assertThat(stmt.executeUpdate("UPDATE s1 SET c1 = 0;")).isEqualTo(3);
   }
 
