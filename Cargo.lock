@@ -1772,6 +1772,7 @@ dependencies = [
  "ctrlc",
  "dirs 5.0.1",
  "env_logger 0.10.2",
+ "futures",
  "libc",
  "limbo_core",
  "miette",
@@ -2706,6 +2707,7 @@ name = "py-limbo"
 version = "0.0.22-pre.1"
 dependencies = [
  "anyhow",
+ "futures",
  "limbo_core",
  "pyo3",
  "pyo3-build-config",

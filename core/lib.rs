@@ -50,6 +50,8 @@ pub use io::{
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
+use std::future::{self, Future};
+use std::task::Poll;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -567,6 +569,17 @@ impl Connection {
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
         self.pager.checkpoint_shutdown()
+    }
+
+    pub fn close_async(&self) -> impl Future<Output = Result<(), LimboError>> + '_ {
+        future::poll_fn(move |cx| match self.pager.checkpoint() {
+            Ok(CheckpointStatus::Done(_)) => Poll::Ready(Ok(())),
+            Ok(CheckpointStatus::IO) => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        })
     }
 
     pub fn last_insert_rowid(&self) -> i64 {
