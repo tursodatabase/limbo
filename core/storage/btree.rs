@@ -24,8 +24,9 @@ use crate::{
 use std::collections::HashSet;
 use std::{
     cell::{Cell, Ref, RefCell},
-    cmp::Ordering,
-    fmt::Debug,
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+    fmt::{Debug, Write},
     pin::Pin,
     rc::Rc,
     sync::Arc,
@@ -5096,16 +5097,236 @@ impl BTreeCursor {
     }
 
     pub fn read_page(&self, page_idx: usize) -> Result<BTreePage> {
-        self.pager.read_page(page_idx).map(|page| {
-            Arc::new(BTreePageInner {
-                page: RefCell::new(page),
-            })
-        })
+        btree_read_page(&self.pager, page_idx)
     }
 
     pub fn allocate_page(&self, page_type: PageType, offset: usize) -> BTreePage {
         self.pager
             .do_allocate_page(page_type, offset, BtreePageAllocMode::Any)
+    }
+}
+
+#[derive(Clone)]
+struct IntegrityCheckPageEntry {
+    page_idx: usize,
+    level: usize,
+    max_intkey: i64,
+}
+pub struct IntegrityCheckState {
+    pub current_page: usize,
+    page_stack: Vec<IntegrityCheckPageEntry>,
+    first_leaf_level: Option<usize>,
+}
+
+impl IntegrityCheckState {
+    pub fn new(page_idx: usize) -> Self {
+        Self {
+            current_page: page_idx,
+            page_stack: vec![IntegrityCheckPageEntry {
+                page_idx,
+                level: 0,
+                max_intkey: i64::MAX,
+            }],
+            first_leaf_level: None,
+        }
+    }
+}
+impl std::fmt::Debug for IntegrityCheckState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntegrityCheckState")
+            .field("current_page", &self.current_page)
+            .field("first_leaf_level", &self.first_leaf_level)
+            .finish()
+    }
+}
+
+/// Perform integrity check on a whole table/index. We check for:
+/// 1. Correct order of keys in case of rowids.
+/// 2. There are no overlap between cells.
+/// 3. Cells do not scape outside expected range.
+/// 4. Depth of leaf pages are equal.
+/// 5. Overflow pages are correct (TODO)
+///
+/// In order to keep this reentrant, we keep a stack of pages we need to check. Ideally, like in
+/// SQLlite, we would have implemented a recursive solution which would make it easier to check the
+/// depth.
+pub fn integrity_check(
+    state: &mut IntegrityCheckState,
+    error_count: &mut usize,
+    message: &mut String,
+    pager: &Rc<Pager>,
+) -> Result<CursorResult<()>> {
+    let Some(IntegrityCheckPageEntry {
+        page_idx,
+        level,
+        max_intkey,
+    }) = state.page_stack.last().cloned()
+    else {
+        return Ok(CursorResult::Ok(()));
+    };
+    let page = btree_read_page(pager, page_idx)?;
+    return_if_locked_maybe_load!(pager, page);
+    state.page_stack.pop();
+
+    let page = page.get();
+    let contents = page.get_contents();
+    let usable_space = pager.usable_space() as u16;
+    let mut coverage_checker = CoverageChecker::new(page.get().id);
+
+    // Now we check every cell for few things:
+    // 1. Check cell is in correct range. Not exceeds page and not starts before we have marked
+    //    (cell content area).
+    // 2. We add the cell to coverage checker in order to check if cells do not overlap.
+    // 3. We check order of rowids in case of table pages. We iterate backwards in order to check
+    //    if current cell's rowid is less than the next cell. We also check rowid is less than the
+    //    parent's divider cell. In case of this page being root page max rowid will be i64::MAX.
+    // 4. We append pages to the stack to check later.
+    // 5. In case of leaf page, check if the current level(depth) is equal to other leaf pages we
+    //    have seen.
+    let mut next_rowid = max_intkey;
+    for cell_idx in (0..contents.cell_count()).rev() {
+        let (cell_start, cell_length) = contents.cell_get_raw_region(
+            cell_idx,
+            payload_overflow_threshold_max(contents.page_type(), usable_space),
+            payload_overflow_threshold_min(contents.page_type(), usable_space),
+            usable_space as usize,
+        );
+        if cell_start < contents.cell_content_area() as usize
+            || cell_start > usable_space as usize - 4
+        {
+            let error_msg = format!("Cell {} in page {} is out of range. cell_range={}..{}, content_area={}, usable_space={}\n", cell_idx, page.get().id, cell_start, cell_start+cell_length, contents.cell_content_area(), usable_space);
+            message.write_str(&error_msg).unwrap();
+            *error_count += 1;
+        }
+        if cell_start + cell_length > usable_space as usize {
+            let error_msg = format!("Cell {} in page {} extends out of page. cell_range={}..{}, content_area={}, usable_space={}\n", cell_idx, page.get().id, cell_start, cell_start+cell_length, contents.cell_content_area(), usable_space);
+            message.write_str(&error_msg).unwrap();
+            *error_count += 1;
+        }
+        coverage_checker.add_cell(cell_start, cell_start + cell_length);
+        let cell = contents.cell_get(
+            cell_idx,
+            payload_overflow_threshold_max(contents.page_type(), usable_space),
+            payload_overflow_threshold_min(contents.page_type(), usable_space),
+            usable_space as usize,
+        )?;
+        match cell {
+            BTreeCell::TableInteriorCell(table_interior_cell) => {
+                state.page_stack.push(IntegrityCheckPageEntry {
+                    page_idx: table_interior_cell._left_child_page as usize,
+                    level: level + 1,
+                    max_intkey: table_interior_cell._rowid,
+                });
+                let rowid = table_interior_cell._rowid;
+                if rowid > max_intkey || rowid > next_rowid {
+                    let error_msg = format!("Page {} cell {} has rowid={} in wrong order. Parent cell has parent_rowid={} and next_rowid={}", page.get().id, cell_idx, rowid, max_intkey, next_rowid);
+                    message.write_str(&error_msg).unwrap();
+                    *error_count += 1;
+                }
+                next_rowid = rowid;
+            }
+            BTreeCell::TableLeafCell(table_leaf_cell) => {
+                // check depth of leaf pages are equal
+                if let Some(expected_leaf_level) = state.first_leaf_level {
+                    if expected_leaf_level != level {
+                        let error_msg = format!("Page {} is at different depth from another leaf page this_page_depth={}, other_page_depth={} ", page.get().id, level, expected_leaf_level);
+                        message.write_str(&error_msg).unwrap();
+                        *error_count += 1;
+                    }
+                } else {
+                    state.first_leaf_level = Some(level);
+                }
+                let rowid = table_leaf_cell._rowid;
+                if rowid > max_intkey || rowid > next_rowid {
+                    let error_msg = format!("Page {} cell {} has rowid={} in wrong order. Parent cell has parent_rowid={} and next_rowid={}", page.get().id, cell_idx, rowid, max_intkey, next_rowid);
+                    message.write_str(&error_msg).unwrap();
+                    *error_count += 1;
+                }
+                next_rowid = rowid;
+            }
+            BTreeCell::IndexInteriorCell(index_interior_cell) => {
+                state.page_stack.push(IntegrityCheckPageEntry {
+                    page_idx: index_interior_cell.left_child_page as usize,
+                    level: level + 1,
+                    max_intkey, // we don't care about intkey in non-table pages
+                });
+            }
+            BTreeCell::IndexLeafCell(_) => {
+                // check depth of leaf pages are equal
+                if let Some(expected_leaf_level) = state.first_leaf_level {
+                    if expected_leaf_level != level {
+                        let error_msg = format!("Page {} is at different depth from another leaf page this_page_depth={}, other_page_depth={} ", page.get().id, level, expected_leaf_level);
+                        message.write_str(&error_msg).unwrap();
+                        *error_count += 1;
+                    }
+                } else {
+                    state.first_leaf_level = Some(level);
+                }
+            }
+        }
+    }
+
+    // Now we add free blocks to the coverage checker
+    let first_freeblock = contents.first_freeblock();
+    if first_freeblock > 0 {
+        let mut pc = first_freeblock;
+        while pc > 0 {
+            let next = contents.read_u16_no_offset(pc as usize);
+            let size = contents.read_u16_no_offset(pc as usize + 2) as usize;
+            // check it doesn't go out of range
+            if pc > usable_space - 4 {
+                let error_msg = format!(
+                    "Page {} detected freeblock that extends page start={} end={}",
+                    page.get().id,
+                    pc,
+                    pc as usize + size
+                );
+                message.write_str(&error_msg).unwrap();
+                *error_count += 1;
+                break;
+            }
+            coverage_checker.add_free_block(pc as usize, pc as usize + size);
+            pc = next;
+        }
+    }
+
+    // Let's check the overlap of freeblocks and cells now that we have collected them all.
+    coverage_checker.analyze(
+        usable_space,
+        contents.cell_content_area() as usize,
+        message,
+        error_count,
+        contents.num_frag_free_bytes() as usize,
+    );
+
+    Ok(CursorResult::IO)
+}
+
+pub fn btree_read_page(pager: &Rc<Pager>, page_idx: usize) -> Result<BTreePage> {
+    pager.read_page(page_idx).map(|page| {
+        Arc::new(BTreePageInner {
+            page: RefCell::new(page),
+        })
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IntegrityCheckCellRange {
+    start: usize,
+    end: usize,
+    is_free_block: bool,
+}
+
+// Implement ordering for min-heap (smallest start address first)
+impl Ord for IntegrityCheckCellRange {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.start.cmp(&other.start)
+    }
+}
+
+impl PartialOrd for IntegrityCheckCellRange {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -5116,6 +5337,73 @@ fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
 
         if leaf_data {
             assert!(cell[0] != 0, "payload is {:?}", cell);
+        }
+    }
+}
+
+pub struct CoverageChecker {
+    /// Min-heap ordered by cell start
+    heap: BinaryHeap<Reverse<IntegrityCheckCellRange>>,
+    page_idx: usize,
+}
+
+impl CoverageChecker {
+    pub fn new(page_idx: usize) -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            page_idx,
+        }
+    }
+
+    fn add_range(&mut self, cell_start: usize, cell_end: usize, is_free_block: bool) {
+        self.heap.push(Reverse(IntegrityCheckCellRange {
+            start: cell_start,
+            end: cell_end,
+            is_free_block,
+        }));
+    }
+
+    pub fn add_cell(&mut self, cell_start: usize, cell_end: usize) {
+        self.add_range(cell_start, cell_end, false);
+    }
+
+    pub fn add_free_block(&mut self, cell_start: usize, cell_end: usize) {
+        self.add_range(cell_start, cell_end, true);
+    }
+
+    pub fn analyze(
+        &mut self,
+        usable_space: u16,
+        content_area: usize,
+        message: &mut String,
+        error_count: &mut usize,
+        expected_fragmentation: usize,
+    ) {
+        let mut fragmentation = 0;
+        let mut prev_end = content_area;
+        while let Some(cell) = self.heap.pop() {
+            let start = cell.0.start;
+            if prev_end > start {
+                let error_msg = format!(
+                    "Page {} cell overlap detected at position={} with previous_end={}. content_area={}, is_free_block={}",
+                    self.page_idx, start, prev_end, content_area, cell.0.is_free_block
+                );
+                message.push_str(&error_msg);
+                *error_count += 1;
+                break;
+            } else {
+                fragmentation += start - prev_end;
+                prev_end = cell.0.end;
+            }
+        }
+        fragmentation += usable_space as usize - prev_end;
+        if fragmentation != expected_fragmentation {
+            let error_msg = format!(
+                "Page {} unexpected fragmentation got={}, expected={}",
+                self.page_idx, fragmentation, expected_fragmentation
+            );
+            message.push_str(&error_msg);
+            *error_count += 1;
         }
     }
 }

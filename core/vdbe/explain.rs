@@ -1590,6 +1590,19 @@ pub fn insn_to_str(
                 0,
                 format!("r[{}]={}", *out_reg, *value),
             ),
+            Insn::IntegrityCk {
+                max_errors,
+                roots,
+                message_register,
+            } => (
+                "IntegrityCk",
+                *max_errors as i32,
+                0,
+                0,
+                Value::build_text(""),
+                0,
+                format!("roots={:?} message_register={}", roots, message_register),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",

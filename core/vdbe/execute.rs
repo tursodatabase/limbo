@@ -2,6 +2,7 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Schema;
+use crate::storage::btree::{integrity_check, IntegrityCheckState};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
@@ -23,6 +24,7 @@ use crate::{
     },
     types::compare_immutable,
 };
+use std::fmt::Write;
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
@@ -5429,6 +5431,75 @@ pub fn op_count(
     state.registers[*target_reg] = Register::Value(Value::Integer(count as i64));
 
     state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+#[derive(Debug)]
+pub enum OpIntegrityCheckState {
+    Start,
+    Checking {
+        error_count: usize,
+        message: String,
+        current_root_idx: usize,
+        state: IntegrityCheckState,
+    },
+}
+pub fn op_integrity_check(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::IntegrityCk {
+        max_errors,
+        roots,
+        message_register,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    match &mut state.op_integrity_check_state {
+        OpIntegrityCheckState::Start => {
+            state.op_integrity_check_state = OpIntegrityCheckState::Checking {
+                error_count: 0,
+                message: String::new(),
+                current_root_idx: 0,
+                state: IntegrityCheckState::new(roots[0]),
+            };
+        }
+        OpIntegrityCheckState::Checking {
+            error_count,
+            message,
+            current_root_idx,
+            state: integrity_check_state,
+        } => {
+            return_if_io!(integrity_check(
+                integrity_check_state,
+                error_count,
+                message,
+                pager
+            ));
+            *current_root_idx += 1;
+            if *current_root_idx < roots.len() {
+                *integrity_check_state = IntegrityCheckState::new(roots[*current_root_idx]);
+                return Ok(InsnFunctionStepResult::Step);
+            } else {
+                if *error_count == 0 {
+                    message.write_str("ok").map_err(|err| {
+                        LimboError::InternalError(format!(
+                            "error appending message to integrity check {:?}",
+                            err
+                        ))
+                    })?;
+                }
+                state.registers[*message_register] = Register::Value(Value::build_text(message));
+                state.op_integrity_check_state = OpIntegrityCheckState::Start;
+                state.pc += 1;
+            }
+        }
+    }
+
     Ok(InsnFunctionStepResult::Step)
 }
 

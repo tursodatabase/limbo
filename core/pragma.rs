@@ -73,6 +73,10 @@ fn pragma_for(pragma: PragmaName) -> Pragma {
             PragmaFlags::NoColumns1 | PragmaFlags::Result0,
             &["auto_vacuum"],
         ),
+        IntegrityCheck => Pragma::new(
+            PragmaFlags::NeedSchema | PragmaFlags::ReadOnly | PragmaFlags::Result0,
+            &["message"],
+        ),
     }
 }
 

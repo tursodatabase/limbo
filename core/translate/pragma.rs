@@ -18,6 +18,8 @@ use crate::{bail_parse_error, LimboError, Pager, Value};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
+use super::integrity_check::translate_integrity_check;
+
 fn list_pragmas(program: &mut ProgramBuilder) {
     for x in PragmaName::iter() {
         let register = program.emit_string8_new_reg(x.to_string());
@@ -259,6 +261,7 @@ fn update_pragma(
             });
             Ok(())
         }
+        PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
     }
 }
 
@@ -394,6 +397,9 @@ fn query_pragma(
                 value: auto_vacuum_mode_i64,
             });
             program.emit_result_row(register, 1);
+        }
+        PragmaName::IntegrityCheck => {
+            translate_integrity_check(schema, program)?;
         }
     }
 

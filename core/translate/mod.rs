@@ -18,6 +18,7 @@ pub(crate) mod expr;
 pub(crate) mod group_by;
 pub(crate) mod index;
 pub(crate) mod insert;
+pub(crate) mod integrity_check;
 pub(crate) mod main_loop;
 pub(crate) mod optimizer;
 pub(crate) mod order_by;
