@@ -1206,7 +1206,7 @@ pub fn op_open_pseudo(
     };
     {
         let mut cursors = state.cursors.borrow_mut();
-        let cursor = PseudoCursor::new();
+        let cursor = PseudoCursor::default();
         cursors
             .get_mut(*cursor_id)
             .unwrap()
@@ -4395,33 +4395,31 @@ pub fn op_idx_insert(
             // a write/balancing operation. If it did, it means we already moved to the place we wanted.
             let moved_before = if cursor.is_write_in_progress() {
                 true
+            } else if index_meta.unique {
+                // check for uniqueness violation
+                match cursor.key_exists_in_index(record)? {
+                    CursorResult::Ok(true) => {
+                        return Err(LimboError::Constraint(
+                            "UNIQUE constraint failed: duplicate key".into(),
+                        ))
+                    }
+                    CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                    CursorResult::Ok(false) => {}
+                };
+                // uniqueness check already moved us to the correct place in the index.
+                // the uniqueness check uses SeekOp::GE, which means a non-matching entry
+                // will now be positioned at the insertion point where there currently is
+                // a) nothing, or
+                // b) the first entry greater than the key we are inserting.
+                // In both cases, we can insert the new entry without moving again.
+                //
+                // This is re-entrant, because once we call cursor.insert() with moved_before=true,
+                // we will immediately set BTreeCursor::state to CursorState::Write(WriteInfo::new()),
+                // in BTreeCursor::insert_into_page; thus, if this function is called again,
+                // moved_before will again be true due to cursor.is_write_in_progress() returning true.
+                true
             } else {
-                if index_meta.unique {
-                    // check for uniqueness violation
-                    match cursor.key_exists_in_index(record)? {
-                        CursorResult::Ok(true) => {
-                            return Err(LimboError::Constraint(
-                                "UNIQUE constraint failed: duplicate key".into(),
-                            ))
-                        }
-                        CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
-                        CursorResult::Ok(false) => {}
-                    };
-                    // uniqueness check already moved us to the correct place in the index.
-                    // the uniqueness check uses SeekOp::GE, which means a non-matching entry
-                    // will now be positioned at the insertion point where there currently is
-                    // a) nothing, or
-                    // b) the first entry greater than the key we are inserting.
-                    // In both cases, we can insert the new entry without moving again.
-                    //
-                    // This is re-entrant, because once we call cursor.insert() with moved_before=true,
-                    // we will immediately set BTreeCursor::state to CursorState::Write(WriteInfo::new()),
-                    // in BTreeCursor::insert_into_page; thus, if this function is called again,
-                    // moved_before will again be true due to cursor.is_write_in_progress() returning true.
-                    true
-                } else {
-                    flags.has(IdxInsertFlags::USE_SEEK)
-                }
+                flags.has(IdxInsertFlags::USE_SEEK)
             };
 
             // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,

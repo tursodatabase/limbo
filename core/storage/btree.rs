@@ -580,7 +580,7 @@ impl BTreeCursor {
             return None;
         }
         let rowid = match self.get_immutable_record().as_ref().unwrap().last_value() {
-            Some(RefValue::Integer(rowid)) => *rowid as i64,
+            Some(RefValue::Integer(rowid)) => *rowid,
             _ => unreachable!(
                 "index where has_rowid() is true should have an integer rowid as the last value"
             ),
@@ -929,8 +929,8 @@ impl BTreeCursor {
                 CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
                     next_page: first_overflow_page.unwrap(),
                     pages_left_to_skip: pages_to_skip,
-                    page_offset: page_offset,
-                    amount: amount,
+                    page_offset,
+                    amount,
                     buffer_offset: bytes_processed as usize,
                     is_write,
                 });
@@ -964,7 +964,7 @@ impl BTreeCursor {
                             CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
                                 next_page: *next_page,
                                 remaining_to_read: *amount,
-                                page: page,
+                                page,
                                 current_offset: *page_offset as usize,
                                 buffer_offset: *buffer_offset,
                                 is_write: *is_write,
@@ -1102,7 +1102,7 @@ impl BTreeCursor {
         payload_offset: u32,
         num_bytes: u32,
         payload: &[u8],
-        buffer: &mut Vec<u8>,
+        buffer: &mut [u8],
         page: BTreePage,
     ) {
         page.get().set_dirty();
@@ -1353,9 +1353,8 @@ impl BTreeCursor {
                 let max = max_cell_idx.get();
                 if min > max {
                     if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
-                        let left_child_page = contents.cell_table_interior_read_left_child_page(
-                            nearest_matching_cell as usize,
-                        )?;
+                        let left_child_page = contents
+                            .cell_table_interior_read_left_child_page(nearest_matching_cell)?;
                         self.stack.set_cell_index(nearest_matching_cell as i32);
                         let mem_page = self.read_page(left_child_page as usize)?;
                         self.stack.push(mem_page);
@@ -1737,19 +1736,17 @@ impl BTreeCursor {
                         min_cell_idx.set(cur_cell_idx + 1);
                     }
                 }
+            } else if cmp.is_gt() {
+                max_cell_idx.set(cur_cell_idx - 1);
+            } else if cmp.is_lt() {
+                min_cell_idx.set(cur_cell_idx + 1);
             } else {
-                if cmp.is_gt() {
-                    max_cell_idx.set(cur_cell_idx - 1);
-                } else if cmp.is_lt() {
-                    min_cell_idx.set(cur_cell_idx + 1);
-                } else {
-                    match iter_dir {
-                        IterationDirection::Forwards => {
-                            min_cell_idx.set(cur_cell_idx + 1);
-                        }
-                        IterationDirection::Backwards => {
-                            max_cell_idx.set(cur_cell_idx - 1);
-                        }
+                match iter_dir {
+                    IterationDirection::Forwards => {
+                        min_cell_idx.set(cur_cell_idx + 1);
+                    }
+                    IterationDirection::Backwards => {
+                        max_cell_idx.set(cur_cell_idx - 1);
                     }
                 }
             }
@@ -1964,19 +1961,17 @@ impl BTreeCursor {
                         min_cell_idx.set(cur_cell_idx + 1);
                     }
                 }
+            } else if cmp.is_gt() {
+                max_cell_idx.set(cur_cell_idx - 1);
+            } else if cmp.is_lt() {
+                min_cell_idx.set(cur_cell_idx + 1);
             } else {
-                if cmp.is_gt() {
-                    max_cell_idx.set(cur_cell_idx - 1);
-                } else if cmp.is_lt() {
-                    min_cell_idx.set(cur_cell_idx + 1);
-                } else {
-                    match iter_dir {
-                        IterationDirection::Forwards => {
-                            min_cell_idx.set(cur_cell_idx + 1);
-                        }
-                        IterationDirection::Backwards => {
-                            max_cell_idx.set(cur_cell_idx - 1);
-                        }
+                match iter_dir {
+                    IterationDirection::Forwards => {
+                        min_cell_idx.set(cur_cell_idx + 1);
+                    }
+                    IterationDirection::Backwards => {
+                        max_cell_idx.set(cur_cell_idx - 1);
                     }
                 }
             }
@@ -2744,7 +2739,7 @@ impl BTreeCursor {
                         } else {
                             size_of_cell_to_remove_from_left
                         };
-                        new_page_sizes[i + 1] += size_of_cell_to_move_right as i64;
+                        new_page_sizes[i + 1] += size_of_cell_to_move_right;
                         cell_array.number_of_cells_per_page[i] -= 1;
                     }
 
@@ -2967,7 +2962,7 @@ impl BTreeCursor {
                     if !is_leaf_page {
                         // Interior
                         // Make this page's rightmost pointer point to pointer of divider cell before modification
-                        let previous_pointer_divider = read_u32(&divider_cell, 0);
+                        let previous_pointer_divider = read_u32(divider_cell, 0);
                         page.get()
                             .get_contents()
                             .write_u32(offset::BTREE_RIGHTMOST_PTR, previous_pointer_divider);
@@ -2992,7 +2987,7 @@ impl BTreeCursor {
                         let (rowid, _) = read_varint(&divider_cell[n_bytes_payload..])?;
                         new_divider_cell
                             .extend_from_slice(&(page.get().get().id as u32).to_be_bytes());
-                        write_varint_to_vec(rowid as u64, &mut new_divider_cell);
+                        write_varint_to_vec(rowid, &mut new_divider_cell);
                     } else {
                         // Leaf index
                         new_divider_cell
@@ -3225,7 +3220,7 @@ impl BTreeCursor {
         i: usize,
         page: &std::sync::Arc<crate::Page>,
     ) {
-        let left_pointer = if parent_contents.overflow_cells.len() == 0 {
+        let left_pointer = if parent_contents.overflow_cells.is_empty() {
             let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
                 balance_info.first_divider_cell + i,
                 payload_overflow_threshold_max(
@@ -3420,7 +3415,7 @@ impl BTreeCursor {
                 let rightmost = read_u32(rightmost_pointer, 0);
                 debug_validate_cells!(parent_contents, self.usable_space() as u16);
 
-                if !pages_to_balance_new[0].is_some() {
+                if pages_to_balance_new[0].is_none() {
                     tracing::error!(
                         "balance_non_root(balance_shallower_incorrect_page, page_idx={})",
                         0
@@ -4225,11 +4220,9 @@ impl BTreeCursor {
                                 return Ok(CursorResult::Ok(()));
                             }
                         };
-                    } else {
-                        if self.reusable_immutable_record.borrow().is_none() {
-                            self.state = CursorState::None;
-                            return Ok(CursorResult::Ok(()));
-                        }
+                    } else if self.reusable_immutable_record.borrow().is_none() {
+                        self.state = CursorState::None;
+                        return Ok(CursorResult::Ok(()));
                     }
 
                     let delete_info = self.state.mut_delete_info().unwrap();
@@ -6503,7 +6496,6 @@ mod tests {
         storage::{
             database::DatabaseFile,
             page_cache::DumbLruPageCache,
-            pager::CreateBTreeFlags,
             sqlite3_ondisk::{self, DatabaseHeader},
         },
         types::Text,
@@ -7099,6 +7091,8 @@ mod tests {
 
     #[cfg(feature = "index_experimental")]
     fn btree_index_insert_fuzz_run(attempts: usize, inserts: usize) {
+        use crate::storage::pager::CreateBTreeFlags;
+
         let (mut rng, seed) = if std::env::var("SEED").is_ok() {
             let seed = std::env::var("SEED").unwrap();
             let seed = seed.parse::<u64>().unwrap();

@@ -5,7 +5,6 @@ use antithesis_sdk::random::{get_random, AntithesisRng};
 use antithesis_sdk::*;
 use clap::Parser;
 use core::panic;
-use hex;
 use limbo::Builder;
 use opts::Opts;
 use std::collections::HashSet;
@@ -398,15 +397,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _g = init_tracing()?;
     antithesis_init();
 
-    let mut opts = Opts::parse();
-
-    if opts.nr_threads > 1 {
-        println!("ERROR: Multi-threaded data access is not yet supported: https://github.com/tursodatabase/limbo/issues/1552");
-        return Ok(());
-    }
-
+    let opts = Opts::parse();
     let plan = if opts.load_log {
-        read_plan_from_log_file(&mut opts)?
+        read_plan_from_log_file(&opts)?
     } else {
         generate_plan(&opts)?
     };
@@ -451,7 +444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             for query_index in 0..nr_iterations {
                 let sql = &plan.queries_per_thread[thread][query_index];
                 println!("executing: {}", sql);
-                if let Err(e) = conn.execute(&sql, ()).await {
+                if let Err(e) = conn.execute(sql, ()).await {
                     match e {
                         limbo::Error::SqlExecutionFailure(e) => {
                             if e.contains("Corrupt database") {

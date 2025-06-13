@@ -142,7 +142,7 @@ pub(crate) fn sqlite_exec_rows(
     conn: &rusqlite::Connection,
     query: &str,
 ) -> Vec<Vec<rusqlite::types::Value>> {
-    let mut stmt = conn.prepare(&query).unwrap();
+    let mut stmt = conn.prepare(query).unwrap();
     let mut rows = stmt.query(params![]).unwrap();
     let mut results = Vec::new();
     while let Some(row) = rows.next().unwrap() {

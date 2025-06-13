@@ -1050,7 +1050,7 @@ fn emit_update_insns(
             // Insert new index key (filled further above with values from set_clauses)
             program.emit_insn(Insn::IdxInsert {
                 cursor_id: idx_cursor_id,
-                record_reg: record_reg,
+                record_reg,
                 unpacked_start: Some(start),
                 unpacked_count: Some((index.columns.len() + 1) as u16),
                 flags: IdxInsertFlags::new(),

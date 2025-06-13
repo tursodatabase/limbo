@@ -124,7 +124,7 @@ pub fn parse_vector(value: &Register, vec_ty: Option<VectorType>) -> Result<Vect
                     ));
                 }
             }
-            vector_deserialize(vector_type, &blob)
+            vector_deserialize(vector_type, blob)
         }
         _ => Err(LimboError::ConversionError(
             "Invalid vector type".to_string(),
