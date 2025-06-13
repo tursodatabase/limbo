@@ -426,7 +426,12 @@ impl Limbo {
         // TODO this is a quickfix. Some ideas to do case insensitive comparisons is to use
         // Uncased or Unicase.
         let explain_str = "explain";
-        if input.trim_start()[0..explain_str.len()].eq_ignore_ascii_case(explain_str) {
+        if input
+            .trim_start()
+            .get(..explain_str.len())
+            .map(|s| s.eq_ignore_ascii_case(explain_str))
+            .unwrap_or(false)
+        {
             match self.conn.query(input) {
                 Ok(Some(stmt)) => {
                     let _ = self.writeln(stmt.explain().as_bytes());
