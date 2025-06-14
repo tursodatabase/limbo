@@ -859,9 +859,12 @@ impl ImmutableRecord {
         self.values.len()
     }
 
-    pub fn from_registers(registers: &[Register]) -> Self {
-        let mut values = Vec::with_capacity(registers.len());
-        let mut serials = Vec::with_capacity(registers.len());
+    pub fn from_registers<'a>(
+        registers: impl IntoIterator<Item = &'a Register> + Copy,
+        len: usize,
+    ) -> Self {
+        let mut values = Vec::with_capacity(len);
+        let mut serials = Vec::with_capacity(len);
         let mut size_header = 0;
         let mut size_values = 0;
 

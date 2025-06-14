@@ -218,6 +218,16 @@ pub fn prepare_update_plan(
         .cloned()
         .collect();
 
+    // Sqlite determines we should create an ephemeral table if we do not have a FROM clause
+    // Difficult to say what items from the plan can be checked for this so currently just checking if a RowId Alias is referenced
+    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L395
+    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L670
+    let columns = table.columns();
+
+    let rowid_alias_used = set_clauses.iter().fold(false, |accum, (idx, _)| {
+        accum || columns[*idx].is_rowid_alias
+    });
+
     Ok(Plan::Update(UpdatePlan {
         table_references,
         set_clauses,
@@ -228,5 +238,6 @@ pub fn prepare_update_plan(
         offset,
         contains_constant_false_condition: false,
         indexes_to_update,
+        rowid_alias_used,
     }))
 }

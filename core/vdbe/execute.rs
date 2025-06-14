@@ -4231,15 +4231,25 @@ pub fn op_insert(
     {
         let mut cursor = state.get_cursor(*cursor);
         let cursor = cursor.as_btree_mut();
-        let record = match &state.registers[*record_reg] {
-            Register::Record(r) => r,
-            _ => unreachable!("Not a record! Cannot insert a non record value."),
-        };
+
         let key = match &state.registers[*key_reg].get_owned_value() {
             Value::Integer(i) => *i,
             _ => unreachable!("expected integer key"),
         };
-        return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(record)), true));
+
+        let record = match &state.registers[*record_reg] {
+            Register::Record(r) => std::borrow::Cow::Borrowed(r),
+            Register::Value(value) => {
+                let x = 1;
+                let regs = &state.registers[*record_reg..*record_reg + 1];
+                let new_regs = [&state.registers[*record_reg]];
+                let record = ImmutableRecord::from_registers(new_regs, new_regs.len());
+                std::borrow::Cow::Owned(record)
+            }
+            Register::Aggregate(..) => unreachable!("Cannot insert an aggregate value."),
+        };
+
+        return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(record.as_ref())), true));
         // Only update last_insert_rowid for regular table inserts, not schema modifications
         if cursor.root_page() != 1 {
             if let Some(rowid) = return_if_io!(cursor.rowid()) {
