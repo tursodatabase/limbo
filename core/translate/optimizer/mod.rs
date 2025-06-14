@@ -107,7 +107,7 @@ fn optimize_delete_plan(plan: &mut DeletePlan, _schema: &Schema) -> Result<()> {
     Ok(())
 }
 
-fn optimize_update_plan(plan: &mut UpdatePlan, _schema: &Schema) -> Result<()> {
+fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
     rewrite_exprs_update(plan)?;
     if let ConstantConditionEliminationResult::ImpossibleCondition =
         eliminate_constant_conditions(&mut plan.where_clause)?
@@ -120,13 +120,13 @@ fn optimize_update_plan(plan: &mut UpdatePlan, _schema: &Schema) -> Result<()> {
     // e.g. in 'explain update t set x=x+5 where x > 10;' where x is an indexed column,
     // sqlite first creates an ephemeral index to store the current values so the tree traversal
     // doesn't get messed up while updating.
-    // let _ = optimize_table_access(
-    //     &mut plan.table_references,
-    //     &schema.indexes,
-    //     &mut plan.where_clause,
-    //     &mut plan.order_by,
-    //     &mut None,
-    // )?;
+    let _ = optimize_table_access(
+        &mut plan.table_references,
+        &schema.indexes,
+        &mut plan.where_clause,
+        &mut plan.order_by,
+        &mut None,
+    )?;
     Ok(())
 }
 

@@ -860,7 +860,7 @@ impl ImmutableRecord {
     }
 
     pub fn from_registers<'a>(
-        registers: impl IntoIterator<Item = &'a Register> + Clone,
+        registers: impl IntoIterator<Item = &'a Register> + Copy,
         len: usize,
     ) -> Self {
         let mut values = Vec::with_capacity(len);
@@ -870,7 +870,7 @@ impl ImmutableRecord {
 
         let mut serial_type_buf = [0; 9];
         // write serial types
-        for value in registers.clone() {
+        for value in registers {
             let value = value.get_owned_value();
             let serial_type = SerialType::from(value);
             let n = write_varint(&mut serial_type_buf[0..], serial_type.into());
