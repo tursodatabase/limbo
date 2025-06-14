@@ -123,7 +123,7 @@ impl GrammarGenerator {
         root: SymbolHandle,
         is_recursive: &mut HashMap<SymbolHandle, bool>,
     ) -> bool {
-        if let Some(_) = is_recursive.get(&root) {
+        if is_recursive.get(&root).is_some() {
             is_recursive.insert(root, true);
             return true;
         }
@@ -233,10 +233,10 @@ impl GrammarGenerator {
                             values
                                 .iter()
                                 .filter(|x| is_recursive.get(&x.0) != Some(&true))
-                                .map(|x| *x)
+                                .copied()
                                 .collect::<Vec<_>>()
                         };
-                        if handles.len() == 0 {
+                        if handles.is_empty() {
                             handles = values.clone();
                         }
 

@@ -407,7 +407,7 @@ impl DistinctCtx {
         });
         program.emit_insn(Insn::IdxInsert {
             cursor_id: self.cursor_id,
-            record_reg: record_reg,
+            record_reg,
             unpacked_start: None,
             unpacked_count: None,
             flags: IdxInsertFlags::new(),

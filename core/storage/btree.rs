@@ -928,8 +928,8 @@ impl BTreeCursor {
                 CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
                     next_page: first_overflow_page.unwrap(),
                     pages_left_to_skip: pages_to_skip,
-                    page_offset: page_offset,
-                    amount: amount,
+                    page_offset,
+                    amount,
                     buffer_offset: bytes_processed as usize,
                     is_write,
                 });
@@ -963,7 +963,7 @@ impl BTreeCursor {
                             CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
                                 next_page: *next_page,
                                 remaining_to_read: *amount,
-                                page: page,
+                                page,
                                 current_offset: *page_offset as usize,
                                 buffer_offset: *buffer_offset,
                                 is_write: *is_write,

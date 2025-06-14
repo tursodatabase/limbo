@@ -321,11 +321,11 @@ impl CompoundPredicate {
     ) -> Self {
         // Cannot pick a row if the table is empty
         if table.rows.is_empty() {
-            return Self(
-                predicate_value
-                    .then_some(Predicate::true_())
-                    .unwrap_or(Predicate::false_()),
-            );
+            return Self(if predicate_value {
+                Predicate::true_()
+            } else {
+                Predicate::false_()
+            });
         }
         let row = pick(&table.rows, rng);
         let predicate = if rng.gen_bool(0.7) {
