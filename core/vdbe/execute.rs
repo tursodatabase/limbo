@@ -1341,15 +1341,6 @@ pub fn op_column(
                     break 'value Value::Null;
                 };
 
-                let value = if cursor.get_null_flag() {
-                    Value::Null
-                } else {
-                    match record.get_value_opt(*column) {
-                        Some(val) => val.to_owned(),
-                        None => Value::Null,
-                    }
-                };
-
                 if cursor.get_null_flag() {
                     break 'value Value::Null;
                 }
