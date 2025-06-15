@@ -311,28 +311,69 @@ def test_crypto():
 
 
 def test_series():
+    console.info(f"Running test_series for Limbo")
     limbo = TestLimboShell()
     ext_path = "./target/debug/liblimbo_series"
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10);",
-        lambda res: "No such table-valued function: generate_series" in res,
+        lambda res: "Table generate_series not found" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
+    _test_series(limbo)
+
+    console.info(f"Running test_series for SQLite")
+    limbo = TestLimboShell(exec_name="sqlite3")
+    _test_series(limbo)
+
+
+def _test_series(limbo: TestLimboShell):
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10);",
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10;",
+        lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series(1, 10) WHERE value < 5;",
+        lambda res: res == "1\n2\n3\n4",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND value < 5;",
+        lambda res: res == "1\n2\n3\n4",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND start = 5;",
+        lambda res: res == "",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND start > 5;",
+        lambda res: res == "",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series;",
+        lambda res: "Invalid Argument" in res or "first argument to \"generate_series()\" missing or unusable" in res,
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2);",
         lambda res: res == "1\n3\n5\n7\n9",
     )
     limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE start = 1 AND stop = 10 AND step = 2;",
+        lambda res: res == "1\n3\n5\n7\n9",
+    )
+    limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2, 3);",
-        lambda res: "Invalid Argument" in res,
+        lambda res: "too many arguments" in res.lower(),
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(10, 1, -2);",
         lambda res: res == "10\n8\n6\n4\n2",
+    )
+    limbo.run_test_fn(
+        "SELECT a.value a_val, b.value b_val FROM generate_series(1, 3) a JOIN generate_series(1, 1) b ON a.value = b.value;",
+        lambda res: res == "1|1",
     )
     limbo.execute_dot("CREATE TABLE target (id integer primary key);")
     limbo.execute_dot("INSERT INTO target SELECT * FROM generate_series(1, 5);")
@@ -344,14 +385,20 @@ def test_series():
 
 
 def test_kv():
-    ext_path = "target/debug/liblimbo_ext_tests"
-    limbo = TestLimboShell()
+    _test_kv(exec_name=None, ext_path="target/debug/liblimbo_ext_tests")
+    _test_kv(exec_name="sqlite3", ext_path="target/debug/liblimbo_sqlite_test_ext")
+
+
+def _test_kv(exec_name, ext_path):
+    console.info(f"Running test_kv for {ext_path}")
+
+    limbo = TestLimboShell(exec_name=exec_name,)
     # first, create a normal table to ensure no issues
     limbo.execute_dot("CREATE TABLE other (a,b,c);")
     limbo.execute_dot("INSERT INTO other values (23,32,23);")
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
-        lambda res: "Parse error: no such module: kv_store" in res,
+        lambda res: "no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot(
@@ -421,10 +468,13 @@ def test_kv():
         lambda res: res == "100",
         "can update all rows",
     )
-    limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
-    limbo.run_test_fn(
-        "select count(*) from t;", lambda res: "4" == res, "four rows remain"
-    )
+    if exec_name is None:
+        # Test only on Limbo, since SQLite supports the DELETE ... LIMIT syntax only when compiled
+        # with the SQLITE_ENABLE_UPDATE_DELETE_LIMIT option: https://www.sqlite.org/lang_delete.html
+        limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
+        limbo.run_test_fn(
+            "select count(*) from t;", lambda res: "4" == res, "four rows remain"
+        )
     limbo.run_test_fn(
         "update t set key = '100' where 1;", null, "where clause evaluates properly"
     )
@@ -432,6 +482,10 @@ def test_kv():
         "select * from t where key = '100';",
         lambda res: res == "100|updated2",
         "there is only 1 key remaining after setting all keys to same value",
+    )
+    limbo.run_test_fn(
+        "select * from t a, other b where b.c = 23 and a.key='100';",
+        lambda res: "100|updated2|23|32|23" == res,
     )
     limbo.quit()
 
@@ -801,6 +855,144 @@ def test_tablestats():
     limbo.quit()
 
 
+def test_hidden_columns():
+    _test_hidden_columns(exec_name=None, ext_path="target/debug/liblimbo_ext_tests")
+    _test_hidden_columns(exec_name="sqlite3", ext_path="target/debug/liblimbo_sqlite_test_ext")
+
+
+def _test_hidden_columns(exec_name, ext_path):
+    console.info(f"Running test_hidden_columns for {ext_path}")
+
+    limbo = TestLimboShell(exec_name=exec_name,)
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.execute_dot(
+        "create virtual table t using kv_store;",
+    )
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE t" in res)
+    limbo.run_test_fn(
+        "insert into t(key, value) values ('k0', 'v0');",
+        null,
+        "can insert if hidden column is not specified explicitly",
+    )
+    limbo.run_test_fn(
+        "select comment from t where key = 'k0';",
+        lambda res: "auto-generated" == res,
+        "can select a hidden column from kv_store",
+    )
+    limbo.run_test_fn(
+        "insert into t(comment, key, value) values ('my comment', 'hidden', 'test');",
+        null,
+        "can insert if a hidden column is specified explicitly",
+    )
+    limbo.run_test_fn(
+        "select comment from t where key = 'hidden';",
+        lambda res: "my comment" == res,
+        "can select a hidden column from kv_store",
+    )
+    limbo.run_test_fn(
+        "select * from t where key = 'hidden';",
+        lambda res: "hidden|test" == res,
+        "hidden column is excluded from * expansion",
+    )
+    limbo.run_test_fn(
+        "select t.* from t where key = 'hidden';",
+        lambda res: "hidden|test" == res,
+        "hidden column is excluded from <table name>.* expansion",
+    )
+    limbo.run_test_fn(
+        "insert into t(comment, key, value) values ('insert_hidden', 'test');",
+        lambda res: "2 values for 3 columns" in res,
+        "fails when number of values does not match number of specified columns",
+    )
+    limbo.run_test_fn(
+        "update t set comment = 'updated comment' where key = 'hidden';",
+        null,
+        "can update a hidden column if specified explicitly",
+    )
+    limbo.run_test_fn(
+        "select comment from t where key = 'hidden';",
+        lambda res: "updated comment" == res,
+    )
+    limbo.run_test_fn(
+        "PRAGMA table_info=t;",
+        lambda res: "0|key|TEXT|0|LIMBO|1\n1|value|TEXT|0|LIMBO|0" == res,
+        "hidden columns are not listed in the dataset returned by 'PRAGMA table_info'",
+    )
+
+    # ORDER BY
+    limbo.execute_dot("CREATE VIRTUAL TABLE o USING kv_store;")
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE o" in res)
+    limbo.execute_dot("INSERT INTO o(comment, key, value) VALUES ('0', '5', 'a');")
+    limbo.execute_dot("INSERT INTO o(comment, key, value) VALUES ('1', '4', 'b');")
+    limbo.execute_dot("INSERT INTO o(comment, key, value) VALUES ('2', '3', 'c');")
+    limbo.run_test_fn(
+        "SELECT * FROM o ORDER BY comment;",
+        lambda res: "5|a\n4|b\n3|c" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM o ORDER BY 0;",
+        lambda res: "invalid column index: 0" in res or "term out of range - should be between 1 and 2" in res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM o ORDER BY 1;",
+        lambda res: "3|c\n4|b\n5|a" == res,
+    )
+
+    # JOINs
+    limbo.execute_dot("CREATE TABLE r (comment, key, value);")
+    limbo.execute_dot("INSERT INTO r VALUES ('comment0', '2', '3');")
+    limbo.execute_dot("INSERT INTO r VALUES ('comment1', '4', '5');")
+    limbo.execute_dot("CREATE VIRTUAL TABLE l USING kv_store;")
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE l" in res)
+    limbo.execute_dot("INSERT INTO l(comment, key, value) values ('comment1', '2', '3');")
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r;",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l JOIN r USING (comment);",
+        lambda res: "2|3|4|5" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l JOIN r ON l.comment = r.comment;",
+        lambda res: "2|3|comment1|4|5" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r NATURAL JOIN r;",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r NATURAL JOIN l;",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM r NATURAL JOIN l;",
+        lambda res: "comment0|2|3" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM r NATURAL JOIN l NATURAL JOIN r;",
+        lambda res: "comment0|2|3" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM (SELECT * FROM l JOIN r USING(key, value)) JOIN r USING(comment, key, value);",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM (SELECT * FROM l NATURAL JOIN r) JOIN r USING(comment, key, value);",
+        lambda res: "2|3|comment0" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l JOIN r USING(key, value) JOIN r USING(comment, key, value);",
+        lambda res: "" == res,
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM l NATURAL JOIN r JOIN r USING(comment, key, value);",
+        lambda res: "" == res,
+    )
+
+    limbo.quit()
+
+
 def main():
     try:
         test_regexp()
@@ -816,6 +1008,7 @@ def main():
         test_create_virtual_table()
         test_csv()
         test_tablestats()
+        test_hidden_columns()
     except Exception as e:
         console.error(f"Test FAILED: {e}")
         cleanup()
