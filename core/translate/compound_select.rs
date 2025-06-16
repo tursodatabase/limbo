@@ -246,6 +246,7 @@ fn emit_compound_select(
                     &left_index,
                     right_cursor_id,
                     target_cursor_id,
+                    limit_ctx,
                 );
             }
             _ => {
@@ -362,6 +363,7 @@ fn read_intersect_rows(
     index: &Index,
     right_cursor_id: usize,
     target_cursor: Option<usize>,
+    limit_ctx: Option<LimitCtx>,
 ) {
     let label_close = program.allocate_label();
     let label_loop_start = program.allocate_label();
@@ -411,6 +413,12 @@ fn read_intersect_rows(
         program.emit_insn(Insn::ResultRow {
             start_reg: cols_start_reg,
             count: column_count,
+        });
+    }
+    if let Some(limit_ctx) = limit_ctx {
+        program.emit_insn(Insn::DecrJumpZero {
+            reg: limit_ctx.reg_limit,
+            target_pc: label_close,
         });
     }
     program.preassign_label_to_next_insn(label_next);
