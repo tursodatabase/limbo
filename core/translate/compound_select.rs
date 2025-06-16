@@ -361,7 +361,7 @@ fn read_intersect_rows(
     left_cursor_id: usize,
     index: &Index,
     right_cursor_id: usize,
-    target_cursor_id: Option<usize>,
+    target_cursor: Option<usize>,
 ) {
     let label_close = program.allocate_label();
     let label_loop_start = program.allocate_label();
@@ -372,8 +372,10 @@ fn read_intersect_rows(
 
     program.preassign_label_to_next_insn(label_loop_start);
     let row_content_reg = program.alloc_register();
-    // we need to emit opcode RowData here
-
+    program.emit_insn(Insn::RowData {
+        cursor_id: left_cursor_id,
+        dest: row_content_reg,
+    });
     let label_next = program.allocate_label();
     program.emit_insn(Insn::NotFound {
         cursor_id: right_cursor_id,
@@ -381,18 +383,36 @@ fn read_intersect_rows(
         record_reg: row_content_reg,
         num_regs: 0,
     });
-    let cols_start_reg = program.alloc_registers(index.columns.len());
-    for i in 0..index.columns.len() {
+    let column_count = index.columns.len();
+    let cols_start_reg = program.alloc_registers(column_count);
+    for i in 0..column_count {
         program.emit_insn(Insn::Column {
             cursor_id: left_cursor_id,
             column: i,
             dest: cols_start_reg + i,
+            default: None,
         });
     }
-    program.emit_insn(Insn::ResultRow {
-        start_reg: cols_start_reg,
-        count: index.columns.len(),
-    });
+    if let Some(target_cursor_id) = target_cursor {
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: cols_start_reg,
+            count: column_count,
+            dest_reg: row_content_reg,
+            index_name: None,
+        });
+        program.emit_insn(Insn::IdxInsert {
+            cursor_id: target_cursor_id,
+            record_reg: row_content_reg,
+            unpacked_start: Some(cols_start_reg),
+            unpacked_count: Some(column_count as u16),
+            flags: Default::default(),
+        });
+    } else {
+        program.emit_insn(Insn::ResultRow {
+            start_reg: cols_start_reg,
+            count: column_count,
+        });
+    }
     program.preassign_label_to_next_insn(label_next);
     program.emit_insn(Insn::Next {
         cursor_id: left_cursor_id,
