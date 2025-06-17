@@ -197,12 +197,12 @@ impl Database {
         let buffer_pool = Rc::new(BufferPool::new(None));
 
         let conn = if let Some(shared_wal) = self.maybe_shared_wal.clone() {
+            let is_empty = false;
             let wal = Rc::new(RefCell::new(WalFile::new(
                 self.io.clone(),
                 shared_wal,
                 buffer_pool.clone(),
             )));
-            let is_empty = false;
             let pager = Rc::new(Pager::new(
                 self.db_file.clone(),
                 wal,
@@ -233,7 +233,7 @@ impl Database {
             conn
         } else {
             let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
-            let is_empty = true;
+            let is_empty = self.db_file.size()? == 0;
             let mut pager = Pager::new(
                 self.db_file.clone(),
                 dummy_wal,
