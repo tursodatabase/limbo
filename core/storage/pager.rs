@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::{trace, Level};
 
@@ -214,8 +214,8 @@ pub struct Pager {
     checkpoint_inflight: Rc<RefCell<usize>>,
     syncing: Rc<RefCell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
-    /// Number of pages in the database file.
-    pub npages: AtomicUsize,
+    /// Is the db empty? This is signified by 0-sized database and nonexistent WAL.
+    pub is_empty: AtomicBool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -249,17 +249,8 @@ impl Pager {
         io: Arc<dyn crate::io::IO>,
         page_cache: Arc<RwLock<DumbLruPageCache>>,
         buffer_pool: Rc<BufferPool>,
+        is_empty: bool,
     ) -> Result<Self> {
-        let npages = if db_file.size().unwrap() > 0 {
-            let db_header = Pager::begin_open(db_file.clone()).unwrap();
-            // ensure db header is there
-            io.run_once().unwrap();
-            let size = db_header.lock().database_size;
-            size as usize
-        } else {
-            0
-        };
-
         Ok(Self {
             db_file,
             wal,
@@ -275,7 +266,7 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
-            npages: AtomicUsize::new(npages),
+            is_empty: AtomicBool::new(is_empty),
         })
     }
 
@@ -284,7 +275,7 @@ impl Pager {
     }
 
     pub fn db_header(&self) -> Result<DatabaseHeader> {
-        if self.npages.load(Ordering::SeqCst) == 0 {
+        if self.is_empty.load(Ordering::SeqCst) {
             return Ok(DatabaseHeader::default());
         }
 
@@ -1008,7 +999,7 @@ impl Pager {
     pub fn allocate_page1(&self) -> Result<PageRef> {
         let mut default_header = DatabaseHeader::default();
         default_header.database_size = 1;
-        self.npages.fetch_add(1, Ordering::SeqCst);
+        self.is_empty.store(false, Ordering::SeqCst);
         let page = allocate_page(1, &self.buffer_pool, 0);
 
         let page1 = Arc::new(BTreePageInner {
@@ -1047,7 +1038,7 @@ impl Pager {
     pub fn allocate_page(&self) -> Result<PageRef> {
         let mut header = self.db_header()?;
         header.database_size += 1;
-        self.npages.fetch_add(1, Ordering::SeqCst);
+        self.is_empty.store(false, Ordering::SeqCst);
 
         tracing::debug!("allocate_page(database_size={})", header.database_size);
 
@@ -1427,7 +1418,7 @@ mod ptrmap_tests {
             buffer_pool.clone(),
         )));
 
-        let pager = Pager::new(db_file, wal, io, page_cache, buffer_pool).unwrap();
+        let pager = Pager::new(db_file, wal, io, page_cache, buffer_pool, true).unwrap();
         pager.set_auto_vacuum_mode(AutoVacuumMode::Full);
 
         //  Allocate all the pages as btree root pages

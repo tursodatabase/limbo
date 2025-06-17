@@ -6849,7 +6849,7 @@ mod tests {
         let wal = Rc::new(RefCell::new(wal_file));
 
         let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(2000)));
-        let pager = { Pager::new(db_file, wal, io, page_cache, buffer_pool).unwrap() };
+        let pager = { Pager::new(db_file, wal, io, page_cache, buffer_pool, true).unwrap() };
         let pager = Rc::new(pager);
         // FIXME: handle page cache is full
         pager.allocate_page1().unwrap();
@@ -7371,6 +7371,7 @@ mod tests {
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
                 buffer_pool,
+                true,
             )
             .unwrap(),
         );

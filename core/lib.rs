@@ -202,12 +202,14 @@ impl Database {
                 shared_wal,
                 buffer_pool.clone(),
             )));
+            let is_empty = false;
             let pager = Rc::new(Pager::new(
                 self.db_file.clone(),
                 wal,
                 self.io.clone(),
                 Arc::new(RwLock::new(DumbLruPageCache::default())),
                 buffer_pool,
+                is_empty,
             )?);
 
             let header = pager.db_header()?;
@@ -231,12 +233,14 @@ impl Database {
             conn
         } else {
             let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
+            let is_empty = true;
             let mut pager = Pager::new(
                 self.db_file.clone(),
                 dummy_wal,
                 self.io.clone(),
                 Arc::new(RwLock::new(DumbLruPageCache::default())),
                 buffer_pool.clone(),
+                is_empty,
             )?;
             let header = pager.db_header()?;
             let wal_path = format!("{}-wal", self.path);
