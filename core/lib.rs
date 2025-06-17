@@ -159,6 +159,7 @@ impl Database {
         } else {
             None
         };
+        let wal_exists = maybe_shared_wal.is_some();
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new()));
@@ -173,7 +174,7 @@ impl Database {
             open_flags: flags,
         };
         let db = Arc::new(db);
-        if db_size > 0 {
+        if db_size > 0 || wal_exists {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
