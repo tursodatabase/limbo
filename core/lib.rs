@@ -62,9 +62,10 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use storage::btree::{btree_init_page, BTreePageInner};
+use storage::btree::btree_init_page;
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
+use storage::page_cache::DumbLruPageCache;
 pub use storage::pager::PagerCacheflushStatus;
 pub use storage::{
     buffer_pool::BufferPool,
@@ -72,11 +73,6 @@ pub use storage::{
     pager::PageRef,
     pager::{Page, Pager},
     wal::{CheckpointMode, CheckpointResult, CheckpointStatus, Wal, WalFile, WalFileShared},
-};
-use storage::{
-    page_cache::DumbLruPageCache,
-    pager::allocate_page,
-    sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE},
 };
 use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
@@ -129,7 +125,6 @@ impl Database {
         enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let file = io.open_file(path, flags, true)?;
-        maybe_init_database_file(&file, &io)?;
         let db_file = Arc::new(DatabaseFile::new(file));
         Self::open_with_flags(io, path, db_file, flags, enable_mvcc)
     }
@@ -154,6 +149,7 @@ impl Database {
     ) -> Result<Arc<Database>> {
         let wal_path = format!("{}-wal", path);
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
+        let db_size = db_file.size()?;
 
         let mv_store = if enable_mvcc {
             Some(Rc::new(MvStore::new(
@@ -177,7 +173,7 @@ impl Database {
             open_flags: flags,
         };
         let db = Arc::new(db);
-        {
+        if db_size > 0 {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
@@ -299,59 +295,6 @@ impl Database {
         let db = Self::open_file(io.clone(), path, false)?;
         Ok((io, db))
     }
-}
-
-pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Result<()> {
-    if file.size()? == 0 {
-        // init db
-        let db_header = DatabaseHeader::default();
-        let page1 = allocate_page(
-            1,
-            &Rc::new(BufferPool::new(Some(db_header.get_page_size() as usize))),
-            DATABASE_HEADER_SIZE,
-        );
-        let page1 = Arc::new(BTreePageInner {
-            page: RefCell::new(page1),
-        });
-        {
-            // Create the sqlite_schema table, for this we just need to create the btree page
-            // for the first page of the database which is basically like any other btree page
-            // but with a 100 byte offset, so we just init the page so that sqlite understands
-            // this is a correct page.
-            btree_init_page(
-                &page1,
-                storage::sqlite3_ondisk::PageType::TableLeaf,
-                DATABASE_HEADER_SIZE,
-                (db_header.get_page_size() - db_header.reserved_space as u32) as u16,
-            );
-
-            let page1 = page1.get();
-            let contents = page1.get().contents.as_mut().unwrap();
-            contents.write_database_header(&db_header);
-            // write the first page to disk synchronously
-            let flag_complete = Rc::new(RefCell::new(false));
-            {
-                let flag_complete = flag_complete.clone();
-                let completion = Completion::Write(WriteCompletion::new(Box::new(move |_| {
-                    *flag_complete.borrow_mut() = true;
-                })));
-                #[allow(clippy::arc_with_non_send_sync)]
-                file.pwrite(0, contents.buffer.clone(), Arc::new(completion))?;
-            }
-            let mut limit = 100;
-            loop {
-                io.run_once()?;
-                if *flag_complete.borrow() {
-                    break;
-                }
-                limit -= 1;
-                if limit == 0 {
-                    panic!("Database file couldn't be initialized, io loop run for {} iterations and write didn't finish", limit);
-                }
-            }
-        }
-    };
-    Ok(())
 }
 
 pub struct Connection {

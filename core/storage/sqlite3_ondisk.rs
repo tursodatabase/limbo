@@ -287,6 +287,60 @@ impl DatabaseHeader {
     }
 }
 
+pub fn begin_read_database_header(
+    db_file: Arc<dyn DatabaseStorage>,
+) -> Result<Arc<SpinLock<DatabaseHeader>>> {
+    let drop_fn = Rc::new(|_buf| {});
+    #[allow(clippy::arc_with_non_send_sync)]
+    let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
+    let result = Arc::new(SpinLock::new(DatabaseHeader::default()));
+    let header = result.clone();
+    let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
+        let header = header.clone();
+        finish_read_database_header(buf, header).unwrap();
+    });
+    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    #[allow(clippy::arc_with_non_send_sync)]
+    db_file.read_page(DATABASE_HEADER_PAGE_ID, Arc::new(c))?;
+    Ok(result)
+}
+
+fn finish_read_database_header(
+    buf: Arc<RefCell<Buffer>>,
+    header: Arc<SpinLock<DatabaseHeader>>,
+) -> Result<()> {
+    let buf = buf.borrow();
+    let buf = buf.as_slice();
+    let mut header = header.lock();
+    header.magic.copy_from_slice(&buf[0..16]);
+    header.page_size = u16::from_be_bytes([buf[16], buf[17]]);
+    header.write_version = buf[18];
+    header.read_version = buf[19];
+    header.reserved_space = buf[20];
+    header.max_embed_frac = buf[21];
+    header.min_embed_frac = buf[22];
+    header.min_leaf_frac = buf[23];
+    header.change_counter = u32::from_be_bytes([buf[24], buf[25], buf[26], buf[27]]);
+    header.database_size = u32::from_be_bytes([buf[28], buf[29], buf[30], buf[31]]);
+    header.freelist_trunk_page = u32::from_be_bytes([buf[32], buf[33], buf[34], buf[35]]);
+    header.freelist_pages = u32::from_be_bytes([buf[36], buf[37], buf[38], buf[39]]);
+    header.schema_cookie = u32::from_be_bytes([buf[40], buf[41], buf[42], buf[43]]);
+    header.schema_format = u32::from_be_bytes([buf[44], buf[45], buf[46], buf[47]]);
+    header.default_page_cache_size = i32::from_be_bytes([buf[48], buf[49], buf[50], buf[51]]);
+    if header.default_page_cache_size == 0 {
+        header.default_page_cache_size = DEFAULT_CACHE_SIZE;
+    }
+    header.vacuum_mode_largest_root_page = u32::from_be_bytes([buf[52], buf[53], buf[54], buf[55]]);
+    header.text_encoding = u32::from_be_bytes([buf[56], buf[57], buf[58], buf[59]]);
+    header.user_version = i32::from_be_bytes([buf[60], buf[61], buf[62], buf[63]]);
+    header.incremental_vacuum_enabled = u32::from_be_bytes([buf[64], buf[65], buf[66], buf[67]]);
+    header.application_id = u32::from_be_bytes([buf[68], buf[69], buf[70], buf[71]]);
+    header.reserved_for_expansion.copy_from_slice(&buf[72..92]);
+    header.version_valid_for = u32::from_be_bytes([buf[92], buf[93], buf[94], buf[95]]);
+    header.version_number = u32::from_be_bytes([buf[96], buf[97], buf[98], buf[99]]);
+    Ok(())
+}
+
 pub fn write_header_to_buf(buf: &mut [u8], header: &DatabaseHeader) {
     buf[0..16].copy_from_slice(&header.magic);
     buf[16..18].copy_from_slice(&header.page_size.to_be_bytes());

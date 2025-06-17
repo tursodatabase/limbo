@@ -1,5 +1,5 @@
 use js_sys::{Array, Object};
-use limbo_core::{maybe_init_database_file, Clock, Instant, OpenFlags, Result};
+use limbo_core::{Clock, Instant, OpenFlags, Result};
 use std::cell::RefCell;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -17,7 +17,6 @@ impl Database {
     pub fn new(path: &str) -> Database {
         let io: Arc<dyn limbo_core::IO> = Arc::new(PlatformIO { vfs: VFS::new() });
         let file = io.open_file(path, OpenFlags::Create, false).unwrap();
-        maybe_init_database_file(&file, &io).unwrap();
         let db_file = Arc::new(DatabaseFile::new(file));
         let db = limbo_core::Database::open(io, path, db_file, false).unwrap();
         let conn = db.connect().unwrap();

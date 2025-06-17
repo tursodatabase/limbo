@@ -51,8 +51,7 @@ use crate::{
 };
 
 use crate::{
-    info, maybe_init_database_file, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult,
-    TransactionState, IO,
+    info, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult, TransactionState, IO,
 };
 
 use super::{
@@ -5182,7 +5181,6 @@ pub fn op_open_ephemeral(
     let io = conn.pager.io.get_memory_io();
 
     let file = io.open_file("", OpenFlags::Create, true)?;
-    maybe_init_database_file(&file, &(io.clone() as Arc<dyn IO>))?;
     let db_file = Arc::new(FileMemoryStorage::new(file));
 
     let buffer_pool = Rc::new(BufferPool::new(None));

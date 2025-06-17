@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use limbo_core::types::Text;
-use limbo_core::{maybe_init_database_file, LimboError, StepResult};
+use limbo_core::{LimboError, StepResult};
 use napi::iterator::Generator;
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
 use napi_derive::napi;
@@ -66,7 +66,6 @@ impl Database {
         let file = io
             .open_file(&path, limbo_core::OpenFlags::Create, false)
             .map_err(into_napi_error)?;
-        maybe_init_database_file(&file, &io).map_err(into_napi_error)?;
         let db_file = Arc::new(DatabaseFile::new(file));
         let db = limbo_core::Database::open(io.clone(), &path, db_file, false)
             .map_err(into_napi_error)?;

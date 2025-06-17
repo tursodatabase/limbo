@@ -1,3 +1,4 @@
+use crate::fast_lock::SpinLock;
 use crate::result::LimboResult;
 use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
@@ -236,6 +237,12 @@ pub enum PagerCacheflushResult {
 }
 
 impl Pager {
+    /// Begins opening a database by reading the database header.
+    pub fn begin_open(db_file: Arc<dyn DatabaseStorage>) -> Result<Arc<SpinLock<DatabaseHeader>>> {
+        assert!(db_file.size()? > 0);
+        sqlite3_ondisk::begin_read_database_header(db_file)
+    }
+
     pub fn new(
         db_file: Arc<dyn DatabaseStorage>,
         wal: Rc<RefCell<dyn Wal>>,
@@ -243,6 +250,16 @@ impl Pager {
         page_cache: Arc<RwLock<DumbLruPageCache>>,
         buffer_pool: Rc<BufferPool>,
     ) -> Result<Self> {
+        let npages = if db_file.size().unwrap() > 0 {
+            let db_header = Pager::begin_open(db_file.clone()).unwrap();
+            // ensure db header is there
+            io.run_once().unwrap();
+            let size = db_header.lock().database_size;
+            size as usize
+        } else {
+            0
+        };
+
         Ok(Self {
             db_file,
             wal,
@@ -258,7 +275,7 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
-            npages: AtomicUsize::new(0),
+            npages: AtomicUsize::new(npages),
         })
     }
 
@@ -1382,8 +1399,9 @@ mod ptrmap_tests {
     // Helper to create a Pager for testing
     fn test_pager_setup(page_size: u32, initial_db_pages: u32) -> Pager {
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
-        let db_file_raw = io.open_file("test.db", OpenFlags::Create, true).unwrap();
-        let db_storage: Arc<dyn DatabaseStorage> = Arc::new(DatabaseFile::new(db_file_raw));
+        let db_file: Arc<dyn DatabaseStorage> = Arc::new(DatabaseFile::new(
+            io.open_file("test.db", OpenFlags::Create, true).unwrap(),
+        ));
 
         //  Initialize a minimal header in autovacuum mode
         let mut header_data = DatabaseHeader::default();
@@ -1409,7 +1427,7 @@ mod ptrmap_tests {
             buffer_pool.clone(),
         )));
 
-        let pager = Pager::new(db_storage, wal, io, page_cache, buffer_pool).unwrap();
+        let pager = Pager::new(db_file, wal, io, page_cache, buffer_pool).unwrap();
         pager.set_auto_vacuum_mode(AutoVacuumMode::Full);
 
         //  Allocate all the pages as btree root pages
