@@ -587,6 +587,10 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     fn sync(&self, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
         self.file.sync(c)
     }
+
+    fn size(&self) -> limbo_core::Result<u64> {
+        todo!()
+    }
 }
 
 #[inline]

@@ -362,6 +362,10 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     fn sync(&self, _c: Arc<limbo_core::Completion>) -> Result<()> {
         todo!()
     }
+
+    fn size(&self) -> Result<u64> {
+        todo!()
+    }
 }
 
 #[cfg(all(feature = "web", feature = "nodejs"))]
