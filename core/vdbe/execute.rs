@@ -1690,6 +1690,7 @@ pub fn op_transaction(
             conn.pager.allocate_page1()?;
         }
     }
+
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
@@ -5203,6 +5204,8 @@ pub fn op_open_ephemeral(
     } else {
         &CreateBTreeFlags::new_index()
     };
+
+    pager.begin_write_tx()?;
 
     // FIXME: handle page cache is full
     let root_page = return_if_io!(pager.btree_create(flag));
