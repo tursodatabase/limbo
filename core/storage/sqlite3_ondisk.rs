@@ -247,7 +247,7 @@ impl Default for DatabaseHeader {
             min_embed_frac: 32,
             min_leaf_frac: 32,
             change_counter: 1,
-            database_size: 1,
+            database_size: 0,
             freelist_trunk_page: 0,
             freelist_pages: 0,
             schema_cookie: 0,
