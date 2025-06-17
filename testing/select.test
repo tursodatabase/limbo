@@ -404,6 +404,30 @@ do_execsql_test_on_specific_db {:memory:} select-union-intersect {
   select * from t UNION select * from u INTERSECT select * from v;
 } {x|x}
 
+do_execsql_test_on_specific_db {:memory:} select-union-all-intersect {
+  CREATE TABLE t(x TEXT, y TEXT);
+  CREATE TABLE u(x TEXT, y TEXT);
+  CREATE TABLE v(x TEXT, y TEXT);
+  INSERT INTO t VALUES('x','x'),('y','y');
+  INSERT INTO u VALUES('x','x'),('z','y');
+  INSERT INTO v VALUES('x','x'),('z','z');
+
+  select * from t UNION ALL select * from u INTERSECT select * from v;
+} {x|x}
+
+do_execsql_test_on_specific_db {:memory:} select-intersect-union-all {
+  CREATE TABLE t(x TEXT, y TEXT);
+  CREATE TABLE u(x TEXT, y TEXT);
+  CREATE TABLE v(x TEXT, y TEXT);
+  INSERT INTO t VALUES('x','x'),('y','y');
+  INSERT INTO u VALUES('x','x'),('z','y');
+  INSERT INTO v VALUES('x','x'),('z','z');
+
+  select * from t INTERSECT select * from u UNION ALL select * from v;
+} {x|x
+x|x
+z|z}
+
 do_execsql_test_on_specific_db {:memory:} select-intersect-with-limit {
   CREATE TABLE t(x TEXT, y TEXT);
   CREATE TABLE u(x TEXT, y TEXT);

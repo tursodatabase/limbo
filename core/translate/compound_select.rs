@@ -158,7 +158,7 @@ fn emit_compound_select(
                             crate::bail_parse_error!("UNION not supported without indexes");
                         } else {
                             new_dedupe_index = true;
-                            create_union_dedupe_index(program, &right_most)
+                            create_dedupe_index(program, &right_most)
                         }
                     }
                 };
@@ -204,12 +204,10 @@ fn emit_compound_select(
             }
             CompoundOperator::Intersect => {
                 let mut target_cursor_id = None;
-                match right_most.query_destination {
-                    QueryDestination::EphemeralIndex { cursor_id, .. } => {
-                        target_cursor_id = Some(cursor_id);
-                    }
-                    QueryDestination::ResultRows => {}
-                    QueryDestination::CoroutineYield { .. } => {}
+                if let QueryDestination::EphemeralIndex { cursor_id, .. } =
+                    right_most.query_destination
+                {
+                    target_cursor_id = Some(cursor_id);
                 }
 
                 let (left_cursor_id, left_index) = create_dedupe_index(program, &right_most);
@@ -247,6 +245,7 @@ fn emit_compound_select(
                     right_cursor_id,
                     target_cursor_id,
                     limit_ctx,
+                    yield_reg,
                 );
             }
             _ => {
@@ -364,6 +363,7 @@ fn read_intersect_rows(
     right_cursor_id: usize,
     target_cursor: Option<usize>,
     limit_ctx: Option<LimitCtx>,
+    yield_reg: Option<usize>,
 ) {
     let label_close = program.allocate_label();
     let label_loop_start = program.allocate_label();
@@ -386,7 +386,11 @@ fn read_intersect_rows(
         num_regs: 0,
     });
     let column_count = index.columns.len();
-    let cols_start_reg = program.alloc_registers(column_count);
+    let cols_start_reg = if let Some(yield_reg) = yield_reg {
+        yield_reg + 1
+    } else {
+        program.alloc_registers(column_count)
+    };
     for i in 0..column_count {
         program.emit_insn(Insn::Column {
             cursor_id: left_cursor_id,
@@ -409,6 +413,11 @@ fn read_intersect_rows(
             unpacked_count: Some(column_count as u16),
             flags: Default::default(),
         });
+    } else if let Some(yield_reg) = yield_reg {
+        program.emit_insn(Insn::Yield {
+            yield_reg,
+            end_offset: BranchOffset::Offset(0),
+        })
     } else {
         program.emit_insn(Insn::ResultRow {
             start_reg: cols_start_reg,

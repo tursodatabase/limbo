@@ -66,10 +66,6 @@ test-compat:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/all.test
 .PHONY: test-compat
 
-test-select:
-	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/select.test
-.PHONY: test-select
-
 test-vector:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/vector.test
 .PHONY: test-vector
