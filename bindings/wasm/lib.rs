@@ -358,12 +358,12 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         Ok(())
     }
 
-    fn sync(&self, _c: Arc<limbo_core::Completion>) -> Result<()> {
-        todo!()
+    fn sync(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
+        self.file.sync(c)
     }
 
     fn size(&self) -> Result<u64> {
-        todo!()
+        self.file.size()
     }
 }
 
