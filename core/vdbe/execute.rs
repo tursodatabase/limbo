@@ -32,6 +32,7 @@ use crate::{
     schema::{affinity, Affinity},
     storage::btree::{BTreeCursor, BTreeKey},
 };
+use std::sync::atomic::Ordering;
 
 use crate::{
     storage::wal::CheckpointResult,
@@ -1679,18 +1680,25 @@ pub fn op_transaction(
     let Insn::Transaction { write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let connection = program.connection.clone();
-    if *write && connection._db.open_flags.contains(OpenFlags::ReadOnly) {
-        return Err(LimboError::ReadOnly);
+    let conn = program.connection.clone();
+    if *write {
+        if conn._db.open_flags.contains(OpenFlags::ReadOnly) {
+            return Err(LimboError::ReadOnly);
+        }
+
+        // We allocate the first page lazily in the *first* write transaction
+        if conn.pager.npages.load(Ordering::SeqCst) == 0 {
+            conn.pager.allocate_page1()?;
+        }
     }
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
-            connection.mv_transactions.borrow_mut().push(tx_id);
+            conn.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
         }
     } else {
-        let current_state = connection.transaction_state.get();
+        let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
             (TransactionState::Write, false) => (TransactionState::Write, false),
@@ -1713,7 +1721,7 @@ pub fn op_transaction(
             }
         }
         if updated {
-            connection.transaction_state.replace(new_transaction_state);
+            conn.transaction_state.replace(new_transaction_state);
         }
     }
     state.pc += 1;
