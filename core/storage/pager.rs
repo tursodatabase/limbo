@@ -17,8 +17,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::{trace, Level};
 
-use super::btree::BTreePage;
+use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
+use super::sqlite3_ondisk::DATABASE_HEADER_SIZE;
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 #[cfg(not(feature = "omit_autovacuum"))]
@@ -212,6 +213,8 @@ pub struct Pager {
     checkpoint_inflight: Rc<RefCell<usize>>,
     syncing: Rc<RefCell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
+    /// Number of pages in the database file.
+    pub npages: AtomicUsize,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -255,6 +258,7 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
+            npages: AtomicUsize::new(0),
         })
     }
 
@@ -263,6 +267,10 @@ impl Pager {
     }
 
     pub fn db_header(&self) -> Result<DatabaseHeader> {
+        if self.npages.load(Ordering::SeqCst) == 0 {
+            return Ok(DatabaseHeader::default());
+        }
+
         // read page 1
         let page = self.read_page(1)?;
         let mut header = DatabaseHeader::default();
@@ -983,20 +991,34 @@ impl Pager {
     pub fn allocate_page1(&self) -> Result<PageRef> {
         let mut default_header = DatabaseHeader::default();
         default_header.database_size = 1;
+        self.npages.fetch_add(1, Ordering::SeqCst);
         let page = allocate_page(1, &self.buffer_pool, 0);
-        page.set_dirty();
-        self.add_dirty(page.get().id);
-        page.get()
-            .contents
-            .as_mut()
-            .unwrap()
-            .write_database_header(&default_header);
-        let page_key = PageCacheKey::new(page.get().id);
+
+        let page1 = Arc::new(BTreePageInner {
+            page: RefCell::new(page),
+        });
+        // Create the sqlite_schema table, for this we just need to create the btree page
+        // for the first page of the database which is basically like any other btree page
+        // but with a 100 byte offset, so we just init the page so that sqlite understands
+        // this is a correct page.
+        btree_init_page(
+            &page1,
+            PageType::TableLeaf,
+            DATABASE_HEADER_SIZE,
+            (default_header.get_page_size() - default_header.reserved_space as u32) as u16,
+        );
+
+        let page1 = page1.get();
+        let contents = page1.get().contents.as_mut().unwrap();
+        contents.write_database_header(&default_header);
+        page1.set_dirty();
+        self.add_dirty(page1.get().id);
+        let page_key = PageCacheKey::new(page1.get().id);
         let mut cache = self.page_cache.write();
-        cache.insert(page_key, page.clone()).map_err(|e| {
+        cache.insert(page_key, page1.clone()).map_err(|e| {
             LimboError::InternalError(format!("Failed to insert page 1 into cache: {:?}", e))
         })?;
-        Ok(page)
+        Ok(page1)
     }
 
     /*
@@ -1008,6 +1030,7 @@ impl Pager {
     pub fn allocate_page(&self) -> Result<PageRef> {
         let mut header = self.db_header()?;
         header.database_size += 1;
+        self.npages.fetch_add(1, Ordering::SeqCst);
 
         tracing::debug!("allocate_page(database_size={})", header.database_size);
 
@@ -1034,6 +1057,7 @@ impl Pager {
                         ))
                     }
                 }
+                // why do we increment here?
                 header.database_size += 1;
             }
         }
