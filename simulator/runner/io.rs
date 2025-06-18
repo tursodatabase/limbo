@@ -17,13 +17,14 @@ pub(crate) struct SimulatorIO {
     pub(crate) nr_run_once_faults: Cell<usize>,
     pub(crate) page_size: usize,
     seed: u64,
+    latency_probability: usize,
 }
 
 unsafe impl Send for SimulatorIO {}
 unsafe impl Sync for SimulatorIO {}
 
 impl SimulatorIO {
-    pub(crate) fn new(seed: u64, page_size: usize) -> Result<Self> {
+    pub(crate) fn new(seed: u64, page_size: usize, latency_probability: usize) -> Result<Self> {
         let inner = Box::new(PlatformIO::new()?);
         let fault = Cell::new(false);
         let files = RefCell::new(Vec::new());
@@ -37,6 +38,7 @@ impl SimulatorIO {
             nr_run_once_faults,
             page_size,
             seed,
+            latency_probability,
         })
     }
 
@@ -82,6 +84,7 @@ impl IO for SimulatorIO {
             nr_sync_calls: Cell::new(0),
             page_size: self.page_size,
             rng: RefCell::new(ChaCha8Rng::seed_from_u64(self.seed)),
+            latency_probability: self.latency_probability,
         });
         self.files.borrow_mut().push(file.clone());
         Ok(file)

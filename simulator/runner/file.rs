@@ -6,6 +6,7 @@ use std::{
 use limbo_core::{File, Result};
 use rand::Rng as _;
 use rand_chacha::ChaCha8Rng;
+use tracing::{instrument, Level};
 pub(crate) struct SimulatorFile {
     pub(crate) inner: Arc<dyn File>,
     pub(crate) fault: Cell<bool>,
@@ -28,6 +29,8 @@ pub(crate) struct SimulatorFile {
     pub(crate) page_size: usize,
 
     pub(crate) rng: RefCell<ChaCha8Rng>,
+
+    pub latency_probability: usize,
 }
 
 unsafe impl Send for SimulatorFile {}
@@ -67,12 +70,13 @@ impl SimulatorFile {
         table
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     fn generate_latency(&self) {
         let mut rng = self.rng.borrow_mut();
-        // 5% chance to introduce some latency
-        if rng.gen_bool(0.05) {
+        // Chance to introduce some latency
+        if rng.gen_bool(self.latency_probability as f64 / 100.0) {
             let latency = std::time::Duration::from_millis(rng.gen_range(20..50));
-            tracing::trace!(?latency, "latency");
+            tracing::trace!(?latency);
             std::thread::sleep(latency);
         }
     }
@@ -85,6 +89,7 @@ impl File for SimulatorFile {
                 "Injected fault".into(),
             ));
         }
+        self.generate_latency();
         self.inner.lock_file(exclusive)
     }
 
