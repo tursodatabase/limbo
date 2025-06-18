@@ -892,11 +892,11 @@ impl Pager {
                 attempts += 1;
             }
         }
-        self.wal_checkpoint();
+        self.wal_checkpoint()?;
         Ok(())
     }
 
-    pub fn wal_checkpoint(&self) -> CheckpointResult {
+    pub fn wal_checkpoint(&self) -> Result<CheckpointResult> {
         let checkpoint_result: CheckpointResult;
         loop {
             match self.wal.borrow_mut().checkpoint(
@@ -915,11 +915,10 @@ impl Pager {
             }
         }
         // TODO: only clear cache of things that are really invalidated
-        self.page_cache
-            .write()
-            .clear()
-            .expect("Failed to clear page cache");
-        checkpoint_result
+        self.page_cache.write().clear().map_err(|e| {
+            LimboError::InternalError(format!("Failed to clear page cache: {:?}", e))
+        })?;
+        Ok(checkpoint_result)
     }
 
     // Providing a page is optional, if provided it will be used to avoid reading the page from disk.

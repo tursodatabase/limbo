@@ -539,8 +539,7 @@ impl Connection {
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
-        let checkpoint_result = self.pager.wal_checkpoint();
-        Ok(checkpoint_result)
+        self.pager.wal_checkpoint()
     }
 
     /// Close a connection and checkpoint.
