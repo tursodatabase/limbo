@@ -939,7 +939,6 @@ impl Pager {
     }
 
     pub fn allocate_page1(&self) -> Result<PageRef> {
-        println!("Allocating first page");
         let mut default_header = DatabaseHeader::default();
         default_header.database_size = 1;
         self.is_empty.store(false, Ordering::SeqCst);
