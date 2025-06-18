@@ -275,6 +275,8 @@ impl Pager {
 
         // read page 1
         let page = self.read_page(1)?;
+        // TODO: let's not create a new DatabaseHeader struct every time we read the header
+        // instead let's have accessor methods for reading and writing the header fields directly
         let mut header = DatabaseHeader::default();
         while !page.is_loaded() || page.is_locked() {
             // FIXME: LETS STOP DOING THESE SYNCHRONOUS IO HACKS
