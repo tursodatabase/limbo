@@ -82,7 +82,7 @@ pub const MIN_PAGE_SIZE: u32 = 512;
 const MAX_PAGE_SIZE: u32 = 65536;
 
 /// The default page size in bytes.
-const DEFAULT_PAGE_SIZE: u16 = 4096;
+pub const DEFAULT_PAGE_SIZE: u16 = 4096;
 
 pub const DATABASE_HEADER_PAGE_ID: usize = 1;
 

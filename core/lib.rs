@@ -34,7 +34,7 @@ mod numeric;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use crate::storage::wal::DummyWAL;
+use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
 use crate::vtab::VirtualTable;
 use core::str;
@@ -62,7 +62,6 @@ use std::{
     rc::Rc,
     sync::{atomic::Ordering, Arc},
 };
-use storage::btree::btree_init_page;
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
@@ -215,10 +214,9 @@ impl Database {
                 is_empty,
             )?);
 
-            let header = pager.db_header()?;
-            pager
-                .buffer_pool
-                .set_page_size(header.get_page_size() as usize);
+            let page_size = header_accessor::get_page_size(&pager)?;
+            let default_cache_size = header_accessor::get_default_page_cache_size(&pager)?;
+            pager.buffer_pool.set_page_size(page_size as usize);
             let conn = Arc::new(Connection {
                 _db: self.clone(),
                 pager: pager.clone(),
@@ -231,7 +229,7 @@ impl Database {
                 syms: RefCell::new(SymbolTable::new()),
                 total_changes: Cell::new(0),
                 _shared_cache: false,
-                cache_size: Cell::new(header.default_page_cache_size as i32),
+                cache_size: Cell::new(default_cache_size),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -251,10 +249,14 @@ impl Database {
             buffer_pool.clone(),
             is_empty,
         )?;
-        let header = pager.db_header()?;
+        let page_size = header_accessor::get_page_size(&pager)
+            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as u32;
+        let default_cache_size = header_accessor::get_default_page_cache_size(&pager)
+            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE as i32);
+
         let wal_path = format!("{}-wal", self.path);
         let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
-        let real_shared_wal = WalFileShared::new_shared(header.get_page_size(), &self.io, file)?;
+        let real_shared_wal = WalFileShared::new_shared(page_size, &self.io, file)?;
         // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
         // can open the existing WAL.
         *self.maybe_shared_wal.write() = Some(real_shared_wal.clone());
@@ -276,7 +278,7 @@ impl Database {
             total_changes: Cell::new(0),
             syms: RefCell::new(SymbolTable::new()),
             _shared_cache: false,
-            cache_size: Cell::new(header.default_page_cache_size as i32),
+            cache_size: Cell::new(default_cache_size),
         });
 
         if let Err(e) = conn.register_builtins() {

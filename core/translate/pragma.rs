@@ -13,11 +13,13 @@ use crate::storage::wal::CheckpointMode;
 use crate::util::{normalize_ident, parse_signed_number};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::{bail_parse_error, LimboError, Pager, Value};
+use crate::{bail_parse_error, storage, LimboError, Value};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
 use super::integrity_check::translate_integrity_check;
+use crate::storage::header_accessor;
+use crate::storage::pager::Pager;
 
 fn list_pragmas(program: &mut ProgramBuilder) {
     for x in PragmaName::iter() {
@@ -339,7 +341,11 @@ fn query_pragma(
             program.emit_result_row(register, 1);
         }
         PragmaName::PageSize => {
-            program.emit_int(pager.db_header()?.get_page_size().into(), register);
+            program.emit_int(
+                header_accessor::get_page_size(&pager)
+                    .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as i64,
+                register,
+            );
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
         }
@@ -372,10 +378,8 @@ fn update_auto_vacuum_mode(
     largest_root_page_number: u32,
     pager: Rc<Pager>,
 ) -> crate::Result<()> {
-    let mut header_guard = pager.db_header()?;
-    header_guard.vacuum_mode_largest_root_page = largest_root_page_number;
+    header_accessor::set_vacuum_mode_largest_root_page(&pager, largest_root_page_number)?;
     pager.set_auto_vacuum_mode(auto_vacuum_mode);
-    pager.write_database_header(&header_guard)?;
     Ok(())
 }
 
@@ -387,7 +391,8 @@ fn update_cache_size(
     let mut cache_size_unformatted: i64 = value;
     let mut cache_size = if cache_size_unformatted < 0 {
         let kb = cache_size_unformatted.abs() * 1024;
-        let page_size = pager.db_header()?.get_page_size();
+        let page_size = header_accessor::get_page_size(&pager)
+            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as i64;
         kb / page_size as i64
     } else {
         value
