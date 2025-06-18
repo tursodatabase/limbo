@@ -1684,11 +1684,11 @@ pub fn op_transaction(
         if conn._db.open_flags.contains(OpenFlags::ReadOnly) {
             return Err(LimboError::ReadOnly);
         }
+    }
 
-        // We allocate the first page lazily in the *first* write transaction
-        if conn.pager.is_empty.load(Ordering::SeqCst) {
-            conn.pager.allocate_page1()?;
-        }
+    // We allocate the first page lazily in the first transaction
+    if conn.pager.is_empty.load(Ordering::SeqCst) {
+        conn.pager.allocate_page1()?;
     }
 
     if let Some(mv_store) = &mv_store {

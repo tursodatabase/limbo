@@ -60,7 +60,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
 };
 use storage::btree::btree_init_page;
 #[cfg(feature = "fs")]
@@ -159,7 +159,9 @@ impl Database {
         } else {
             None
         };
-        let wal_exists = maybe_shared_wal.is_some();
+        let wal_has_frames = maybe_shared_wal.as_ref().map_or(false, |wal| {
+            unsafe { &*wal.get() }.max_frame.load(Ordering::SeqCst) > 0
+        });
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new()));
@@ -174,7 +176,7 @@ impl Database {
             open_flags: flags,
         };
         let db = Arc::new(db);
-        if db_size > 0 || wal_exists {
+        if db_size > 0 || wal_has_frames {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
