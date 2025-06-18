@@ -602,12 +602,16 @@ impl Pager {
 
     #[inline(always)]
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
+        // We allocate the first page lazily in the first transaction
+        if self.is_empty.load(Ordering::SeqCst) {
+            self.allocate_page1()?;
+        }
         self.wal.borrow_mut().begin_read_tx()
     }
 
     #[inline(always)]
     pub fn begin_write_tx(&self) -> Result<LimboResult> {
-        // We allocate the first page lazily in the *first* write transaction
+        // We allocate the first page lazily in the first transaction
         if self.is_empty.load(Ordering::SeqCst) {
             self.allocate_page1()?;
         }
