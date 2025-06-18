@@ -104,7 +104,7 @@ pub struct Database {
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
-    maybe_shared_wal: Option<Arc<UnsafeCell<WalFileShared>>>,
+    maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
     open_flags: OpenFlags,
 }
 
@@ -168,7 +168,7 @@ impl Database {
             path: path.to_string(),
             schema: schema.clone(),
             _shared_page_cache: shared_page_cache.clone(),
-            maybe_shared_wal,
+            maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
             io: io.clone(),
             open_flags: flags,
@@ -196,7 +196,8 @@ impl Database {
     pub fn connect(self: &Arc<Database>) -> Result<Arc<Connection>> {
         let buffer_pool = Rc::new(BufferPool::new(None));
 
-        let conn = if let Some(shared_wal) = self.maybe_shared_wal.clone() {
+        // Open existing WAL file if present
+        if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {
             let is_empty = false;
             let wal = Rc::new(RefCell::new(WalFile::new(
                 self.io.clone(),
@@ -230,45 +231,51 @@ impl Database {
                 _shared_cache: false,
                 cache_size: Cell::new(header.default_page_cache_size as i32),
             });
-            conn
-        } else {
-            let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
-            let is_empty = self.db_file.size()? == 0;
-            let mut pager = Pager::new(
-                self.db_file.clone(),
-                dummy_wal,
-                self.io.clone(),
-                Arc::new(RwLock::new(DumbLruPageCache::default())),
-                buffer_pool.clone(),
-                is_empty,
-            )?;
-            let header = pager.db_header()?;
-            let wal_path = format!("{}-wal", self.path);
-            let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
-            let real_shared_wal =
-                WalFileShared::new_shared(header.get_page_size(), &self.io, file)?;
-            let wal = Rc::new(RefCell::new(WalFile::new(
-                self.io.clone(),
-                real_shared_wal,
-                buffer_pool,
-            )));
-            pager.set_wal(wal);
-            let conn = Arc::new(Connection {
-                _db: self.clone(),
-                pager: Rc::new(pager),
-                schema: self.schema.clone(),
-                auto_commit: Cell::new(true),
-                mv_transactions: RefCell::new(Vec::new()),
-                transaction_state: Cell::new(TransactionState::None),
-                last_insert_rowid: Cell::new(0),
-                last_change: Cell::new(0),
-                total_changes: Cell::new(0),
-                syms: RefCell::new(SymbolTable::new()),
-                _shared_cache: false,
-                cache_size: Cell::new(header.default_page_cache_size as i32),
-            });
-            conn
+            if let Err(e) = conn.register_builtins() {
+                return Err(LimboError::ExtensionError(e));
+            }
+            return Ok(conn);
         };
+
+        // No existing WAL; create one.
+        // TODO: currently Pager needs to be instantiated with some implementation of trait Wal, so here's a workaround.
+        let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
+        let is_empty = self.db_file.size()? == 0;
+        let mut pager = Pager::new(
+            self.db_file.clone(),
+            dummy_wal,
+            self.io.clone(),
+            Arc::new(RwLock::new(DumbLruPageCache::default())),
+            buffer_pool.clone(),
+            is_empty,
+        )?;
+        let header = pager.db_header()?;
+        let wal_path = format!("{}-wal", self.path);
+        let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
+        let real_shared_wal = WalFileShared::new_shared(header.get_page_size(), &self.io, file)?;
+        // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
+        // can open the existing WAL.
+        *self.maybe_shared_wal.write() = Some(real_shared_wal.clone());
+        let wal = Rc::new(RefCell::new(WalFile::new(
+            self.io.clone(),
+            real_shared_wal,
+            buffer_pool,
+        )));
+        pager.set_wal(wal);
+        let conn = Arc::new(Connection {
+            _db: self.clone(),
+            pager: Rc::new(pager),
+            schema: self.schema.clone(),
+            auto_commit: Cell::new(true),
+            mv_transactions: RefCell::new(Vec::new()),
+            transaction_state: Cell::new(TransactionState::None),
+            last_insert_rowid: Cell::new(0),
+            last_change: Cell::new(0),
+            total_changes: Cell::new(0),
+            syms: RefCell::new(SymbolTable::new()),
+            _shared_cache: false,
+            cache_size: Cell::new(header.default_page_cache_size as i32),
+        });
 
         if let Err(e) = conn.register_builtins() {
             return Err(LimboError::ExtensionError(e));
