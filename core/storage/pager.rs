@@ -237,12 +237,6 @@ pub enum PagerCacheflushResult {
 }
 
 impl Pager {
-    /// Begins opening a database by reading the database header.
-    pub fn begin_open(db_file: Arc<dyn DatabaseStorage>) -> Result<Arc<SpinLock<DatabaseHeader>>> {
-        assert!(db_file.size()? > 0);
-        sqlite3_ondisk::begin_read_database_header(db_file)
-    }
-
     pub fn new(
         db_file: Arc<dyn DatabaseStorage>,
         wal: Rc<RefCell<dyn Wal>>,
