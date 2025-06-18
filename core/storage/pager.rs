@@ -13,7 +13,7 @@ use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{trace, Level};
 
 use super::btree::{btree_init_page, BTreePage};
@@ -214,6 +214,8 @@ pub struct Pager {
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
     /// Is the db empty? This is signified by 0-sized database and nonexistent WAL.
     pub is_empty: AtomicBool,
+    /// Mutex for synchronizing database initialization to prevent race conditions
+    init_lock: Mutex<()>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -259,6 +261,7 @@ impl Pager {
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
             is_empty: AtomicBool::new(is_empty),
+            init_lock: Mutex::new(()),
         })
     }
 
@@ -551,7 +554,9 @@ impl Pager {
     #[inline(always)]
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
         // We allocate the first page lazily in the first transaction
-        if self.is_empty.load(Ordering::SeqCst) {
+        // Use a loop similar to SQLite's btreeBeginTrans to handle concurrent initialization
+        while self.is_empty.load(Ordering::SeqCst) {
+            let _lock = self.init_lock.lock().unwrap();
             self.allocate_page1()?;
         }
         self.wal.borrow_mut().begin_read_tx()
@@ -559,8 +564,8 @@ impl Pager {
 
     #[inline(always)]
     pub fn begin_write_tx(&self) -> Result<LimboResult> {
-        // We allocate the first page lazily in the first transaction
-        if self.is_empty.load(Ordering::SeqCst) {
+        while self.is_empty.load(Ordering::SeqCst) {
+            let _lock = self.init_lock.lock().unwrap();
             self.allocate_page1()?;
         }
         self.wal.borrow_mut().begin_write_tx()
@@ -932,6 +937,7 @@ impl Pager {
     }
 
     pub fn allocate_page1(&self) -> Result<PageRef> {
+        println!("Allocating first page");
         let mut default_header = DatabaseHeader::default();
         default_header.database_size = 1;
         self.is_empty.store(false, Ordering::SeqCst);
@@ -974,7 +980,6 @@ impl Pager {
         let old_db_size = header_accessor::get_database_size(self)?;
         #[allow(unused_mut)]
         let mut new_db_size = old_db_size + 1;
-        self.is_empty.store(false, Ordering::SeqCst);
 
         tracing::debug!("allocate_page(database_size={})", new_db_size);
 
