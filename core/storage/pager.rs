@@ -1,4 +1,3 @@
-use crate::fast_lock::SpinLock;
 use crate::result::LimboResult;
 use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
