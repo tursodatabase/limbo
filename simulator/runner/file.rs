@@ -1,24 +1,27 @@
-use std::{cell::RefCell, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    sync::Arc,
+};
 
 use limbo_core::{File, Result};
 pub(crate) struct SimulatorFile {
     pub(crate) inner: Arc<dyn File>,
-    pub(crate) fault: RefCell<bool>,
+    pub(crate) fault: Cell<bool>,
 
     /// Number of `pread` function calls (both success and failures).
-    pub(crate) nr_pread_calls: RefCell<usize>,
+    pub(crate) nr_pread_calls: Cell<usize>,
 
     /// Number of `pread` function calls with injected fault.
-    pub(crate) nr_pread_faults: RefCell<usize>,
+    pub(crate) nr_pread_faults: Cell<usize>,
 
     /// Number of `pwrite` function calls (both success and failures).
-    pub(crate) nr_pwrite_calls: RefCell<usize>,
+    pub(crate) nr_pwrite_calls: Cell<usize>,
 
     /// Number of `pwrite` function calls with injected fault.
-    pub(crate) nr_pwrite_faults: RefCell<usize>,
+    pub(crate) nr_pwrite_faults: Cell<usize>,
 
     /// Number of `sync` function calls (both success and failures).
-    pub(crate) nr_sync_calls: RefCell<usize>,
+    pub(crate) nr_sync_calls: Cell<usize>,
 
     pub(crate) page_size: usize,
 }
@@ -32,26 +35,25 @@ impl SimulatorFile {
     }
 
     pub(crate) fn stats_table(&self) -> String {
-        let sum_calls = *self.nr_pread_calls.borrow()
-            + *self.nr_pwrite_calls.borrow()
-            + *self.nr_sync_calls.borrow();
-        let sum_faults = *self.nr_pread_faults.borrow() + *self.nr_pwrite_faults.borrow();
+        let sum_calls =
+            self.nr_pread_calls.get() + self.nr_pwrite_calls.get() + self.nr_sync_calls.get();
+        let sum_faults = self.nr_pread_faults.get() + self.nr_pwrite_faults.get();
         let stats_table = [
             "op           calls   faults".to_string(),
             "--------- -------- --------".to_string(),
             format!(
                 "pread     {:8} {:8}",
-                *self.nr_pread_calls.borrow(),
-                *self.nr_pread_faults.borrow()
+                self.nr_pread_calls.get(),
+                self.nr_pread_faults.get()
             ),
             format!(
                 "pwrite    {:8} {:8}",
-                *self.nr_pwrite_calls.borrow(),
-                *self.nr_pwrite_faults.borrow()
+                self.nr_pwrite_calls.get(),
+                self.nr_pwrite_faults.get()
             ),
             format!(
                 "sync      {:8} {:8}",
-                *self.nr_sync_calls.borrow(),
+                self.nr_sync_calls.get(),
                 0 // No fault counter for sync
             ),
             "--------- -------- --------".to_string(),
@@ -64,7 +66,7 @@ impl SimulatorFile {
 
 impl File for SimulatorFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
-        if *self.fault.borrow() {
+        if self.fault.get() {
             return Err(limbo_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
@@ -73,7 +75,7 @@ impl File for SimulatorFile {
     }
 
     fn unlock_file(&self) -> Result<()> {
-        if *self.fault.borrow() {
+        if self.fault.get() {
             return Err(limbo_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
@@ -82,9 +84,9 @@ impl File for SimulatorFile {
     }
 
     fn pread(&self, pos: usize, c: Arc<limbo_core::Completion>) -> Result<()> {
-        *self.nr_pread_calls.borrow_mut() += 1;
-        if *self.fault.borrow() {
-            *self.nr_pread_faults.borrow_mut() += 1;
+        self.nr_pread_calls.set(self.nr_pread_calls.get() + 1);
+        if self.fault.get() {
+            self.nr_pread_faults.set(self.nr_pread_faults.get() + 1);
             return Err(limbo_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
@@ -98,9 +100,9 @@ impl File for SimulatorFile {
         buffer: Arc<RefCell<limbo_core::Buffer>>,
         c: Arc<limbo_core::Completion>,
     ) -> Result<()> {
-        *self.nr_pwrite_calls.borrow_mut() += 1;
-        if *self.fault.borrow() {
-            *self.nr_pwrite_faults.borrow_mut() += 1;
+        self.nr_pwrite_calls.set(self.nr_pwrite_calls.get() + 1);
+        if self.fault.get() {
+            self.nr_pwrite_faults.set(self.nr_pwrite_faults.get() + 1);
             return Err(limbo_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
@@ -109,7 +111,7 @@ impl File for SimulatorFile {
     }
 
     fn sync(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
-        *self.nr_sync_calls.borrow_mut() += 1;
+        self.nr_sync_calls.set(self.nr_sync_calls.get() + 1);
         self.inner.sync(c)
     }
 
