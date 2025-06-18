@@ -60,7 +60,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;

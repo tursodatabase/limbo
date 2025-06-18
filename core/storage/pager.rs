@@ -972,7 +972,7 @@ impl Pager {
     #[allow(clippy::readonly_write_lock)]
     pub fn allocate_page(&self) -> Result<PageRef> {
         let old_db_size = header_accessor::get_database_size(self)?;
-        #[allow(clippy::unused_mut)]
+        #[allow(unused_mut)]
         let mut new_db_size = old_db_size + 1;
         self.is_empty.store(false, Ordering::SeqCst);
 
