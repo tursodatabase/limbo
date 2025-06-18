@@ -1381,13 +1381,11 @@ mod ptrmap_tests {
 
     use super::ptrmap::*;
     use super::*;
-    use crate::fast_lock::SpinLock;
     use crate::io::{MemoryIO, OpenFlags, IO};
     use crate::storage::buffer_pool::BufferPool;
     use crate::storage::database::{DatabaseFile, DatabaseStorage};
     use crate::storage::page_cache::DumbLruPageCache;
     use crate::storage::pager::Pager;
-    use crate::storage::sqlite3_ondisk::DatabaseHeader;
     use crate::storage::sqlite3_ondisk::MIN_PAGE_SIZE;
     use crate::storage::wal::{WalFile, WalFileShared};
 
@@ -1397,12 +1395,6 @@ mod ptrmap_tests {
         let db_file: Arc<dyn DatabaseStorage> = Arc::new(DatabaseFile::new(
             io.open_file("test.db", OpenFlags::Create, true).unwrap(),
         ));
-
-        //  Initialize a minimal header in autovacuum mode
-        let mut header_data = DatabaseHeader::default();
-        header_data.update_page_size(page_size);
-        let db_header_arc = Arc::new(SpinLock::new(header_data));
-        db_header_arc.lock().vacuum_mode_largest_root_page = 1;
 
         //  Construct interfaces for the pager
         let buffer_pool = Rc::new(BufferPool::new(Some(page_size as usize)));
@@ -1423,6 +1415,10 @@ mod ptrmap_tests {
         )));
 
         let pager = Pager::new(db_file, wal, io, page_cache, buffer_pool, true).unwrap();
+        pager.allocate_page1().unwrap();
+        let mut header = pager.db_header().unwrap();
+        header.vacuum_mode_largest_root_page = 1;
+        pager.write_database_header(&header).unwrap();
         pager.set_auto_vacuum_mode(AutoVacuumMode::Full);
 
         //  Allocate all the pages as btree root pages
