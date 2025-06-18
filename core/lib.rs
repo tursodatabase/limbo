@@ -51,6 +51,7 @@ pub use io::{
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
+use std::sync::atomic::Ordering;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -175,6 +176,8 @@ impl Database {
             open_flags: flags,
         };
         let db = Arc::new(db);
+
+        // Check: https://github.com/tursodatabase/limbo/pull/1761#discussion_r2154013123
         if db_size > 0 || wal_has_frames {
             // parse schema
             let conn = db.connect()?;

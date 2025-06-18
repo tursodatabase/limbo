@@ -564,6 +564,8 @@ impl Pager {
 
     #[inline(always)]
     pub fn begin_write_tx(&self) -> Result<LimboResult> {
+        // TODO(Diego): The only possibly allocate page1 here is because OpenEphemeral needs a write transaction
+        // we should have a unique API to begin transactions, something like sqlite3BtreeBeginTrans
         while self.is_empty.load(Ordering::SeqCst) {
             let _lock = self.init_lock.lock().unwrap();
             self.allocate_page1()?;
