@@ -4,6 +4,8 @@ use std::{
 };
 
 use limbo_core::{File, Result};
+use rand::Rng as _;
+use rand_chacha::ChaCha8Rng;
 pub(crate) struct SimulatorFile {
     pub(crate) inner: Arc<dyn File>,
     pub(crate) fault: Cell<bool>,
@@ -24,6 +26,8 @@ pub(crate) struct SimulatorFile {
     pub(crate) nr_sync_calls: Cell<usize>,
 
     pub(crate) page_size: usize,
+
+    pub(crate) rng: RefCell<ChaCha8Rng>,
 }
 
 unsafe impl Send for SimulatorFile {}
@@ -62,6 +66,16 @@ impl SimulatorFile {
         let table = stats_table.join("\n");
         table
     }
+
+    fn generate_latency(&self) {
+        let mut rng = self.rng.borrow_mut();
+        // 5% chance to introduce some latency
+        if rng.gen_bool(0.05) {
+            let latency = std::time::Duration::from_millis(rng.gen_range(20..50));
+            tracing::trace!(?latency, "latency");
+            std::thread::sleep(latency);
+        }
+    }
 }
 
 impl File for SimulatorFile {
@@ -80,6 +94,7 @@ impl File for SimulatorFile {
                 "Injected fault".into(),
             ));
         }
+        self.generate_latency();
         self.inner.unlock_file()
     }
 
@@ -91,6 +106,7 @@ impl File for SimulatorFile {
                 "Injected fault".into(),
             ));
         }
+        self.generate_latency();
         self.inner.pread(pos, c)
     }
 
@@ -107,11 +123,13 @@ impl File for SimulatorFile {
                 "Injected fault".into(),
             ));
         }
+        self.generate_latency();
         self.inner.pwrite(pos, buffer, c)
     }
 
     fn sync(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
         self.nr_sync_calls.set(self.nr_sync_calls.get() + 1);
+        self.generate_latency();
         self.inner.sync(c)
     }
 

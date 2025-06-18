@@ -16,6 +16,7 @@ pub(crate) struct SimulatorIO {
     pub(crate) rng: RefCell<ChaCha8Rng>,
     pub(crate) nr_run_once_faults: Cell<usize>,
     pub(crate) page_size: usize,
+    seed: u64,
 }
 
 unsafe impl Send for SimulatorIO {}
@@ -35,6 +36,7 @@ impl SimulatorIO {
             rng,
             nr_run_once_faults,
             page_size,
+            seed,
         })
     }
 
@@ -79,6 +81,7 @@ impl IO for SimulatorIO {
             nr_pwrite_calls: Cell::new(0),
             nr_sync_calls: Cell::new(0),
             page_size: self.page_size,
+            rng: RefCell::new(ChaCha8Rng::seed_from_u64(self.seed)),
         });
         self.files.borrow_mut().push(file.clone());
         Ok(file)
