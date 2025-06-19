@@ -691,7 +691,7 @@ fn format_time_duration(duration: &chrono::Duration) -> Value {
         millis
     );
 
-    Value::build_text(&result)
+    Value::build_text(result)
 }
 
 #[cfg(test)]

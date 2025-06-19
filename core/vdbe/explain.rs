@@ -157,7 +157,7 @@ pub fn insn_to_str(
                 *start_reg_a as i32,
                 *start_reg_b as i32,
                 *count as i32,
-                Value::build_text(&format!("k({count}, {})", collation.unwrap_or_default())),
+                Value::build_text(format!("k({count}, {})", collation.unwrap_or_default())),
                 0,
                 format!(
                     "r[{}..{}]==r[{}..{}]",
@@ -229,7 +229,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]==r[{}] goto {}",
@@ -249,7 +249,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]!=r[{}] goto {}",
@@ -269,7 +269,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!("if r[{}]<r[{}] goto {}", lhs, rhs, target_pc.to_debug_int()),
             ),
@@ -284,7 +284,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]<=r[{}] goto {}",
@@ -304,7 +304,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!("if r[{}]>r[{}] goto {}", lhs, rhs, target_pc.to_debug_int()),
             ),
@@ -319,7 +319,7 @@ pub fn insn_to_str(
                 *lhs as i32,
                 *rhs as i32,
                 target_pc.to_debug_int(),
-                Value::build_text(&collation.map_or("".to_string(), |c| c.to_string())),
+                Value::build_text(collation.map_or("".to_string(), |c| c.to_string())),
                 0,
                 format!(
                     "if r[{}]>=r[{}] goto {}",
@@ -631,7 +631,7 @@ pub fn insn_to_str(
                 *err_code as i32,
                 0,
                 0,
-                Value::build_text(&description),
+                Value::build_text(description),
                 0,
                 "".to_string(),
             ),
@@ -644,7 +644,7 @@ pub fn insn_to_str(
                 *err_code as i32,
                 0,
                 *target_reg as i32,
-                Value::build_text(&description),
+                Value::build_text(description),
                 0,
                 "".to_string(),
             ),
@@ -975,7 +975,7 @@ pub fn insn_to_str(
                     *cursor_id as i32,
                     *columns as i32,
                     0,
-                    Value::build_text(&(format!("k({},{})", order.len(), to_print.join(",")))),
+                    Value::build_text(format!("k({},{})", order.len(), to_print.join(","))),
                     0,
                     format!("cursor={}", cursor_id),
                 )
@@ -1045,7 +1045,7 @@ pub fn insn_to_str(
                     } else {
                         func.func.to_string()
                     };
-                    Value::build_text(&s)
+                    Value::build_text(s)
                 },
                 0,
                 if func.arg_count == 0 {
@@ -1106,7 +1106,7 @@ pub fn insn_to_str(
                 *cursor as i32,
                 *record_reg as i32,
                 *key_reg as i32,
-                Value::build_text(&table_name),
+                Value::build_text(table_name),
                 flag.0 as u16,
                 format!("intkey=r[{}] data=r[{}]", key_reg, record_reg),
             ),
@@ -1179,7 +1179,7 @@ pub fn insn_to_str(
                     *cursor_id as i32,
                     target_pc.to_debug_int(),
                     *record_reg as i32,
-                    Value::build_text(&format!("{num_regs}")),
+                    Value::build_text(format!("{num_regs}")),
                     0,
                     key,
                 )

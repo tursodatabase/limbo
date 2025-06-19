@@ -624,7 +624,7 @@ pub fn json_quote(value: &Value) -> crate::Result<Value> {
             }
             escaped_value.push('"');
 
-            Ok(Value::build_text(&escaped_value))
+            Ok(Value::build_text(escaped_value))
         }
         // Numbers are unquoted in json
         Value::Integer(ref int) => Ok(Value::Integer(int.to_owned())),

@@ -75,7 +75,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
             }
         }
     }
-    Ok(Value::build_text(&result))
+    Ok(Value::build_text(result))
 }
 
 #[cfg(test)]

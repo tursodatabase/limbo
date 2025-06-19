@@ -4927,7 +4927,7 @@ impl BTreeCursor {
         return_if_locked!(page_ref.get());
         let page_ref = page_ref.get();
         let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
-        buf[dest_offset..dest_offset + new_payload.len()].copy_from_slice(&new_payload);
+        buf[dest_offset..dest_offset + new_payload.len()].copy_from_slice(new_payload);
 
         Ok(CursorResult::Ok(()))
     }
@@ -4945,10 +4945,7 @@ impl BTreeCursor {
     }
 
     pub fn is_write_in_progress(&self) -> bool {
-        match self.state {
-            CursorState::Write(_) => true,
-            _ => false,
-        }
+        matches!(self.state, CursorState::Write(_))
     }
 
     /// Count the number of entries in the b-tree
