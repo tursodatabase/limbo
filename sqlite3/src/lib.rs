@@ -1188,6 +1188,81 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     }
 }
 
+/// Begin a WAL frame insert transaction.
+///
+/// The `libsql_wal_insert_begin` function begins a WAL frame insert transaction
+/// for database connection `db`, which is used to insert one or more frames
+/// into the WAL file.
+///
+/// # Returns
+///
+/// - `SQLITE_OK` if the WAL frame insert transaction is successfully begun.
+/// - `SQLITE_MISUSE` if the `db` is `NULL`.
+/// - `SQLITE_ERROR` if an error occurs while beginning the WAL frame insert
+///   transaction.
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_insert_begin(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let db = db.inner.lock().unwrap();
+    match db.conn.wal_insert_begin() {
+        Ok(_) => SQLITE_OK,
+        Err(_) => SQLITE_ERROR,
+    }
+}
+
+/// End a WAL frame insert transaction.
+///
+/// The `libsql_wal_insert_end` function ends a WAL frame insert transaction
+/// started by `libsql_wal_insert_begin` for database connection `db`.
+///
+/// # Returns
+///
+/// - `SQLITE_OK` if the WAL frame insert transaction is successfully ended.
+/// - `SQLITE_MISUSE` if the `db` is `NULL`.
+/// - `SQLITE_ERROR` if an error occurs while ending the WAL frame insert
+///   transaction.
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_insert_end(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let db = db.inner.lock().unwrap();
+    match db.conn.wal_insert_end() {
+        Ok(_) => SQLITE_OK,
+        Err(_) => SQLITE_ERROR,
+    }
+}
+
+/// Insert a frame into the database WAL.
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_insert_frame(
+    db: *mut sqlite3,
+    frame_no: u32,
+    buf: *mut u8,
+    buf_len: u32,
+    is_conflict: *mut ffi::c_int,
+) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let db = db.inner.lock().unwrap();
+    let frame = unsafe { std::slice::from_raw_parts(buf as *const u8, buf_len as usize) };
+    let mut conflict = false;
+    let ret = match db.conn.wal_insert_frame(frame_no, frame, &mut conflict) {
+        Ok(_) => SQLITE_OK,
+        Err(_) => SQLITE_ERROR,
+    };
+    if !is_conflict.is_null() {
+        *is_conflict = conflict as ffi::c_int;
+    }
+    ret
+}
+
 fn sqlite3_safety_check_sick_or_ok(db: &sqlite3Inner) -> bool {
     match db.e_open_state {
         SQLITE_STATE_SICK | SQLITE_STATE_OPEN | SQLITE_STATE_BUSY => true,
