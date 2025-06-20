@@ -31,6 +31,15 @@ impl Display for Create {
                 write!(f, ",")?;
             }
             write!(f, "{} {}", column.name, column.column_type)?;
+            if column.primary {
+                write!(f, " {}", "PRIMARY KEY")?;
+            }
+            if column.unique {
+                write!(f, " {}", "UNIQUE")?;
+            }
+            if column.not_null {
+                write!(f, " {}", "NOT NULL")?;
+            }
         }
 
         write!(f, ")")
