@@ -979,6 +979,33 @@ impl ImmutableRecord {
         let last_idx = record_cursor.serial_types.len().checked_sub(1)?;
         Some(record_cursor.get_value(self, last_idx))
     }
+
+    pub fn get_value(&self, idx: usize) -> Result<RefValue> {
+        let mut cursor = RecordCursor::new();
+        cursor.get_value(self, idx)
+    }
+
+    pub fn get_value_opt(&self, idx: usize) -> Option<RefValue> {
+        if self.is_invalidated() {
+            return None;
+        }
+
+        let mut cursor = RecordCursor::new();
+
+        match cursor.ensure_parsed_upto(self, idx) {
+            Ok(()) => {
+                if idx >= cursor.serial_types.len() {
+                    return None;
+                }
+
+                match cursor.deserialize_column(self, idx) {
+                    Ok(value) => Some(value),
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
