@@ -5,7 +5,7 @@ use limbo_sqlite3_parser::ast::{
 use crate::{
     generation::{gen_random_text, pick, pick_index, Arbitrary, ArbitraryFrom},
     model::table::SimValue,
-    runner::env::SimulatorEnv,
+    runner::env::LimboSimulatorEnv,
 };
 
 impl<T> Arbitrary for Box<T>
@@ -58,8 +58,8 @@ where
 }
 
 // Freestyling generation
-impl ArbitraryFrom<&SimulatorEnv> for Expr {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv) -> Self {
+impl ArbitraryFrom<&LimboSimulatorEnv> for Expr {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &LimboSimulatorEnv) -> Self {
         let choice = rng.gen_range(0..13);
         let expr = match choice {
             0 => Expr::Between {
@@ -200,8 +200,8 @@ impl Arbitrary for CollateName {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv) -> Self {
+impl ArbitraryFrom<&LimboSimulatorEnv> for QualifiedName {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &LimboSimulatorEnv) -> Self {
         // TODO: for now just generate table name
         let table_idx = pick_index(t.tables.len(), rng);
         let table = &t.tables[table_idx];
@@ -210,8 +210,8 @@ impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl ArbitraryFrom<&LimboSimulatorEnv> for LikeOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &LimboSimulatorEnv) -> Self {
         let choice = rng.gen_range(0..4);
         match choice {
             0 => LikeOperator::Glob,
@@ -224,8 +224,8 @@ impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
 }
 
 // Current implementation does not take into account the columns affinity nor if table is Strict
-impl ArbitraryFrom<&SimulatorEnv> for ast::Literal {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl ArbitraryFrom<&LimboSimulatorEnv> for ast::Literal {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &LimboSimulatorEnv) -> Self {
         loop {
             let choice = rng.gen_range(0..5);
             let lit = match choice {
@@ -262,8 +262,8 @@ impl ArbitraryFrom<&Vec<&SimValue>> for ast::Expr {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for UnaryOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl ArbitraryFrom<&LimboSimulatorEnv> for UnaryOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &LimboSimulatorEnv) -> Self {
         let choice = rng.gen_range(0..4);
         match choice {
             0 => Self::BitwiseNot,
