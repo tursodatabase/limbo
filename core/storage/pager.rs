@@ -10,10 +10,13 @@ use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
 use crate::types::CursorResult;
 use crate::Completion;
 use crate::{Buffer, LimboError, Result};
+use bitflags::bitflags;
+#[cfg(test)]
 use core::fmt;
 use parking_lot::RwLock;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashSet;
+#[cfg(test)]
 use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,6 +39,20 @@ pub struct PageInner {
 #[derive(Debug)]
 pub struct Page {
     pub inner: UnsafeCell<PageInner>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct SpillFlag(u8);
+
+bitflags! {
+    impl SpillFlag: u8 {
+        /// Never spill cache. Set via pragma
+        const OFF = 0b01;
+        /// Current rolling back, so do not spill
+        const ROLLBACK = 0b10;
+        /// Spill is ok, but do not sync
+        const NO_SYNC = 0b11;
+    }
 }
 
 // Concurrency control of pages will be handled by the pager, we won't wrap Page with RwLock
@@ -278,6 +295,7 @@ pub struct Pager {
     checkpoint_inflight: Rc<RefCell<usize>>,
     syncing: Rc<RefCell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
+    spill_flag: SpillFlag,
 
     #[cfg(test)]
     stats: PagerStats,
@@ -332,6 +350,7 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
+            spill_flag: SpillFlag::empty(),
             #[cfg(test)]
             stats: PagerStats::new(),
         })
