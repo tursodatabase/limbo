@@ -2,20 +2,20 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    model::table::{SimValue, Table},
-    SimulatorEnv,
+use crate::model::{
+    table::{ColumnType, SimValue, Table},
+    Shadow, SimulatorEnv,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Create {
-    pub(crate) table: Table,
+pub struct Create {
+    pub table: Table,
 }
 
-impl Create {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
-        if !env.tables.iter().any(|t| t.name == self.table.name) {
-            env.tables.push(self.table.clone());
+impl Shadow for Create {
+    fn shadow<E: SimulatorEnv>(&self, env: &mut E) -> Vec<Vec<SimValue>> {
+        if !env.tables().iter().any(|t| t.name == self.table.name) {
+            env.add_table(self.table.clone());
         }
 
         vec![]
@@ -31,6 +31,18 @@ impl Display for Create {
                 write!(f, ",")?;
             }
             write!(f, "{} {}", column.name, column.column_type)?;
+            if column.primary
+                && (matches!(column.column_type, ColumnType::Integer)
+                    || cfg!(feature = "index_experimental"))
+            {
+                write!(f, " {}", "PRIMARY KEY")?;
+            }
+            if column.unique && cfg!(feature = "index_experimental") {
+                write!(f, " {}", "UNIQUE")?;
+            }
+            if column.not_null {
+                write!(f, " {}", "NOT NULL")?;
+            }
         }
 
         write!(f, ")")

@@ -27,3 +27,4 @@ tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tempfile = "3.20.0"
+limbo_sim = { workspace = true }

@@ -41,7 +41,7 @@ pub trait ArbitraryFromMaybe<T> {
 /// the operations we require for the implementation.
 // todo: switch to a simpler type signature that can accommodate all integer and float types, which
 //       should be enough for our purposes.
-pub(crate) fn frequency<
+pub fn frequency<
     'a,
     T,
     R: Rng,
@@ -64,7 +64,7 @@ pub(crate) fn frequency<
 }
 
 /// one_of is a helper function for composing different generators with equal probability of occurrence.
-pub(crate) fn one_of<'a, T, R: Rng>(choices: Vec<Box<dyn Fn(&mut R) -> T + 'a>>, rng: &mut R) -> T {
+pub fn one_of<'a, T, R: Rng>(choices: Vec<Box<dyn Fn(&mut R) -> T + 'a>>, rng: &mut R) -> T {
     let index = rng.gen_range(0..choices.len());
     choices[index](rng)
 }
@@ -72,7 +72,7 @@ pub(crate) fn one_of<'a, T, R: Rng>(choices: Vec<Box<dyn Fn(&mut R) -> T + 'a>>,
 /// backtrack is a helper function for composing different "failable" generators.
 /// The function takes a list of functions that return an Option<T>, along with number of retries
 /// to make before giving up.
-pub(crate) fn backtrack<'a, T, R: Rng>(
+pub fn backtrack<'a, T, R: Rng>(
     mut choices: Vec<(usize, Box<dyn Fn(&mut R) -> Option<T> + 'a>)>,
     rng: &mut R,
 ) -> Option<T> {
@@ -101,24 +101,20 @@ pub(crate) fn backtrack<'a, T, R: Rng>(
 }
 
 /// pick is a helper function for uniformly picking a random element from a slice
-pub(crate) fn pick<'a, T, R: Rng>(choices: &'a [T], rng: &mut R) -> &'a T {
+pub fn pick<'a, T, R: Rng>(choices: &'a [T], rng: &mut R) -> &'a T {
     let index = rng.gen_range(0..choices.len());
     &choices[index]
 }
 
 /// pick_index is typically used for picking an index from a slice to later refer to the element
 /// at that index.
-pub(crate) fn pick_index<R: Rng>(choices: usize, rng: &mut R) -> usize {
+pub fn pick_index<R: Rng>(choices: usize, rng: &mut R) -> usize {
     rng.gen_range(0..choices)
 }
 
 /// pick_n_unique is a helper function for uniformly picking N unique elements from a range.
 /// The elements themselves are usize, typically representing indices.
-pub(crate) fn pick_n_unique<R: Rng>(
-    range: std::ops::Range<usize>,
-    n: usize,
-    rng: &mut R,
-) -> Vec<usize> {
+pub fn pick_n_unique<R: Rng>(range: std::ops::Range<usize>, n: usize, rng: &mut R) -> Vec<usize> {
     use rand::seq::SliceRandom;
     let mut items: Vec<usize> = range.collect();
     items.shuffle(rng);
@@ -127,7 +123,7 @@ pub(crate) fn pick_n_unique<R: Rng>(
 
 /// gen_random_text uses `anarchist_readable_name_generator_lib` to generate random
 /// readable names for tables, columns, text values etc.
-pub(crate) fn gen_random_text<T: Rng>(rng: &mut T) -> String {
+pub fn gen_random_text<T: Rng>(rng: &mut T) -> String {
     let big_text = rng.gen_ratio(1, 1000);
     if big_text {
         // let max_size: u64 = 2 * 1024 * 1024 * 1024;
