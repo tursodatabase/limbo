@@ -2023,6 +2023,7 @@ dependencies = [
  "clap",
  "hex",
  "limbo",
+ "limbo_sim",
  "tempfile",
  "tokio",
  "tracing",
