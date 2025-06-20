@@ -49,6 +49,7 @@ impl Arbitrary for Column {
             column_type,
             primary: false,
             unique: false,
+            not_null: false,
         }
     }
 }
