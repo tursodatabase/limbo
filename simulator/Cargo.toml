@@ -18,6 +18,9 @@ path = "main.rs"
 name = "limbo_sim"
 path = "lib.rs"
 
+[features]
+index_experimental = ["limbo_core/index_experimental"]
+
 [dependencies]
 limbo_core = { path = "../core", features = ["simulator"]}
 rand = "0.8.5"

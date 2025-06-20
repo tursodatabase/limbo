@@ -3,7 +3,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    table::{SimValue, Table},
+    table::{ColumnType, SimValue, Table},
     Shadow, SimulatorEnv,
 };
 
@@ -31,10 +31,13 @@ impl Display for Create {
                 write!(f, ",")?;
             }
             write!(f, "{} {}", column.name, column.column_type)?;
-            if column.primary {
+            if column.primary
+                && (matches!(column.column_type, ColumnType::Integer)
+                    || cfg!(feature = "index_experimental"))
+            {
                 write!(f, " {}", "PRIMARY KEY")?;
             }
-            if column.unique {
+            if column.unique && cfg!(feature = "index_experimental") {
                 write!(f, " {}", "UNIQUE")?;
             }
             if column.not_null {

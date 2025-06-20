@@ -4,6 +4,8 @@ use crate::model::table::{SimValue, Table};
 
 pub mod query;
 pub mod table;
+// Re-export the ast here for manual predicate creation if needed
+pub use limbo_sqlite3_parser::ast;
 
 pub trait SimulatorEnv {
     /// List all tables

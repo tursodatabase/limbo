@@ -5,8 +5,11 @@ use antithesis_sdk::random::{get_random, AntithesisRng};
 use limbo_sim::{
     generation::{pick_index, Arbitrary, ArbitraryFrom},
     model::{
-        query::{create::Create, delete::Delete, insert::Insert, update::Update},
-        table::Table,
+        ast,
+        query::{
+            create::Create, delete::Delete, insert::Insert, predicate::Predicate, update::Update,
+        },
+        table::{SimValue, Table},
         SimulatorEnv,
     },
 };
@@ -97,11 +100,64 @@ impl ArbitrarySchema {
     }
 
     /// Generate a random SQL statement for a schema
+    ///
+    /// TODO: as we do not yet update the rows inside the tables in [ArbitrarySchema]
+    /// we cannot generate many more complex predicates in the where clause
     fn generate_random_statement(&self) -> String {
         match get_random() % 3 {
             0 => Insert::arbitrary_from(&mut AntithesisRng, self).to_string(),
-            1 => Update::arbitrary_from(&mut AntithesisRng, self).to_string(),
-            _ => Delete::arbitrary_from(&mut AntithesisRng, self).to_string(),
+            1 => {
+                let mut update = Update::arbitrary_from(&mut AntithesisRng, self);
+                // TODO: to mimic the previous generation strategy I am adjusting the where clause here
+                // to filter by the primary key
+                // Ideally, we would want arbitrary_from to generate the random predicate for us
+
+                let table = self.tables.iter().find(|t| t.name == update.table).unwrap();
+                // Currently for stress testing, we have a single column with Primary Key
+                let pk_col = table
+                    .columns
+                    .iter()
+                    .find(|col| col.primary)
+                    .expect("Table should have a primary key");
+                update.predicate = Predicate(ast::Expr::Binary(
+                    Box::new(ast::Expr::Qualified(
+                        ast::Name(table.name.clone()),
+                        ast::Name(pk_col.name.clone()),
+                    )),
+                    ast::Operator::Equals,
+                    Box::new(ast::Expr::Literal(
+                        SimValue::arbitrary_from(&mut AntithesisRng, &pk_col.column_type).into(),
+                    )),
+                ));
+                update.to_string()
+            }
+            _ => {
+                let mut delete = Delete::arbitrary_from(&mut AntithesisRng, self);
+
+                // TODO: to mimic the previous generation strategy I am adjusting the where clause here
+                // to filter by the primary key
+                // Ideally, we would want arbitrary_from to generate the random predicate for us
+
+                let table = self.tables.iter().find(|t| t.name == delete.table).unwrap();
+                // Currently for stress testing, we have a single column with Primary Key
+                let pk_col = table
+                    .columns
+                    .iter()
+                    .find(|col| col.primary)
+                    .expect("Table should have a primary key");
+                delete.predicate = Predicate(ast::Expr::Binary(
+                    Box::new(ast::Expr::Qualified(
+                        ast::Name(table.name.clone()),
+                        ast::Name(pk_col.name.clone()),
+                    )),
+                    ast::Operator::Equals,
+                    Box::new(ast::Expr::Literal(
+                        SimValue::arbitrary_from(&mut AntithesisRng, &pk_col.column_type).into(),
+                    )),
+                ));
+
+                delete.to_string()
+            }
         }
     }
 }
