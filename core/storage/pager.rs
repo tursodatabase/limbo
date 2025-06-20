@@ -648,7 +648,7 @@ impl Pager {
     pub fn read_page(&self, page_idx: usize) -> Result<PageRef, LimboError> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
-        let page_key = PageCacheKey::new(page_idx);
+        let page_key = PageCacheKey(page_idx);
         if let Some(page) = page_cache.get(&page_key) {
             tracing::trace!("read_page(page_idx = {}) = cached", page_idx);
             return Ok(page.clone());
@@ -749,7 +749,7 @@ impl Pager {
                     let db_size = self.db_header.lock().database_size;
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
-                        let page_key = PageCacheKey::new(*page_id);
+                        let page_key = PageCacheKey(*page_id);
                         let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                         let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
                         trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
@@ -1031,7 +1031,7 @@ impl Pager {
                 page.set_dirty();
                 self.add_dirty(page.get().id);
 
-                let page_key = PageCacheKey::new(page.get().id);
+                let page_key = PageCacheKey(page.get().id);
                 let mut cache = self.page_cache.write();
                 match cache.insert(page_key, page.clone()) {
                     Ok(_) => (),
@@ -1056,7 +1056,7 @@ impl Pager {
             page.set_dirty();
             self.add_dirty(page.get().id);
 
-            let page_key = PageCacheKey::new(page.get().id);
+            let page_key = PageCacheKey(page.get().id);
             let mut cache = self.page_cache.write();
             match cache.insert(page_key, page.clone()) {
                 Err(CacheError::Full) => Err(LimboError::CacheFull),
@@ -1074,7 +1074,7 @@ impl Pager {
         page: PageRef,
     ) -> Result<(), LimboError> {
         let mut cache = self.page_cache.write();
-        let page_key = PageCacheKey::new(id);
+        let page_key = PageCacheKey(id);
 
         // FIXME: use specific page key for writer instead of max frame, this will make readers not conflict
         assert!(page.is_dirty());
@@ -1332,13 +1332,13 @@ mod tests {
             let cache = cache.clone();
             std::thread::spawn(move || {
                 let mut cache = cache.write();
-                let page_key = PageCacheKey::new(1);
+                let page_key = PageCacheKey(1);
                 cache.insert(page_key, Arc::new(Page::new(1))).unwrap();
             })
         };
         let _ = thread.join();
         let mut cache = cache.write();
-        let page_key = PageCacheKey::new(1);
+        let page_key = PageCacheKey(1);
         let page = cache.get(&page_key);
         assert_eq!(page.unwrap().get().id, 1);
     }
