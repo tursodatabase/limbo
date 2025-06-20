@@ -27,7 +27,7 @@ pub struct Column {
     pub column_type: ColumnType,
     pub primary: bool,
     pub unique: bool,
-    pub not_null: bool
+    pub not_null: bool,
 }
 
 // Uniquely defined by name in this case
