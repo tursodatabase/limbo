@@ -154,12 +154,8 @@ fn emit_compound_select(
                         (cursor_id, index.clone())
                     }
                     _ => {
-                        if cfg!(not(feature = "index_experimental")) {
-                            crate::bail_parse_error!("UNION not supported without indexes");
-                        } else {
-                            new_dedupe_index = true;
-                            create_dedupe_index(program, &right_most)
-                        }
+                        new_dedupe_index = true;
+                        create_dedupe_index(program, &right_most)?
                     }
                 };
                 plan.query_destination = QueryDestination::EphemeralIndex {
@@ -210,7 +206,7 @@ fn emit_compound_select(
                     target_cursor_id = Some(cursor_id);
                 }
 
-                let (left_cursor_id, left_index) = create_dedupe_index(program, &right_most);
+                let (left_cursor_id, left_index) = create_dedupe_index(program, &right_most)?;
                 plan.query_destination = QueryDestination::EphemeralIndex {
                     cursor_id: left_cursor_id,
                     index: left_index.clone(),
@@ -232,7 +228,7 @@ fn emit_compound_select(
                     reg_result_cols_start,
                 )?;
 
-                let (right_cursor_id, right_index) = create_dedupe_index(program, &right_most);
+                let (right_cursor_id, right_index) = create_dedupe_index(program, &right_most)?;
                 right_most.query_destination = QueryDestination::EphemeralIndex {
                     cursor_id: right_cursor_id,
                     index: right_index,
@@ -265,7 +261,14 @@ fn emit_compound_select(
 }
 
 // Creates an ephemeral index that will be used to deduplicate the results of any sub-selects
-fn create_dedupe_index(program: &mut ProgramBuilder, select: &SelectPlan) -> (usize, Arc<Index>) {
+fn create_dedupe_index(
+    program: &mut ProgramBuilder,
+    select: &SelectPlan,
+) -> crate::Result<(usize, Arc<Index>)> {
+    if cfg!(not(feature = "index_experimental")) {
+        crate::bail_parse_error!("UNION OR INTERSECT is not supported without indexes");
+    }
+
     let dedupe_index = Arc::new(Index {
         columns: select
             .result_columns
@@ -293,7 +296,7 @@ fn create_dedupe_index(program: &mut ProgramBuilder, select: &SelectPlan) -> (us
         cursor_id,
         is_table: false,
     });
-    (cursor_id, dedupe_index.clone())
+    Ok((cursor_id, dedupe_index.clone()))
 }
 
 /// Emits the bytecode for reading deduplicated rows from the ephemeral index created for UNION operators.
