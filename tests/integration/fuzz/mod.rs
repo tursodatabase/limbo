@@ -586,7 +586,7 @@ mod tests {
                 ));
             }
 
-            const COMPOUND_OPERATORS: [&str; 2] = [" UNION ALL ", " UNION "];
+            const COMPOUND_OPERATORS: [&str; 3] = [" UNION ALL ", " UNION ", " INTERSECT "];
 
             let mut query = String::new();
             for (i, select_statement) in select_statements.iter().enumerate() {
