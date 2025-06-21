@@ -120,7 +120,8 @@ impl SimulatorEnv {
             max_time_simulation: cli_opts.maximum_time,
         };
 
-        let io = Arc::new(SimulatorIO::new(seed, opts.page_size).unwrap());
+        let io =
+            Arc::new(SimulatorIO::new(seed, opts.page_size, cli_opts.latency_probability).unwrap());
 
         // Remove existing database file if it exists
         if db_path.exists() {
