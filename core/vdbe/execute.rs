@@ -1206,7 +1206,7 @@ pub fn op_open_pseudo(
     };
     {
         let mut cursors = state.cursors.borrow_mut();
-        let cursor = PseudoCursor::new();
+        let cursor = PseudoCursor::default();
         cursors
             .get_mut(*cursor_id)
             .unwrap()
@@ -3677,13 +3677,13 @@ pub fn op_function(
             ScalarFunc::UnixEpoch => {
                 if *start_reg == 0 {
                     let unixepoch: String = exec_unixepoch(&Value::build_text("now"))?;
-                    state.registers[*dest] = Register::Value(Value::build_text(&unixepoch));
+                    state.registers[*dest] = Register::Value(Value::build_text(unixepoch));
                 } else {
                     let datetime_value = &state.registers[*start_reg];
                     let unixepoch = exec_unixepoch(datetime_value.get_owned_value());
                     match unixepoch {
                         Ok(time) => {
-                            state.registers[*dest] = Register::Value(Value::build_text(&time))
+                            state.registers[*dest] = Register::Value(Value::build_text(time))
                         }
                         Err(e) => {
                             return Err(LimboError::ParseError(format!(
@@ -3697,7 +3697,7 @@ pub fn op_function(
             ScalarFunc::SqliteVersion => {
                 let version_integer: i64 = DATABASE_VERSION.get().unwrap().parse()?;
                 let version = execute_sqlite_version(version_integer);
-                state.registers[*dest] = Register::Value(Value::build_text(&version));
+                state.registers[*dest] = Register::Value(Value::build_text(version));
             }
             ScalarFunc::SqliteSourceId => {
                 let src_id = format!(
@@ -3705,7 +3705,7 @@ pub fn op_function(
                     info::build::BUILT_TIME_SQLITE,
                     info::build::GIT_COMMIT_HASH.unwrap_or("unknown")
                 );
-                state.registers[*dest] = Register::Value(Value::build_text(&src_id));
+                state.registers[*dest] = Register::Value(Value::build_text(src_id));
             }
             ScalarFunc::Replace => {
                 assert_eq!(arg_count, 3);
@@ -4425,33 +4425,31 @@ pub fn op_idx_insert(
             // a write/balancing operation. If it did, it means we already moved to the place we wanted.
             let moved_before = if cursor.is_write_in_progress() {
                 true
+            } else if index_meta.unique {
+                // check for uniqueness violation
+                match cursor.key_exists_in_index(record)? {
+                    CursorResult::Ok(true) => {
+                        return Err(LimboError::Constraint(
+                            "UNIQUE constraint failed: duplicate key".into(),
+                        ))
+                    }
+                    CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                    CursorResult::Ok(false) => {}
+                };
+                // uniqueness check already moved us to the correct place in the index.
+                // the uniqueness check uses SeekOp::GE, which means a non-matching entry
+                // will now be positioned at the insertion point where there currently is
+                // a) nothing, or
+                // b) the first entry greater than the key we are inserting.
+                // In both cases, we can insert the new entry without moving again.
+                //
+                // This is re-entrant, because once we call cursor.insert() with moved_before=true,
+                // we will immediately set BTreeCursor::state to CursorState::Write(WriteInfo::new()),
+                // in BTreeCursor::insert_into_page; thus, if this function is called again,
+                // moved_before will again be true due to cursor.is_write_in_progress() returning true.
+                true
             } else {
-                if index_meta.unique {
-                    // check for uniqueness violation
-                    match cursor.key_exists_in_index(record)? {
-                        CursorResult::Ok(true) => {
-                            return Err(LimboError::Constraint(
-                                "UNIQUE constraint failed: duplicate key".into(),
-                            ))
-                        }
-                        CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
-                        CursorResult::Ok(false) => {}
-                    };
-                    // uniqueness check already moved us to the correct place in the index.
-                    // the uniqueness check uses SeekOp::GE, which means a non-matching entry
-                    // will now be positioned at the insertion point where there currently is
-                    // a) nothing, or
-                    // b) the first entry greater than the key we are inserting.
-                    // In both cases, we can insert the new entry without moving again.
-                    //
-                    // This is re-entrant, because once we call cursor.insert() with moved_before=true,
-                    // we will immediately set BTreeCursor::state to CursorState::Write(WriteInfo::new()),
-                    // in BTreeCursor::insert_into_page; thus, if this function is called again,
-                    // moved_before will again be true due to cursor.is_write_in_progress() returning true.
-                    true
-                } else {
-                    flags.has(IdxInsertFlags::USE_SEEK)
-                }
+                flags.has(IdxInsertFlags::USE_SEEK)
             };
 
             // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
@@ -5504,7 +5502,7 @@ pub fn op_integrity_check(
 impl Value {
     pub fn exec_lower(&self) -> Option<Self> {
         match self {
-            Value::Text(t) => Some(Value::build_text(&t.as_str().to_lowercase())),
+            Value::Text(t) => Some(Value::build_text(t.as_str().to_lowercase())),
             t => Some(t.to_owned()),
         }
     }
@@ -5531,7 +5529,7 @@ impl Value {
 
     pub fn exec_upper(&self) -> Option<Self> {
         match self {
-            Value::Text(t) => Some(Value::build_text(&t.as_str().to_uppercase())),
+            Value::Text(t) => Some(Value::build_text(t.as_str().to_uppercase())),
             t => Some(t.to_owned()),
         }
     }
@@ -5663,7 +5661,7 @@ impl Value {
 
         // Retain the first 4 characters and convert to uppercase
         result.truncate(4);
-        Value::build_text(&result.to_uppercase())
+        Value::build_text(result.to_uppercase())
     }
 
     pub fn exec_abs(&self) -> Result<Self> {
@@ -5728,7 +5726,7 @@ impl Value {
                     }
                 }
                 quoted.push('\'');
-                Value::build_text(&quoted)
+                Value::build_text(quoted)
             }
         }
     }
@@ -5825,9 +5823,9 @@ impl Value {
         match self {
             Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
                 let text = self.to_string();
-                Value::build_text(&hex::encode_upper(text))
+                Value::build_text(hex::encode_upper(text))
             }
-            Value::Blob(blob_bytes) => Value::build_text(&hex::encode_upper(blob_bytes)),
+            Value::Blob(blob_bytes) => Value::build_text(hex::encode_upper(blob_bytes)),
             _ => Value::Null,
         }
     }
@@ -5985,7 +5983,7 @@ impl Value {
             Affinity::Text => {
                 // Convert everything to text representation
                 // TODO: handle encoding and whatever sqlite3_snprintf does
-                Value::build_text(&self.to_string())
+                Value::build_text(self.to_string())
             }
             Affinity::Real => match self {
                 Value::Blob(b) => {
@@ -6062,7 +6060,7 @@ impl Value {
                 let result = source
                     .as_str()
                     .replace(pattern.as_str(), replacement.as_str());
-                Value::build_text(&result)
+                Value::build_text(result)
             }
             _ => unreachable!("text cast should never fail"),
         }
@@ -6248,31 +6246,31 @@ impl Value {
     pub fn exec_concat(&self, rhs: &Value) -> Value {
         match (self, rhs) {
             (Value::Text(lhs_text), Value::Text(rhs_text)) => {
-                Value::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
+                Value::build_text(lhs_text.as_str().to_string() + rhs_text.as_str())
             }
             (Value::Text(lhs_text), Value::Integer(rhs_int)) => {
-                Value::build_text(&(lhs_text.as_str().to_string() + &rhs_int.to_string()))
+                Value::build_text(lhs_text.as_str().to_string() + &rhs_int.to_string())
             }
             (Value::Text(lhs_text), Value::Float(rhs_float)) => {
-                Value::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
+                Value::build_text(lhs_text.as_str().to_string() + &rhs_float.to_string())
             }
             (Value::Integer(lhs_int), Value::Text(rhs_text)) => {
-                Value::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
+                Value::build_text(lhs_int.to_string() + rhs_text.as_str())
             }
             (Value::Integer(lhs_int), Value::Integer(rhs_int)) => {
-                Value::build_text(&(lhs_int.to_string() + &rhs_int.to_string()))
+                Value::build_text(lhs_int.to_string() + &rhs_int.to_string())
             }
             (Value::Integer(lhs_int), Value::Float(rhs_float)) => {
-                Value::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
+                Value::build_text(lhs_int.to_string() + &rhs_float.to_string())
             }
             (Value::Float(lhs_float), Value::Text(rhs_text)) => {
-                Value::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
+                Value::build_text(lhs_float.to_string() + rhs_text.as_str())
             }
             (Value::Float(lhs_float), Value::Integer(rhs_int)) => {
-                Value::build_text(&(lhs_float.to_string() + &rhs_int.to_string()))
+                Value::build_text(lhs_float.to_string() + &rhs_int.to_string())
             }
             (Value::Float(lhs_float), Value::Float(rhs_float)) => {
-                Value::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
+                Value::build_text(lhs_float.to_string() + &rhs_float.to_string())
             }
             (Value::Null, _) | (_, Value::Null) => Value::Null,
             (Value::Blob(_), _) | (_, Value::Blob(_)) => {
@@ -6343,7 +6341,7 @@ fn exec_concat_strings(registers: &[Register]) -> Value {
             v => result.push_str(&format!("{}", v)),
         }
     }
-    Value::build_text(&result)
+    Value::build_text(result)
 }
 
 fn exec_concat_ws(registers: &[Register]) -> Value {
@@ -6369,7 +6367,7 @@ fn exec_concat_ws(registers: &[Register]) -> Value {
         }
     }
 
-    Value::build_text(&result)
+    Value::build_text(result)
 }
 
 fn exec_char(values: &[Register]) -> Value {
@@ -6383,7 +6381,7 @@ fn exec_char(values: &[Register]) -> Value {
             }
         })
         .collect();
-    Value::build_text(&result)
+    Value::build_text(result)
 }
 
 fn construct_like_regex(pattern: &str) -> Regex {
@@ -6892,11 +6890,11 @@ fn is_numeric_value(reg: &Register) -> bool {
 fn stringify_register(reg: &mut Register) -> bool {
     match reg.get_owned_value() {
         Value::Integer(i) => {
-            *reg = Register::Value(Value::build_text(&i.to_string()));
+            *reg = Register::Value(Value::build_text(i.to_string()));
             true
         }
         Value::Float(f) => {
-            *reg = Register::Value(Value::build_text(&f.to_string()));
+            *reg = Register::Value(Value::build_text(f.to_string()));
             true
         }
         Value::Text(_) | Value::Null | Value::Blob(_) => false,

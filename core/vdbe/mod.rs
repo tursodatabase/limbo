@@ -518,7 +518,7 @@ fn get_new_rowid<R: Rng>(cursor: &mut BTreeCursor, mut rng: R) -> Result<CursorR
             }
         }
     }
-    Ok(CursorResult::Ok(rowid.try_into().unwrap()))
+    Ok(CursorResult::Ok(rowid))
 }
 
 fn make_record(registers: &[Register], start_reg: &usize, count: &usize) -> ImmutableRecord {
@@ -680,7 +680,7 @@ impl Row {
         T::from_value(value)
     }
 
-    pub fn get_value<'a>(&'a self, idx: usize) -> &'a Value {
+    pub fn get_value(&self, idx: usize) -> &Value {
         let value = unsafe { self.values.add(idx).as_ref().unwrap() };
         match value {
             Register::Value(owned_value) => owned_value,

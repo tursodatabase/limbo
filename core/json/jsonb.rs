@@ -179,6 +179,7 @@ pub struct Jsonb {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names, clippy::upper_case_acronyms)]
 pub enum ElementType {
     NULL = 0,
     TRUE = 1,
@@ -203,7 +204,7 @@ pub enum JsonIndentation<'a> {
     None,
 }
 
-impl<'a> JsonIndentation<'a> {
+impl JsonIndentation<'_> {
     pub fn is_pretty(&self) -> bool {
         match self {
             Self::Indentation(_) => true,
@@ -2067,10 +2068,10 @@ impl Jsonb {
             return Ok(pos);
         }
 
-        return Err(PError::Message {
+        Err(PError::Message {
             msg: "Expected null or nan".to_string(),
             location: Some(pos),
-        });
+        })
     }
 
     fn write_element_header(
@@ -2365,7 +2366,7 @@ impl Jsonb {
                 } else {
                     if root_type == ElementType::OBJECT
                         && root_size == 0
-                        && (*idx == Some(0) || *idx == None)
+                        && (*idx == Some(0) || idx.is_none())
                         && mode.allows_insert()
                     {
                         let array = JsonbHeader::new(ElementType::ARRAY, 0).into_bytes();

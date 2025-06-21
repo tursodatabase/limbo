@@ -168,7 +168,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
         run_query(&tmp_db, &conn, &insert_query)?;
 
         let mut current_read_index = 0;
-        run_query_on_row(&tmp_db, &conn, &list_query, |row: &Row| {
+        run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
             let first_value = row.get::<&Value>(0).expect("missing id");
             let id = match first_value {
                 limbo_core::Value::Integer(i) => *i as i32,

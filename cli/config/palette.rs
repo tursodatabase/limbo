@@ -174,7 +174,7 @@ impl<'de> Deserialize<'de> for LimboColor {
     {
         struct LimboColorVisitor;
 
-        impl<'de> Visitor<'de> for LimboColorVisitor {
+        impl Visitor<'_> for LimboColorVisitor {
             type Value = LimboColor;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -247,7 +247,7 @@ impl LimboColor {
             Color::Fixed(7) => comfy_table::Color::Grey,
             Color::Fixed(8) => comfy_table::Color::DarkGrey,
             Color::DarkGray => comfy_table::Color::AnsiValue(241),
-            Color::LightRed => comfy_table::Color::AnsiValue(09),
+            Color::LightRed => comfy_table::Color::AnsiValue(9),
             Color::LightGreen => comfy_table::Color::AnsiValue(10),
             Color::LightYellow => comfy_table::Color::AnsiValue(11),
             Color::LightBlue => comfy_table::Color::AnsiValue(12),

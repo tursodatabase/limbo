@@ -509,8 +509,8 @@ impl Limbo {
             if line.is_empty() {
                 return Ok(());
             }
-            if line.starts_with('.') {
-                self.handle_dot_command(&line[1..]);
+            if let Some(command) = line.strip_prefix('.') {
+                self.handle_dot_command(command);
                 let _ = self.reset_line(line);
                 return Ok(());
             }
@@ -1060,10 +1060,9 @@ impl Limbo {
             Ok(rl.readline(&self.prompt)?)
         } else {
             let mut input = String::new();
-            println!("");
             let mut reader = std::io::stdin().lock();
             if reader.read_line(&mut input)? == 0 {
-                return Err(ReadlineError::Eof.into());
+                return Err(ReadlineError::Eof);
             }
             // Remove trailing newline
             if input.ends_with('\n') {

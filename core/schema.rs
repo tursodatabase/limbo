@@ -67,7 +67,7 @@ impl Schema {
 
     pub fn get_table(&self, name: &str) -> Option<Arc<Table>> {
         let name = normalize_ident(name);
-        let name = if name.eq_ignore_ascii_case(&SCHEMA_TABLE_NAME_ALT) {
+        let name = if name.eq_ignore_ascii_case(SCHEMA_TABLE_NAME_ALT) {
             SCHEMA_TABLE_NAME
         } else {
             &name
@@ -500,7 +500,7 @@ fn create_table(
                         } => {
                             primary_key = true;
                             if let Some(o) = o {
-                                order = o.clone();
+                                order = *o;
                             }
                         }
                         limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
@@ -1168,7 +1168,7 @@ impl Index {
                             .all(|col| set.contains(col))
                     {
                         // skip unique columns that are satisfied with pk constraint
-                        return false;
+                        false
                     } else {
                         true
                     }

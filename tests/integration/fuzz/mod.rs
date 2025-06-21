@@ -400,7 +400,7 @@ mod tests {
                 comp3.map(|x| format!("z {} {}", x, col_val_third.unwrap())),
             ]
             .into_iter()
-            .filter_map(|x| x)
+            .flatten()
             .collect::<Vec<_>>();
             let where_clause = if where_clause_components.is_empty() {
                 "".to_string()
@@ -415,7 +415,7 @@ mod tests {
                 order_by3.map(|x| format!("z {}", x)),
             ]
             .into_iter()
-            .filter_map(|x| x)
+            .flatten()
             .collect::<Vec<_>>();
             let order_by = if order_by_components.is_empty() {
                 "".to_string()
@@ -436,7 +436,7 @@ mod tests {
             // Execute the query on all databases and compare the results
             for (i, sqlite_conn) in sqlite_conns.iter().enumerate() {
                 let limbo = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query);
-                let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                let sqlite = sqlite_exec_rows(sqlite_conn, &query);
                 if limbo != sqlite {
                     // if the order by contains exclusively components that are constrained by an equality (=),
                     // sqlite sometimes doesn't bother with ASC/DESC because it doesn't semantically matter
@@ -457,7 +457,7 @@ mod tests {
                     let query_no_limit =
                         format!("SELECT * FROM t {} {} {}", where_clause, order_by, "");
                     let limbo_no_limit = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query_no_limit);
-                    let sqlite_no_limit = sqlite_exec_rows(&sqlite_conn, &query_no_limit);
+                    let sqlite_no_limit = sqlite_exec_rows(sqlite_conn, &query_no_limit);
                     let limbo_rev = limbo_no_limit.iter().cloned().rev().collect::<Vec<_>>();
                     if limbo_rev == sqlite_no_limit && order_by_only_equalities {
                         continue;
@@ -1439,7 +1439,7 @@ mod tests {
             i += 1;
         }
         // verify the same number of rows in both tables
-        let query = format!("SELECT COUNT(*) FROM t");
+        let query = "SELECT COUNT(*) FROM t".to_string();
         let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
         let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
         assert_eq!(limbo, sqlite, "seed: {}", seed);

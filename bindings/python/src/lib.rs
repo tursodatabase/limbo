@@ -130,7 +130,7 @@ impl Cursor {
                 })? {
                     limbo_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
-                        let py_row = row_to_py(py, &row)?;
+                        let py_row = row_to_py(py, row)?;
                         return Ok(Some(py_row));
                     }
                     limbo_core::StepResult::IO => {
@@ -166,7 +166,7 @@ impl Cursor {
                 })? {
                     limbo_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
-                        let py_row = row_to_py(py, &row)?;
+                        let py_row = row_to_py(py, row)?;
                         results.push(py_row);
                     }
                     limbo_core::StepResult::IO => {
@@ -342,7 +342,7 @@ fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
 /// Converts a Python object to a Limbo Value
 fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<limbo_core::Value> {
     if obj.is_none() {
-        return Ok(Value::Null);
+        Ok(Value::Null)
     } else if let Ok(integer) = obj.extract::<i64>() {
         return Ok(Value::Integer(integer));
     } else if let Ok(float) = obj.extract::<f64>() {

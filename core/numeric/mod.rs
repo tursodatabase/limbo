@@ -413,7 +413,7 @@ impl std::ops::Mul for DoubleDouble {
 
 impl std::ops::MulAssign for DoubleDouble {
     fn mul_assign(&mut self, rhs: Self) {
-        *self = self.clone() * rhs;
+        *self = *self * rhs;
     }
 }
 
