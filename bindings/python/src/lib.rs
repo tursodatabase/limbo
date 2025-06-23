@@ -267,11 +267,11 @@ impl Connection {
     pub fn rollback(&self) -> PyResult<()> {
         if !self.conn.get_auto_commit() {
             self.conn.execute("COMMIT").map_err(|e| {
-                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {e:?}"))
             })?;
 
             self.conn.execute("BEGIN").map_err(|e| {
-                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {e:?}"))
             })?;
         }
         Ok(())
@@ -307,9 +307,8 @@ pub fn connect(path: &str) -> Result<Connection> {
         io: Arc<dyn turso_core::IO>,
         path: &str,
     ) -> std::result::Result<Arc<turso_core::Database>, PyErr> {
-        turso_core::Database::open_file(io, path, false, false).map_err(|e| {
-            PyErr::new::<DatabaseError, _>(format!("Failed to open database: {:?}", e))
-        })
+        turso_core::Database::open_file(io, path, false, false)
+            .map_err(|e| PyErr::new::<DatabaseError, _>(format!("Failed to open database: {e:?}")))
     }
 
     match path {

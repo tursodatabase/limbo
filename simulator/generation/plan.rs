@@ -652,7 +652,7 @@ impl Interaction {
                         ) {
                             Ok(db) => db,
                             Err(e) => {
-                                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+                                panic!("error opening simulator test file {db_path:?}: {e:?}");
                             }
                         };
                         env.db = db;
