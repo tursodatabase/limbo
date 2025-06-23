@@ -666,6 +666,16 @@ impl Pager {
         Ok(self.wal.borrow().get_max_frame_in_wal())
     }
 
+    pub fn wal_insert_frame(&self, _frame_no: u32, frame: &[u8], _is_conflict: *mut bool) -> Result<()> {
+        assert_eq!(frame.len(), 4096 + 24);
+        let db_size = self.db_header.lock().database_size;
+        let write_counter = Rc::new(RefCell::new(0));
+        let page_number = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
+        let data: &[u8] = &frame[24..];
+        self.wal.borrow_mut().append_frame(page_number as u64, data, db_size, write_counter, Box::new(|| {}))?;
+        Ok(())
+    }
+
     /// Flush dirty pages to disk.
     /// In the base case, it will write the dirty pages to the WAL and then fsync the WAL.
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
@@ -684,10 +694,17 @@ impl Pager {
                         let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                         let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
                         trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
+                        let page_id = page.get().id as u64;
+                        let data = page.get().contents.as_ref().unwrap().as_ptr();
+                        let page_finish = page.clone();
                         self.wal.borrow_mut().append_frame(
-                            page.clone(),
+                            page_id,
+                            data,
                             db_size,
                             self.flush_info.borrow().in_flight_writes.clone(),
+                            Box::new(move || {
+                                page_finish.clear_dirty();
+                            }),
                         )?;
                         page.clear_dirty();
                     }
