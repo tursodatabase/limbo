@@ -85,21 +85,30 @@ pub fn emit_result_row_and_limit(
         QueryDestination::EphemeralIndex {
             cursor_id: index_cursor_id,
             index: dedupe_index,
+            is_delete,
         } => {
-            let record_reg = program.alloc_register();
-            program.emit_insn(Insn::MakeRecord {
-                start_reg: result_columns_start_reg,
-                count: plan.result_columns.len(),
-                dest_reg: record_reg,
-                index_name: Some(dedupe_index.name.clone()),
-            });
-            program.emit_insn(Insn::IdxInsert {
-                cursor_id: *index_cursor_id,
-                record_reg,
-                unpacked_start: None,
-                unpacked_count: None,
-                flags: IdxInsertFlags::new(),
-            });
+            if *is_delete {
+                program.emit_insn(Insn::IdxDelete {
+                    start_reg: result_columns_start_reg,
+                    num_regs: plan.result_columns.len(),
+                    cursor_id: *index_cursor_id,
+                });
+            } else {
+                let record_reg = program.alloc_register();
+                program.emit_insn(Insn::MakeRecord {
+                    start_reg: result_columns_start_reg,
+                    count: plan.result_columns.len(),
+                    dest_reg: record_reg,
+                    index_name: Some(dedupe_index.name.clone()),
+                });
+                program.emit_insn(Insn::IdxInsert {
+                    cursor_id: *index_cursor_id,
+                    record_reg,
+                    unpacked_start: None,
+                    unpacked_count: None,
+                    flags: IdxInsertFlags::new(),
+                });
+            }
         }
         QueryDestination::EphemeralTable {
             cursor_id: table_cursor_id,
