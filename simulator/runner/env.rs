@@ -93,10 +93,7 @@ impl SimulatorEnv {
 
         let abs_diff = (summed_total - total).abs();
         if abs_diff > 0.0001 {
-            panic!(
-                "Summed total {} is not equal to total {}",
-                summed_total, total
-            );
+            panic!("Summed total {summed_total} is not equal to total {total}");
         }
 
         let opts = SimulatorOpts {
@@ -139,7 +136,7 @@ impl SimulatorEnv {
         let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), false, false) {
             Ok(db) => db,
             Err(e) => {
-                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+                panic!("error opening simulator test file {db_path:?}: {e:?}");
             }
         };
 

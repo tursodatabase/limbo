@@ -244,7 +244,7 @@ impl Property {
                 let table_name = select.table.clone();
 
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table_name),
+                    message: format!("table {table_name} exists"),
                     func: Box::new({
                         let table_name = table_name.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -280,7 +280,7 @@ impl Property {
                 queries,
             } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -303,7 +303,7 @@ impl Property {
                 }));
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!("`{}` should return no values for table `{}`", select, table,),
+                    message: format!("`{select}` should return no values for table `{table}`",),
                     func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
                         let rows = stack.last().unwrap();
                         match rows {
@@ -328,7 +328,7 @@ impl Property {
                 select,
             } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -340,10 +340,7 @@ impl Property {
                 let table_name = table.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!(
-                        "select query should result in an error for table '{}'",
-                        table
-                    ),
+                    message: format!("select query should result in an error for table '{table}'"),
                     func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
                         let last = stack.last().unwrap();
                         match last {
@@ -373,7 +370,7 @@ impl Property {
             }
             Property::SelectSelectOptimizer { table, predicate } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {

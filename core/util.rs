@@ -665,8 +665,7 @@ impl OpenMode {
             "memory" => Ok(OpenMode::Memory),
             "rwc" => Ok(OpenMode::ReadWriteCreate),
             _ => Err(LimboError::InvalidArgument(format!(
-                "Invalid mode: '{}'. Expected one of 'ro', 'rw', 'memory', 'rwc'",
-                s
+                "Invalid mode: '{s}'. Expected one of 'ro', 'rw', 'memory', 'rwc'"
             ))),
         }
     }
@@ -732,8 +731,7 @@ pub fn parse_sqlite_uri(uri: &str) -> Result<OpenOptions> {
         // sqlite allows only `localhost` or empty authority.
         if !(authority.is_empty() || authority == "localhost") {
             return Err(LimboError::InvalidArgument(format!(
-                "Invalid authority '{}'. Only '' or 'localhost' allowed.",
-                authority
+                "Invalid authority '{authority}'. Only '' or 'localhost' allowed."
             )));
         }
         opts.authority = if authority.is_empty() {

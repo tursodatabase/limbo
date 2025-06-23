@@ -40,7 +40,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]+r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]+r[{rhs}]"),
             ),
             Insn::Subtract { lhs, rhs, dest } => (
                 "Subtract",
@@ -49,7 +49,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]-r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]-r[{rhs}]"),
             ),
             Insn::Multiply { lhs, rhs, dest } => (
                 "Multiply",
@@ -58,7 +58,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]*r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]*r[{rhs}]"),
             ),
             Insn::Divide { lhs, rhs, dest } => (
                 "Divide",
@@ -67,7 +67,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]/r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]/r[{rhs}]"),
             ),
             Insn::BitAnd { lhs, rhs, dest } => (
                 "BitAnd",
@@ -76,7 +76,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]&r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]&r[{rhs}]"),
             ),
             Insn::BitOr { lhs, rhs, dest } => (
                 "BitOr",
@@ -85,7 +85,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]|r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]|r[{rhs}]"),
             ),
             Insn::BitNot { reg, dest } => (
                 "BitNot",
@@ -94,7 +94,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=~r[{}]", dest, reg),
+                format!("r[{dest}]=~r[{reg}]"),
             ),
             Insn::Checkpoint {
                 database,
@@ -107,7 +107,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=~r[{}]", dest, database),
+                format!("r[{dest}]=~r[{database}]"),
             ),
             Insn::Remainder { lhs, rhs, dest } => (
                 "Remainder",
@@ -116,7 +116,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]%r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}]%r[{rhs}]"),
             ),
             Insn::Null { dest, dest_end } => (
                 "Null",
@@ -125,8 +125,8 @@ pub fn insn_to_str(
                 dest_end.map_or(0, |end| end as i32),
                 Value::build_text(""),
                 0,
-                dest_end.map_or(format!("r[{}]=NULL", dest), |end| {
-                    format!("r[{}..{}]=NULL", dest, end)
+                dest_end.map_or(format!("r[{dest}]=NULL"), |end| {
+                    format!("r[{dest}..{end}]=NULL")
                 }),
             ),
             Insn::NullRow { cursor_id } => (
@@ -136,7 +136,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("Set cursor {} to a (pseudo) NULL row", cursor_id),
+                format!("Set cursor {cursor_id} to a (pseudo) NULL row"),
             ),
             Insn::NotNull { reg, target_pc } => (
                 "NotNull",
@@ -417,7 +417,7 @@ pub fn insn_to_str(
                 args_reg.unwrap_or(0) as i32,
                 Value::build_text(""),
                 0,
-                format!("table={}, module={}", table_name, module_name),
+                format!("table={table_name}, module={module_name}"),
             ),
             Insn::VFilter {
                 cursor_id,
@@ -492,7 +492,7 @@ pub fn insn_to_str(
                 *num_fields as i32,
                 Value::build_text(""),
                 0,
-                format!("{} columns in r[{}]", num_fields, content_reg),
+                format!("{num_fields} columns in r[{content_reg}]"),
             ),
             Insn::Rewind {
                 cursor_id,
@@ -581,7 +581,7 @@ pub fn insn_to_str(
                 dest_reg,
                 index_name,
             } => {
-                let for_index = index_name.as_ref().map(|name| format!("; for {}", name));
+                let for_index = index_name.as_ref().map(|name| format!("; for {name}"));
                 (
                     "MakeRecord",
                     *start_reg as i32,
@@ -606,7 +606,7 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 if *count == 1 {
-                    format!("output=r[{}]", start_reg)
+                    format!("output=r[{start_reg}]")
                 } else {
                     format!("output=r[{}..{}]", start_reg, start_reg + count - 1)
                 },
@@ -655,7 +655,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("write={}", write),
+                format!("write={write}"),
             ),
             Insn::Goto { target_pc } => (
                 "Goto",
@@ -697,7 +697,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("r[{}]={}", dest, value),
+                format!("r[{dest}]={value}"),
             ),
             Insn::Real { value, dest } => (
                 "Real",
@@ -706,7 +706,7 @@ pub fn insn_to_str(
                 0,
                 Value::Float(*value),
                 0,
-                format!("r[{}]={}", dest, value),
+                format!("r[{dest}]={value}"),
             ),
             Insn::RealAffinity { register } => (
                 "RealAffinity",
@@ -724,7 +724,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(value),
                 0,
-                format!("r[{}]='{}'", dest, value),
+                format!("r[{dest}]='{value}'"),
             ),
             Insn::Blob { value, dest } => (
                 "Blob",
@@ -768,7 +768,7 @@ pub fn insn_to_str(
                             if k.index.is_some() { "index" } else { "table" },
                             get_table_or_index_name(*cursor_id),
                         ))
-                        .unwrap_or(format!("cursor {}", cursor_id))
+                        .unwrap_or(format!("cursor {cursor_id}"))
                 ),
             ),
             Insn::SeekRowid {
@@ -794,7 +794,7 @@ pub fn insn_to_str(
                             if k.index.is_some() { "index" } else { "table" },
                             get_table_or_index_name(*cursor_id),
                         ))
-                        .unwrap_or(format!("cursor {}", cursor_id)),
+                        .unwrap_or(format!("cursor {cursor_id}")),
                     target_pc.as_debug_int()
                 ),
             ),
@@ -876,7 +876,7 @@ pub fn insn_to_str(
                 unpacked_start.unwrap_or(0) as i32,
                 Value::build_text(""),
                 flags.0 as u16,
-                format!("key=r[{}]", record_reg),
+                format!("key=r[{record_reg}]"),
             ),
             Insn::IdxGT {
                 cursor_id,
@@ -977,7 +977,7 @@ pub fn insn_to_str(
                     0,
                     Value::build_text(format!("k({},{})", order.len(), to_print.join(","))),
                     0,
-                    format!("cursor={}", cursor_id),
+                    format!("cursor={cursor_id}"),
                 )
             }
             Insn::SorterData {
@@ -991,7 +991,7 @@ pub fn insn_to_str(
                 *pseudo_cursor as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=data", dest_reg),
+                format!("r[{dest_reg}]=data"),
             ),
             Insn::SorterInsert {
                 cursor_id,
@@ -1003,7 +1003,7 @@ pub fn insn_to_str(
                 0,
                 Value::Integer(0),
                 0,
-                format!("key=r[{}]", record_reg),
+                format!("key=r[{record_reg}]"),
             ),
             Insn::SorterSort {
                 cursor_id,
@@ -1049,9 +1049,9 @@ pub fn insn_to_str(
                 },
                 0,
                 if func.arg_count == 0 {
-                    format!("r[{}]=func()", dest)
+                    format!("r[{dest}]=func()")
                 } else if *start_reg == *start_reg + func.arg_count - 1 {
-                    format!("r[{}]=func(r[{}])", dest, start_reg)
+                    format!("r[{dest}]=func(r[{start_reg}])")
                 } else {
                     format!(
                         "r[{}]=func(r[{}..{}])",
@@ -1108,7 +1108,7 @@ pub fn insn_to_str(
                 *key_reg as i32,
                 Value::build_text(table_name),
                 flag.0 as u16,
-                format!("intkey=r[{}] data=r[{}]", key_reg, record_reg),
+                format!("intkey=r[{key_reg}] data=r[{record_reg}]"),
             ),
             Insn::Delete { cursor_id } => (
                 "Delete",
@@ -1143,7 +1143,7 @@ pub fn insn_to_str(
                 *prev_largest_reg as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=rowid", rowid_reg),
+                format!("r[{rowid_reg}]=rowid"),
             ),
             Insn::MustBeInt { reg } => (
                 "MustBeInt",
@@ -1172,7 +1172,7 @@ pub fn insn_to_str(
                 let key = if *num_regs > 0 {
                     format!("key=r[{}..{}]", record_reg, record_reg + num_regs - 1)
                 } else {
-                    format!("key=r[{}]", record_reg)
+                    format!("key=r[{record_reg}]")
                 };
                 (
                     "NoConflict",
@@ -1209,8 +1209,7 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 format!(
-                    "if r[{}]>0 then r[{}]=r[{}]+max(0,r[{}]) else r[{}]=(-1)",
-                    limit_reg, combined_reg, limit_reg, offset_reg, combined_reg
+                    "if r[{limit_reg}]>0 then r[{combined_reg}]=r[{limit_reg}]+max(0,r[{offset_reg}]) else r[{combined_reg}]=(-1)"
                 ),
             ),
             Insn::OpenWrite {
@@ -1228,7 +1227,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("root={}; {}", root_page, name),
+                format!("root={root_page}; {name}"),
             ),
             Insn::Copy {
                 src_reg,
@@ -1241,7 +1240,7 @@ pub fn insn_to_str(
                 *amount as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}]", dst_reg, src_reg),
+                format!("r[{dst_reg}]=r[{src_reg}]"),
             ),
             Insn::CreateBtree { db, root, flags } => (
                 "CreateBtree",
@@ -1264,8 +1263,7 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 format!(
-                    "root iDb={} former_root={} is_temp={}",
-                    root, former_root_reg, is_temp
+                    "root iDb={root} former_root={former_root_reg} is_temp={is_temp}"
                 ),
             ),
             Insn::DropTable {
@@ -1280,7 +1278,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(table_name),
                 0,
-                format!("DROP TABLE {}", table_name),
+                format!("DROP TABLE {table_name}"),
             ),
             Insn::DropIndex { db: _, index } => (
                 "DropIndex",
@@ -1349,7 +1347,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}] >> r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}] >> r[{rhs}]"),
             ),
             Insn::ShiftLeft { lhs, rhs, dest } => (
                 "ShiftLeft",
@@ -1358,7 +1356,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}] << r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}] << r[{rhs}]"),
             ),
             Insn::Variable { index, dest } => (
                 "Variable",
@@ -1377,8 +1375,7 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 format!(
-                    "((r[{}]=NULL)|(r[{}]=NULL)) ? r[{}]=NULL : r[{}]=0",
-                    rg1, rg2, dest, dest
+                    "((r[{rg1}]=NULL)|(r[{rg2}]=NULL)) ? r[{dest}]=NULL : r[{dest}]=0"
                 ),
             ),
             Insn::Not { reg, dest } => (
@@ -1388,7 +1385,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=!r[{}]", dest, reg),
+                format!("r[{dest}]=!r[{reg}]"),
             ),
             Insn::Concat { lhs, rhs, dest } => (
                 "Concat",
@@ -1397,7 +1394,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=r[{}] + r[{}]", dest, lhs, rhs),
+                format!("r[{dest}]=r[{lhs}] + r[{rhs}]"),
             ),
             Insn::And { lhs, rhs, dest } => (
                 "And",
@@ -1406,7 +1403,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=(r[{}] && r[{}])", dest, lhs, rhs),
+                format!("r[{dest}]=(r[{lhs}] && r[{rhs}])"),
             ),
             Insn::Or { lhs, rhs, dest } => (
                 "Or",
@@ -1415,7 +1412,7 @@ pub fn insn_to_str(
                 *dest as i32,
                 Value::build_text(""),
                 0,
-                format!("r[{}]=(r[{}] || r[{}])", dest, lhs, rhs),
+                format!("r[{dest}]=(r[{lhs}] || r[{rhs}])"),
             ),
             Insn::Noop => ("Noop", 0, 0, 0, Value::build_text(""), 0, String::new()),
             Insn::PageCount { db, dest } => (
@@ -1460,7 +1457,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("auto_commit={}, rollback={}", auto_commit, rollback),
+                format!("auto_commit={auto_commit}, rollback={rollback}"),
             ),
             Insn::OpenEphemeral {
                 cursor_id,
@@ -1485,7 +1482,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("cursor={}", cursor_id),
+                format!("cursor={cursor_id}"),
             ),
             Insn::Once {
                 target_pc_when_reentered,
@@ -1505,8 +1502,8 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                dest_end.map_or(format!("r[{}]=NULL", dest), |end| {
-                    format!("r[{}..{}]=NULL", dest, end)
+                dest_end.map_or(format!("r[{dest}]=NULL"), |end| {
+                    format!("r[{dest}..{end}]=NULL")
                 }),
             ),
             Insn::NotFound {
@@ -1601,7 +1598,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("roots={:?} message_register={}", roots, message_register),
+                format!("roots={roots:?} message_register={message_register}"),
             ),
             Insn::RowData { cursor_id, dest } => (
                 "RowData",
@@ -1622,6 +1619,6 @@ pub fn insn_to_str(
         p3,
         p4.to_string(),
         p5,
-        manual_comment.map_or(comment.to_string(), |mc| format!("{}; {}", comment, mc))
+        manual_comment.map_or(comment.to_string(), |mc| format!("{comment}; {mc}"))
     )
 }

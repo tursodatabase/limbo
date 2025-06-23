@@ -138,7 +138,7 @@ pub fn bind_column_references(
                     let col_idx = joined_table.table.columns().iter().position(|c| {
                         c.name
                             .as_ref()
-                            .map_or(false, |name| name.eq_ignore_ascii_case(&normalized_id))
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&normalized_id))
                     });
                     if col_idx.is_some() {
                         if match_result.is_some() {
@@ -166,7 +166,7 @@ pub fn bind_column_references(
                         let col_idx = outer_ref.table.columns().iter().position(|c| {
                             c.name
                                 .as_ref()
-                                .map_or(false, |name| name.eq_ignore_ascii_case(&normalized_id))
+                                .is_some_and(|name| name.eq_ignore_ascii_case(&normalized_id))
                         });
                         if col_idx.is_some() {
                             if match_result.is_some() {
@@ -194,7 +194,7 @@ pub fn bind_column_references(
                     for result_column in result_columns.iter() {
                         if result_column
                             .name(referenced_tables)
-                            .map_or(false, |name| name.eq_ignore_ascii_case(&normalized_id))
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&normalized_id))
                         {
                             *expr = result_column.expr.clone();
                             return Ok(());
@@ -221,7 +221,7 @@ pub fn bind_column_references(
                 let col_idx = tbl.columns().iter().position(|c| {
                     c.name
                         .as_ref()
-                        .map_or(false, |name| name.eq_ignore_ascii_case(&normalized_id))
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&normalized_id))
                 });
                 let Some(col_idx) = col_idx else {
                     crate::bail_parse_error!("Column {} not found", normalized_id);
@@ -343,7 +343,7 @@ fn parse_from_clause_table(
                     ast::As::As(id) => id.0.clone(),
                     ast::As::Elided(id) => id.0.clone(),
                 })
-                .unwrap_or(format!("subquery_{}", cur_table_index));
+                .unwrap_or(format!("subquery_{cur_table_index}"));
             table_references.add_joined_table(JoinedTable::new_subquery(
                 identifier,
                 subplan,
@@ -811,7 +811,7 @@ fn parse_join(
                             .find(|(_, col)| {
                                 col.name
                                     .as_ref()
-                                    .map_or(false, |name| *name == name_normalized)
+                                    .is_some_and(|name| *name == name_normalized)
                             })
                             .map(|(idx, col)| (left_table_idx, left_table.internal_id, idx, col));
                         if left_col.is_some() {
@@ -827,7 +827,7 @@ fn parse_join(
                     let right_col = right_table.columns().iter().enumerate().find(|(_, col)| {
                         col.name
                             .as_ref()
-                            .map_or(false, |name| *name == name_normalized)
+                            .is_some_and(|name| *name == name_normalized)
                     });
                     if right_col.is_none() {
                         crate::bail_parse_error!(
