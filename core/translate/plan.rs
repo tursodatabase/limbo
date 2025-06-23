@@ -324,6 +324,8 @@ pub enum QueryDestination {
         cursor_id: CursorID,
         /// The index that will be used to store the results.
         index: Arc<Index>,
+        /// Whether this is a delete operation that will remove the index entries
+        is_delete: bool,
     },
     /// The results of the query are stored in an ephemeral table,
     /// later used by the parent query.
