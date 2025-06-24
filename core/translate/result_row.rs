@@ -92,6 +92,7 @@ pub fn emit_result_row_and_limit(
                     start_reg: result_columns_start_reg,
                     num_regs: plan.result_columns.len(),
                     cursor_id: *index_cursor_id,
+                    raise_error_if_no_matching_entry: false,
                 });
             } else {
                 let record_reg = program.alloc_register();
