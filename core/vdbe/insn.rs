@@ -733,10 +733,15 @@ pub enum Insn {
         cursor_id: CursorID,
     },
 
+    /// If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry 
+    /// is found. This happens when running an UPDATE or DELETE statement and the index entry to 
+    /// be updated or deleted is not found. For some uses of IdxDelete (example: the EXCEPT operator) 
+    /// it does not matter that no matching entry is found. For those cases, P5 is zero.
     IdxDelete {
         start_reg: usize,
         num_regs: usize,
         cursor_id: CursorID,
+        raise_error_if_no_matching_entry: bool, // P5
     },
 
     NewRowid {

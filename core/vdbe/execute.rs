@@ -4353,6 +4353,7 @@ pub fn op_idx_delete(
         cursor_id,
         start_reg,
         num_regs,
+        raise_error_if_no_matching_entry,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -4390,12 +4391,9 @@ pub fn op_idx_delete(
                     return_if_io!(cursor.rowid())
                 };
 
-                if rowid.is_none() {
-                    // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
-                    // index entry is found. This happens when running an UPDATE or DELETE statement and the
-                    // index entry to be updated or deleted is not found. For some uses of IdxDelete
-                    // (example: the EXCEPT operator) it does not matter that no matching entry is found.
-                    // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
+                // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                if rowid.is_none() && *raise_error_if_no_matching_entry {
                     return Err(LimboError::Corrupt(format!(
                         "IdxDelete: no matching index entry found for record {:?}",
                         make_record(&state.registers, start_reg, num_regs)

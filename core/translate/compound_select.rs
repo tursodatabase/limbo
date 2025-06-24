@@ -255,7 +255,7 @@ fn emit_compound_select(
                     } => (cursor_id, index),
                     _ => {
                         new_index = true;
-                        create_dedupe_index(program, &right_most)?
+                        create_dedupe_index(program, &right_most, schema)?
                     }
                 };
                 plan.query_destination = QueryDestination::EphemeralIndex {
