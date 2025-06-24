@@ -360,6 +360,17 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
         INSERT INTO t SELECT * FROM t1 INTERSECT SELECT * FROM t2 INTERSECT SELECT * FROM t3;
         SELECT * FROM t;
     } {2|200}
+
+    do_execsql_test_on_specific_db {:memory:} insert_from_select_except {
+        CREATE TABLE t(a, b);
+        CREATE TABLE t1(a, b);
+        CREATE TABLE t2(a, b);
+
+        INSERT INTO t1 VALUES (1, 100), (2, 200);
+        INSERT INTO t2 VALUES (2, 200), (3, 300);
+        INSERT INTO t SELECT * FROM t1 EXCEPT SELECT * FROM t2;
+        SELECT * FROM t;
+    } {1|100}
 }
 
 do_execsql_test_on_specific_db {:memory:} negative-primary-integer-key {
