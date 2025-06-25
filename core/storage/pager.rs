@@ -1071,7 +1071,7 @@ impl Pager {
         contents.write_database_header(&default_header);
         page1_ref.set_dirty();
         self.add_dirty(page1_ref.get().id);
-        let page_key = PageCacheKey::new(page1_ref.get().id);
+        let page_key = PageCacheKey(page1_ref.get().id);
         let mut cache = self.page_cache.write();
         cache.insert(page_key, page1_ref.clone()).map_err(|e| {
             LimboError::InternalError(format!("Failed to insert page 1 into cache: {:?}", e))
@@ -1190,7 +1190,7 @@ impl Pager {
         }
         // subjounalPageIfRequired
 
-        let db_size = self.db_header.lock().database_size;
+        let db_size = header_accessor::get_database_size(self)?;
         self.wal.borrow_mut().append_frame(
             page.clone(),
             db_size,
