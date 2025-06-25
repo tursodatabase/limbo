@@ -185,13 +185,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assertion"
-version = "0.0.22"
-dependencies = [
- "antithesis_sdk",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1768,7 +1761,7 @@ dependencies = [
 name = "limbo_core"
 version = "0.1.0-pre.2"
 dependencies = [
- "assertion",
+ "antithesis_sdk",
  "bitflags 2.9.0",
  "built",
  "cfg_block",
