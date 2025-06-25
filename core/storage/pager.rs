@@ -54,6 +54,12 @@ bitflags! {
     }
 }
 
+impl SpillFlag {
+    pub fn can_spill(&self) -> bool {
+        self.contains(SpillFlag::NO_SYNC) || self.is_empty()
+    }
+}
+
 // Concurrency control of pages will be handled by the pager, we won't wrap Page with RwLock
 // because that is bad bad.
 pub type PageRef = Arc<Page>;
@@ -702,7 +708,9 @@ impl Pager {
         let page = Arc::new(Page::new(page_idx));
         page.set_locked();
 
+        tracing::trace!("begin read_page(page_idx = {}) = wal", page_idx);
         if let Some(frame_id) = self.wal.borrow().find_frame(page_idx as u64)? {
+            tracing::trace!("read_page(page_idx = {}) = wal", page_idx);
             self.wal
                 .borrow()
                 .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
@@ -713,7 +721,10 @@ impl Pager {
             // read frame or page
             match page_cache.insert(page_key, page.clone()) {
                 Ok(_) => {}
-                Err(CacheError::Full) => return Err(LimboError::CacheFull),
+                Err(CacheError::Full) => {
+                    drop(page_cache);
+                    self.stress(page.clone())?;
+                }
                 Err(CacheError::KeyExists) => {
                     unreachable!("Page should not exist in cache after get() miss")
                 }
@@ -753,7 +764,7 @@ impl Pager {
     pub fn cache_get(&self, page_idx: usize) -> Option<PageRef> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
-        let page_key = PageCacheKey::new(page_idx);
+        let page_key = PageCacheKey(page_idx);
         page_cache.get(&page_key)
     }
 
@@ -1108,7 +1119,10 @@ impl Pager {
                 let mut cache = self.page_cache.write();
                 match cache.insert(page_key, page.clone()) {
                     Ok(_) => (),
-                    Err(CacheError::Full) => return Err(LimboError::CacheFull),
+                    Err(CacheError::Full) => {
+                        drop(cache);
+                        self.stress(page)?;
+                    }
                     Err(_) => {
                         return Err(LimboError::InternalError(
                             "Unknown error inserting page to cache".into(),
@@ -1132,7 +1146,11 @@ impl Pager {
             let page_key = PageCacheKey(page.get().id);
             let mut cache = self.page_cache.write();
             match cache.insert(page_key, page.clone()) {
-                Err(CacheError::Full) => Err(LimboError::CacheFull),
+                Err(CacheError::Full) => {
+                    drop(cache);
+                    self.stress(page.clone())?;
+                    Ok(page)
+                }
                 Err(_) => Err(LimboError::InternalError(
                     "Unknown error inserting page to cache".into(),
                 )),
@@ -1184,13 +1202,21 @@ impl Pager {
     /// The pager must be purgeable (not in-memory)
     pub fn stress(&self, page: PageRef) -> Result<()> {
         assert!(page.is_dirty());
+        tracing::trace!("Stressing page {}", page.get().id);
+
+        // todo: improve error handling
+        if !self.spill_flag.can_spill() {
+            return Err(LimboError::SpillNotAllowed);
+        }
+
         #[cfg(test)]
         {
             self.stats.spill();
         }
-        // subjounalPageIfRequired
 
+        tracing::trace!("Getting database size");
         let db_size = header_accessor::get_database_size(self)?;
+        tracing::trace!("Database size is: {}", db_size);
         self.wal.borrow_mut().append_frame(
             page.clone(),
             db_size,
