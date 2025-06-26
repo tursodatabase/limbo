@@ -290,7 +290,10 @@ fn query_pragma(
             let base_reg = register;
             program.alloc_registers(5);
             if let Some(table) = table {
-                for (i, column) in table.columns().iter().enumerate() {
+                // According to the SQLite documentation: "The 'cid' column should not be taken to
+                // mean more than 'rank within the current result set'."
+                // Therefore, we enumerate only after filtering out hidden columns.
+                for (i, column) in table.columns().iter().filter(|col| !col.hidden).enumerate() {
                     // cid
                     program.emit_int(i as i64, base_reg);
                     // name
