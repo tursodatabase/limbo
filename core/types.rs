@@ -956,10 +956,6 @@ impl ImmutableRecord {
         self.payload.extend_from_slice(payload);
     }
 
-    pub fn end_serialization(&mut self) {}
-
-    pub fn add_value(&mut self, value: RefValue) {}
-
     pub fn invalidate(&mut self) {
         self.payload.clear();
     }
@@ -1092,9 +1088,15 @@ impl RecordCursor {
         let serial_type_obj = SerialType::try_from(serial_type as u64)?;
 
         match serial_type_obj.kind() {
-            SerialTypeKind::Null => return Ok(RefValue::Null),
-            SerialTypeKind::ConstInt0 => return Ok(RefValue::Integer(0)),
-            SerialTypeKind::ConstInt1 => return Ok(RefValue::Integer(1)),
+            SerialTypeKind::Null => {
+                return Ok(RefValue::Null);
+            }
+            SerialTypeKind::ConstInt0 => {
+                return Ok(RefValue::Integer(0));
+            }
+            SerialTypeKind::ConstInt1 => {
+                return Ok(RefValue::Integer(1));
+            }
             _ => {} // Continue to read from payload
         }
 
@@ -1108,11 +1110,23 @@ impl RecordCursor {
         let end_offset = self.header_offsets[idx + 2] as usize;
         let payload = record.get_payload();
 
-        if start_offset >= payload.len() || end_offset > payload.len() {
+        if start_offset >= payload.len() {
             return Ok(RefValue::Null);
         }
 
-        let column_data = &payload[start_offset..end_offset];
+        // If end_offset is beyond payload, we might still be able to read the column
+        // But we need at least enough bytes for the serial type
+        let expected_size = serial_type_obj.size();
+        let available_bytes = payload.len().saturating_sub(start_offset);
+
+        if available_bytes < expected_size {
+            return Ok(RefValue::Null);
+        }
+
+        // Use the minimum of end_offset and what's actually available
+        let actual_end_offset = end_offset.min(payload.len());
+        let column_data = &payload[start_offset..actual_end_offset];
+
         let (value, _) = crate::storage::sqlite3_ondisk::read_value(column_data, serial_type_obj)?;
         Ok(value)
     }
@@ -1305,7 +1319,7 @@ fn sqlite_int_float_compare(int_val: i64, float_val: f64) -> std::cmp::Ordering 
 /// be compared differently.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct IndexKeySortOrder(u64);
+pub struct IndexKeySortOrder(pub u64);
 
 impl IndexKeySortOrder {
     pub fn get_sort_order_for_col(&self, column_idx: usize) -> SortOrder {
@@ -1346,6 +1360,16 @@ pub struct IndexKeyInfo {
     pub has_rowid: bool,
     /// The total number of columns in the index, including the row ID column if present.
     pub num_cols: usize,
+}
+
+impl Default for IndexKeyInfo {
+    fn default() -> Self {
+        Self {
+            sort_order: IndexKeySortOrder::default(),
+            has_rowid: true,
+            num_cols: 1,
+        }
+    }
 }
 
 impl IndexKeyInfo {
@@ -1389,6 +1413,7 @@ pub fn compare_immutable_for_testing(
     r: &[RefValue],
     index_key_sort_order: IndexKeySortOrder,
     collations: &[CollationSeq],
+    tie_breaker: std::cmp::Ordering,
 ) -> std::cmp::Ordering {
     let min_len = l.len().min(r.len());
 
@@ -1411,19 +1436,7 @@ pub fn compare_immutable_for_testing(
         }
     }
 
-    // All common fields are equal; resolve by field count difference
-    let len_cmp = l.len().cmp(&r.len());
-
-    if len_cmp == std::cmp::Ordering::Equal {
-        std::cmp::Ordering::Equal
-    } else {
-        // Use sort order of the last compared column, or default to Asc
-        let last_index = min_len.saturating_sub(1);
-        match index_key_sort_order.get_sort_order_for_col(last_index) {
-            SortOrder::Asc => len_cmp,
-            SortOrder::Desc => len_cmp.reverse(),
-        }
-    }
+    tie_breaker
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1441,15 +1454,23 @@ impl RecordCompare {
         index_info: &IndexKeyInfo,
         collations: &[CollationSeq],
         skip: usize,
+        tie_breaker: std::cmp::Ordering,
     ) -> Result<std::cmp::Ordering> {
         match self {
-            RecordCompare::Int => compare_records_int(serialized, unpacked, index_info, collations),
+            RecordCompare::Int => {
+                compare_records_int(serialized, unpacked, index_info, collations, tie_breaker)
+            }
             RecordCompare::String => {
-                compare_records_string(serialized, unpacked, index_info, collations)
+                compare_records_string(serialized, unpacked, index_info, collations, tie_breaker)
             }
-            RecordCompare::Generic => {
-                compare_records_generic(serialized, unpacked, index_info, collations, skip)
-            }
+            RecordCompare::Generic => compare_records_generic(
+                serialized,
+                unpacked,
+                index_info,
+                collations,
+                skip,
+                tie_breaker,
+            ),
         }
     }
 }
@@ -1470,34 +1491,77 @@ pub fn find_compare(
     }
 }
 
+pub fn get_tie_breaker_from_seek_op(seek_op: SeekOp) -> std::cmp::Ordering {
+    match seek_op {
+        // exact‐match “key == X” opcodes
+        SeekOp::GE { eq_only: true } | SeekOp::LE { eq_only: true } => std::cmp::Ordering::Equal,
+
+        // forward search – want the *first* ≥ / > key
+        SeekOp::GE { eq_only: false } => std::cmp::Ordering::Greater,
+        SeekOp::GT => std::cmp::Ordering::Less,
+
+        // backward search – want the *last* ≤ / < key
+        SeekOp::LE { eq_only: false } => std::cmp::Ordering::Less,
+        SeekOp::LT => std::cmp::Ordering::Greater,
+    }
+}
+
 fn compare_records_int(
     serialized: &ImmutableRecord,
     unpacked: &[RefValue],
     index_info: &IndexKeyInfo,
     collations: &[CollationSeq],
+    tie_breaker: std::cmp::Ordering,
 ) -> Result<std::cmp::Ordering> {
     let payload = serialized.get_payload();
     if payload.len() < 2 || payload[0] > 63 {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     }
 
     let header_size = payload[0] as usize;
     let first_serial_type = payload[1];
 
     if !matches!(first_serial_type, 1..=6 | 8 | 9) {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     }
 
     let data_start = header_size;
     if data_start >= payload.len() {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     }
 
     let lhs_int = read_integer(&payload[data_start..], first_serial_type)?;
     let RefValue::Integer(rhs_int) = unpacked[0] else {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     };
-
     let comparison = match index_info.sort_order.get_sort_order_for_col(0) {
         SortOrder::Asc => lhs_int.cmp(&rhs_int),
         SortOrder::Desc => lhs_int.cmp(&rhs_int).reverse(),
@@ -1506,17 +1570,16 @@ fn compare_records_int(
         std::cmp::Ordering::Equal => {
             // First fields equal, compare remaining fields if any
             if unpacked.len() > 1 {
-                return compare_records_generic(serialized, unpacked, index_info, collations, 1);
-            } else {
-                let mut record_cursor = RecordCursor::new();
-                let serial_type_len = record_cursor.len(serialized);
-
-                if serial_type_len > unpacked.len() {
-                    Ok(std::cmp::Ordering::Greater)
-                } else {
-                    Ok(std::cmp::Ordering::Equal)
-                }
+                return compare_records_generic(
+                    serialized,
+                    unpacked,
+                    index_info,
+                    collations,
+                    1,
+                    tie_breaker,
+                );
             }
+            Ok(tie_breaker)
         }
         other => Ok(other),
     }
@@ -1527,10 +1590,18 @@ fn compare_records_string(
     unpacked: &[RefValue],
     index_info: &IndexKeyInfo,
     collations: &[CollationSeq],
+    tie_breaker: std::cmp::Ordering,
 ) -> Result<std::cmp::Ordering> {
     let payload = serialized.get_payload();
     if payload.len() < 2 {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     }
 
     let header_size = payload[0] as usize;
@@ -1538,11 +1609,25 @@ fn compare_records_string(
 
     // Check if serial type is not a string or if its a blob
     if first_serial_type < 13 || (first_serial_type & 1) == 0 {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     }
 
     let RefValue::Text(rhs_text) = &unpacked[0] else {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     };
 
     let string_len = (first_serial_type as usize - 13) / 2;
@@ -1554,7 +1639,14 @@ fn compare_records_string(
     let (lhs_value, _) = read_value(&payload[data_start..], serial_type)?;
 
     let RefValue::Text(lhs_text) = lhs_value else {
-        return compare_records_generic(serialized, unpacked, index_info, collations, 0);
+        return compare_records_generic(
+            serialized,
+            unpacked,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        );
     };
 
     let comparison = if let Some(collation) = collations.get(0) {
@@ -1581,17 +1673,16 @@ fn compare_records_string(
             }
 
             if unpacked.len() > 1 {
-                compare_records_generic(serialized, unpacked, index_info, collations, 1)
-            } else {
-                let mut record_cursor = RecordCursor::new();
-                let serial_type_len = record_cursor.len(serialized);
-
-                if serial_type_len > unpacked.len() {
-                    Ok(std::cmp::Ordering::Greater)
-                } else {
-                    Ok(std::cmp::Ordering::Equal)
-                }
+                return compare_records_generic(
+                    serialized,
+                    unpacked,
+                    index_info,
+                    collations,
+                    1,
+                    tie_breaker,
+                );
             }
+            Ok(tie_breaker)
         }
         other => Ok(other),
     }
@@ -1603,21 +1694,18 @@ pub fn compare_records_generic(
     index_info: &IndexKeyInfo,
     collations: &[CollationSeq],
     skip: usize,
+    tie_breaker: std::cmp::Ordering,
 ) -> Result<std::cmp::Ordering> {
-    // println!("hitting compare_records_generic");
     let payload = serialized.get_payload();
-    // println!("payload: {:?}", payload);
     if payload.is_empty() {
         return Ok(std::cmp::Ordering::Less);
     }
 
     let (header_size, mut pos) = read_varint(payload)?;
     let header_end = header_size as usize;
-
     debug_assert!(header_end <= payload.len());
 
     let mut serial_types = Vec::new();
-
     while pos < header_end {
         let (serial_type, bytes_read) = read_varint(&payload[pos..])?;
         serial_types.push(serial_type);
@@ -1626,110 +1714,55 @@ pub fn compare_records_generic(
 
     let mut data_pos = header_size as usize;
 
+    // Skip over `skip` fields
     for i in 0..skip {
         let serial_type = SerialType::try_from(serial_types[i])?;
         if !matches!(
             serial_type.kind(),
             SerialTypeKind::ConstInt0 | SerialTypeKind::ConstInt1 | SerialTypeKind::Null
         ) {
-            let len = serial_type.size();
-            data_pos += len;
+            data_pos += serial_type.size();
         }
     }
 
-    // println!("skip: {}", skip);
-    // println!(
-    //     "unpacked.len(): {}, serial_types.len(): {}",
-    //     unpacked.len(),
-    //     serial_types.len()
-    // );
-
     for i in skip..unpacked.len().min(serial_types.len()) {
         let serial_type = SerialType::try_from(serial_types[i])?;
-        // println!("i = {}", i);
-        // println!("serial type kind = {:?}", serial_type.kind());
-        let rhs_value = &unpacked[i];
+        let rhs_value = &unpacked[i]; // key value
 
         let lhs_value = match serial_type.kind() {
+            // record value
             SerialTypeKind::ConstInt0 => RefValue::Integer(0),
             SerialTypeKind::ConstInt1 => RefValue::Integer(1),
             SerialTypeKind::Null => RefValue::Null,
             _ => {
-                // Use existing read_value function for all other types
                 let (value, field_size) = read_value(&payload[data_pos..], serial_type)?;
                 data_pos += field_size;
                 value
             }
         };
 
-        // println!("lhs_value: {:?}, rhs_value: {:?}", lhs_value, rhs_value);
-
-        let comparison = match rhs_value {
-            RefValue::Integer(rhs_int) => {
-                match &lhs_value {
-                    RefValue::Null => std::cmp::Ordering::Less,
-                    RefValue::Integer(lhs_int) => lhs_int.cmp(rhs_int),
-                    RefValue::Float(lhs_float) => {
-                        sqlite_int_float_compare(*rhs_int, *lhs_float).reverse()
-                    }
-                    RefValue::Text(_) | RefValue::Blob(_) => std::cmp::Ordering::Less, // Numbers < Text/Blob
+        // Use the existing partial_cmp implementation for type ordering and basic comparison
+        let comparison = match (&lhs_value, rhs_value) {
+            // Special case: Text comparison with collation support
+            (RefValue::Text(lhs_text), RefValue::Text(rhs_text)) => {
+                if let Some(collation) = collations.get(i) {
+                    collation.compare_strings(lhs_text.as_str(), rhs_text.as_str())
+                } else {
+                    // Use existing partial_cmp for binary text comparison
+                    lhs_value.partial_cmp(rhs_value).unwrap()
                 }
             }
 
-            RefValue::Float(rhs_float) => {
-                match &lhs_value {
-                    RefValue::Null => std::cmp::Ordering::Less,
-                    RefValue::Integer(lhs_int) => sqlite_int_float_compare(*lhs_int, *rhs_float),
-                    RefValue::Float(lhs_float) => {
-                        if lhs_float.is_nan() && rhs_float.is_nan() {
-                            std::cmp::Ordering::Equal
-                        } else if lhs_float.is_nan() {
-                            std::cmp::Ordering::Less // NaN is NULL
-                        } else if rhs_float.is_nan() {
-                            std::cmp::Ordering::Greater
-                        } else {
-                            lhs_float
-                                .partial_cmp(rhs_float)
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        }
-                    }
-                    RefValue::Text(_) | RefValue::Blob(_) => std::cmp::Ordering::Less, // Numbers < Text/Blob
-                }
+            // Special case: Integer vs Float comparison using sqlite_int_float_compare
+            (RefValue::Integer(lhs_int), RefValue::Float(rhs_float)) => {
+                sqlite_int_float_compare(*lhs_int, *rhs_float)
             }
 
-            RefValue::Text(rhs_text) => {
-                match &lhs_value {
-                    RefValue::Null | RefValue::Integer(_) | RefValue::Float(_) => {
-                        std::cmp::Ordering::Less
-                    }
-                    RefValue::Text(lhs_text) => {
-                        if let Some(collation) = collations.get(i) {
-                            collation.compare_strings(lhs_text.as_str(), rhs_text.as_str())
-                        } else {
-                            // Binary comparison (no collation)
-                            lhs_text.value.to_slice().cmp(rhs_text.value.to_slice())
-                        }
-                    }
-                    RefValue::Blob(_) => std::cmp::Ordering::Less, // Text < Blob
-                }
+            (RefValue::Float(lhs_float), RefValue::Integer(rhs_int)) => {
+                sqlite_int_float_compare(*rhs_int, *lhs_float).reverse()
             }
 
-            // RHS is a blob
-            RefValue::Blob(rhs_blob) => match &lhs_value {
-                RefValue::Null | RefValue::Integer(_) | RefValue::Float(_) | RefValue::Text(_) => {
-                    std::cmp::Ordering::Less
-                }
-                RefValue::Blob(lhs_blob) => lhs_blob.to_slice().cmp(rhs_blob.to_slice()),
-            },
-
-            // RHS is null
-            RefValue::Null => {
-                match &lhs_value {
-                    RefValue::Null => std::cmp::Ordering::Equal,
-                    RefValue::Float(f) if f.is_nan() => std::cmp::Ordering::Equal, // NaN treated as NULL
-                    _ => std::cmp::Ordering::Less, // Non-NULL > NULL
-                }
-            }
+            _ => lhs_value.partial_cmp(rhs_value).unwrap(),
         };
 
         let final_comparison = match index_info.sort_order.get_sort_order_for_col(i) {
@@ -1743,7 +1776,8 @@ pub fn compare_records_generic(
         }
     }
 
-    Ok(serial_types.len().cmp(&unpacked.len()))
+    // All compared fields equal: use caller-provided tie_breaker
+    Ok(tie_breaker)
 }
 
 #[inline(always)]
@@ -2119,7 +2153,6 @@ impl RawSlice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::sqlite3_ondisk::read_value;
     use crate::translate::collate::CollationSeq;
 
     fn create_record(values: Vec<Value>) -> ImmutableRecord {
@@ -2180,16 +2213,26 @@ mod tests {
             .map(|v| value_to_ref_value(v))
             .collect();
 
+        let tie_breaker = std::cmp::Ordering::Equal;
+
         let gold_result = compare_immutable_for_testing(
             &serialized_ref_values,
             &unpacked_values,
             index_info.sort_order.clone(),
             collations,
+            tie_breaker,
         );
 
         let comparer = find_compare(&unpacked_values, index_info, collations);
         let optimized_result = comparer
-            .compare(&serialized, &unpacked_values, index_info, collations, 0)
+            .compare(
+                &serialized,
+                &unpacked_values,
+                index_info,
+                collations,
+                0,
+                tie_breaker,
+            )
             .unwrap();
 
         assert_eq!(
@@ -2198,9 +2241,15 @@ mod tests {
             test_name, gold_result, optimized_result, comparer
         );
 
-        let generic_result =
-            compare_records_generic(&serialized, &unpacked_values, index_info, collations, 0)
-                .unwrap();
+        let generic_result = compare_records_generic(
+            &serialized,
+            &unpacked_values,
+            index_info,
+            collations,
+            0,
+            tie_breaker,
+        )
+        .unwrap();
         assert_eq!(
             gold_result, generic_result,
             "Test '{}' failed with generic: Full Comparison: {:?}, Generic: {:?}",
@@ -2543,10 +2592,25 @@ mod tests {
             RefValue::Integer(3),
         ];
 
-        let result_skip_0 =
-            compare_records_generic(&serialized, &unpacked, &index_info, &collations, 0).unwrap();
-        let result_skip_1 =
-            compare_records_generic(&serialized, &unpacked, &index_info, &collations, 1).unwrap();
+        let tie_breaker = std::cmp::Ordering::Equal;
+        let result_skip_0 = compare_records_generic(
+            &serialized,
+            &unpacked,
+            &index_info,
+            &collations,
+            0,
+            tie_breaker,
+        )
+        .unwrap();
+        let result_skip_1 = compare_records_generic(
+            &serialized,
+            &unpacked,
+            &index_info,
+            &collations,
+            1,
+            tie_breaker,
+        )
+        .unwrap();
 
         assert_eq!(result_skip_0, std::cmp::Ordering::Less);
 
