@@ -523,6 +523,7 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
 
       select * from t EXCEPT select * from u UNION select * from v;
     } {x|x
+    y|y
     z|z}
 
     do_execsql_test_on_specific_db {:memory:} select-union-except {
