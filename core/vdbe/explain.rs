@@ -1120,7 +1120,7 @@ pub fn insn_to_str(
                 cursor_id,
                 start_reg,
                 num_regs,
-                raise_error_if_no_matching_entry
+                raise_error_if_no_matching_entry,
             } => (
                 "IdxDelete",
                 *cursor_id as i32,
