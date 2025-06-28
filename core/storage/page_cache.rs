@@ -138,7 +138,9 @@ impl DumbLruPageCache {
         // Try to detach from LRU list first, can fail
         self.detach(ptr, clean_page)?;
         let ptr = self.map.borrow_mut().remove(&key).unwrap();
-        unsafe { std::ptr::drop_in_place(ptr.as_ptr()) };
+        unsafe {
+            let _ = Box::from_raw(ptr.as_ptr());
+        };
         Ok(())
     }
 
@@ -299,7 +301,9 @@ impl DumbLruPageCache {
             unsafe {
                 assert!(!current_entry.as_ref().page.is_dirty());
             }
-            unsafe { std::ptr::drop_in_place(current_entry.as_ptr()) };
+            unsafe {
+                let _ = Box::from_raw(current_entry.as_ptr());
+            };
             current = next;
         }
         let _ = self.head.take();
@@ -570,7 +574,11 @@ impl PageHashMap {
     }
 
     fn hash(&self, key: &PageCacheKey) -> usize {
-        key.pgno % self.capacity
+        if self.capacity.is_power_of_two() {
+            key.pgno & (self.capacity - 1)
+        } else {
+            key.pgno % self.capacity
+        }
     }
 
     pub fn rehash(&self, new_capacity: usize) -> PageHashMap {
@@ -1183,5 +1191,34 @@ mod tests {
         assert_eq!(cache.capacity, 3);
         cache.verify_list_integrity();
         assert!(cache.insert(create_key(4), page_with_content(4)).is_ok());
+    }
+
+    #[test]
+    #[ignore = "long running test, remove to verify"]
+    fn test_clear_memory_stability() {
+        let initial_memory = memory_stats::memory_stats().unwrap().physical_mem;
+
+        for _ in 0..100000 {
+            let mut cache = DumbLruPageCache::new(1000);
+
+            for i in 0..1000 {
+                let key = create_key(i);
+                let page = page_with_content(i);
+                cache.insert(key, page).unwrap();
+            }
+
+            cache.clear().unwrap();
+            drop(cache);
+        }
+
+        let final_memory = memory_stats::memory_stats().unwrap().physical_mem;
+
+        let growth = final_memory.saturating_sub(initial_memory);
+        println!("Growth: {}", growth);
+        assert!(
+            growth < 10_000_000,
+            "Memory grew by {} bytes over 10 cycles",
+            growth
+        );
     }
 }
