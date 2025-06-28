@@ -1211,7 +1211,7 @@ mod tests {
         let final_memory_virtual = final_memory.virtual_mem;
         let final_memory_resident = final_memory.physical_mem;
 
-        assert!(final_memory_virtual - initial_memory_virtual < 1_000_000);
-        assert!(final_memory_resident - intial_memory_resident < 1_000_000);
+        assert!(final_memory_virtual.saturating_sub(initial_memory_virtual) < 1_000_000);
+        assert!(final_memory_resident.saturating_sub(intial_memory_resident) < 1_000_000);
     }
 }
