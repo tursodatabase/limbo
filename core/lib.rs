@@ -122,6 +122,7 @@ pub struct Database {
     init_lock: Arc<Mutex<()>>,
 
     open_flags: OpenFlags,
+    #[allow(dead_code)]
     database_mode: DatabaseMode,
 }
 
