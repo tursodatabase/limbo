@@ -91,6 +91,7 @@ built = { version = "0.7.5", features = ["git2", "chrono"] }
 pprof = { version = "0.14.0", features = ["criterion", "flamegraph"] }
 
 [dev-dependencies]
+memory-stats = "1.2.0"
 criterion = { version = "0.5", features = [
     "html_reports",
     "async",

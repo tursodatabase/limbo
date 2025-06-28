@@ -1,3 +1,4 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{cell::RefCell, ptr::NonNull};
 
 use std::sync::Arc;
@@ -138,7 +139,9 @@ impl DumbLruPageCache {
         // Try to detach from LRU list first, can fail
         self.detach(ptr, clean_page)?;
         let ptr = self.map.borrow_mut().remove(&key).unwrap();
-        unsafe { std::ptr::drop_in_place(ptr.as_ptr()) };
+        unsafe {
+            let _ = Box::from_raw(ptr.as_ptr());
+        };
         Ok(())
     }
 
@@ -570,7 +573,11 @@ impl PageHashMap {
     }
 
     fn hash(&self, key: &PageCacheKey) -> usize {
-        key.pgno % self.capacity
+        if self.capacity.is_power_of_two() {
+            key.pgno & (self.capacity - 1)
+        } else {
+            key.pgno % self.capacity
+        }
     }
 
     pub fn rehash(&self, new_capacity: usize) -> PageHashMap {
@@ -1183,5 +1190,29 @@ mod tests {
         assert_eq!(cache.capacity, 3);
         cache.verify_list_integrity();
         assert!(cache.insert(create_key(4), page_with_content(4)).is_ok());
+    }
+
+    #[test]
+    fn test_memory_leak_fix() {
+        let mut cache = DumbLruPageCache::new(10);
+
+        let initial_memory = memory_stats::memory_stats().unwrap();
+        let initial_memory_virtual = initial_memory.virtual_mem;
+        let intial_memory_resident = initial_memory.physical_mem;
+
+        for i in 0..10000 {
+            let key = create_key(i);
+            let page = page_with_content(i);
+            let _ = cache.insert(key, page);
+        }
+
+        drop(cache);
+
+        let final_memory = memory_stats::memory_stats().unwrap();
+        let final_memory_virtual = final_memory.virtual_mem;
+        let final_memory_resident = final_memory.physical_mem;
+
+        assert!(final_memory_virtual - initial_memory_virtual < 1_000_000);
+        assert!(final_memory_resident - intial_memory_resident < 1_000_000);
     }
 }
