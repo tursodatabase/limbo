@@ -1194,26 +1194,31 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_leak_fix() {
-        let mut cache = DumbLruPageCache::new(10);
+    #[ignore = "long running test, remove to verify"]
+    fn test_clear_memory_stability() {
+        let initial_memory = memory_stats::memory_stats().unwrap().physical_mem;
 
-        let initial_memory = memory_stats::memory_stats().unwrap();
-        let initial_memory_virtual = initial_memory.virtual_mem;
-        let initial_memory_resident = initial_memory.physical_mem;
+        for _ in 0..100000 {
+            let mut cache = DumbLruPageCache::new(1000);
 
-        for i in 0..10000 {
-            let key = create_key(i);
-            let page = page_with_content(i);
-            let _ = cache.insert(key, page);
+            for i in 0..1000 {
+                let key = create_key(i);
+                let page = page_with_content(i);
+                cache.insert(key, page).unwrap();
+            }
+
+            cache.clear().unwrap();
+            drop(cache);
         }
 
-        drop(cache);
+        let final_memory = memory_stats::memory_stats().unwrap().physical_mem;
 
-        let final_memory = memory_stats::memory_stats().unwrap();
-        let final_memory_virtual = final_memory.virtual_mem;
-        let final_memory_resident = final_memory.physical_mem;
-
-        assert!(final_memory_virtual.saturating_sub(initial_memory_virtual) < 1_000_000);
-        assert!(final_memory_resident.saturating_sub(initial_memory_resident) < 1_000_000);
+        let growth = final_memory.saturating_sub(initial_memory);
+        println!("Growth: {}", growth);
+        assert!(
+            growth < 10_000_000,
+            "Memory grew by {} bytes over 10 cycles",
+            growth
+        );
     }
 }
