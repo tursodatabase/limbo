@@ -301,7 +301,9 @@ impl DumbLruPageCache {
             unsafe {
                 assert!(!current_entry.as_ref().page.is_dirty());
             }
-            unsafe { std::ptr::drop_in_place(current_entry.as_ptr()) };
+            unsafe {
+                let _ = Box::from_raw(current_entry.as_ptr());
+            };
             current = next;
         }
         let _ = self.head.take();
@@ -1197,7 +1199,7 @@ mod tests {
 
         let initial_memory = memory_stats::memory_stats().unwrap();
         let initial_memory_virtual = initial_memory.virtual_mem;
-        let intial_memory_resident = initial_memory.physical_mem;
+        let initial_memory_resident = initial_memory.physical_mem;
 
         for i in 0..10000 {
             let key = create_key(i);
@@ -1212,6 +1214,6 @@ mod tests {
         let final_memory_resident = final_memory.physical_mem;
 
         assert!(final_memory_virtual.saturating_sub(initial_memory_virtual) < 1_000_000);
-        assert!(final_memory_resident.saturating_sub(intial_memory_resident) < 1_000_000);
+        assert!(final_memory_resident.saturating_sub(initial_memory_resident) < 1_000_000);
     }
 }
