@@ -106,6 +106,15 @@ pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
+/// The different modes that a database can run in
+#[derive(Clone, Copy)]
+pub enum DatabaseMode {
+    /// The database is a trasient database, running in in-memory mode
+    Memory,
+    /// The database is a persistent database, which will write its changes to disk
+    File,
+}
+
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
@@ -119,6 +128,7 @@ pub struct Database {
     is_empty: Arc<AtomicUsize>,
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
+    database_mode: DatabaseMode,
 }
 
 unsafe impl Send for Database {}
@@ -177,6 +187,12 @@ impl Database {
     ) -> Result<Arc<Database>> {
         let wal_path = format!("{}-wal", path);
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
+
+        let database_mode = if path == ":memory:" {
+            DatabaseMode::Memory
+        } else {
+            DatabaseMode::File
+        };
         let db_size = db_file.size()?;
 
         let mv_store = if enable_mvcc {
@@ -208,6 +224,7 @@ impl Database {
             db_file,
             io: io.clone(),
             open_flags: flags,
+            database_mode,
             is_empty: Arc::new(AtomicUsize::new(is_empty)),
             init_lock: Arc::new(Mutex::new(())),
         };
@@ -255,6 +272,7 @@ impl Database {
                 buffer_pool,
                 is_empty,
                 self.init_lock.clone(),
+                DatabaseMode::File,
             )?);
 
             let page_size = header_accessor::get_page_size(&pager)
@@ -297,6 +315,7 @@ impl Database {
             buffer_pool.clone(),
             is_empty,
             Arc::new(Mutex::new(())),
+            DatabaseMode::File,
         )?;
         let page_size = header_accessor::get_page_size(&pager)
             .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as u32;
