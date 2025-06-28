@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_core"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "bitflags",
  "built",
@@ -581,12 +581,14 @@ dependencies = [
  "libm",
  "limbo_ext",
  "limbo_macros",
+ "limbo_series",
  "limbo_sqlite3_parser",
  "limbo_time",
  "limbo_uuid",
  "miette",
  "mimalloc",
  "parking_lot",
+ "paste",
  "polling",
  "rand",
  "regex",
@@ -602,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ext"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.1",
@@ -611,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_macros"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -619,8 +621,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "limbo_series"
+version = "0.1.0-pre.2"
+dependencies = [
+ "limbo_ext",
+ "mimalloc",
+]
+
+[[package]]
 name = "limbo_sqlite3_parser"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "bitflags",
  "cc",
@@ -639,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_time"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
  "limbo_ext",
@@ -651,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_uuid"
-version = "0.0.21"
+version = "0.1.0-pre.2"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -766,6 +776,12 @@ dependencies = [
  "smallvec",
  "windows-targets",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "percent-encoding"

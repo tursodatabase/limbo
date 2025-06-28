@@ -4,7 +4,9 @@ use std::{error::Error, num::NonZero, sync::Arc};
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::{fuzz_target, Corpus};
-use limbo_core::{Value, IO as _};
+
+use limbo::IO;
+use limbo_core as limbo;
 
 macro_rules! str_enum {
     ($vis:vis enum $name:ident { $($variant:ident => $value:literal),*, }) => {
@@ -63,7 +65,7 @@ str_enum! {
     }
 }
 
-#[derive(Arbitrary, Debug, Clone)]
+#[derive(Arbitrary, Debug, Clone, PartialEq)]
 enum Value {
     Null,
     Integer(i64),
@@ -72,20 +74,20 @@ enum Value {
     Blob(Vec<u8>),
 }
 
-impl From<Value> for limbo_core::Value {
-    fn from(value: Value) -> limbo_core::Value {
+impl From<Value> for limbo::Value {
+    fn from(value: Value) -> limbo::Value {
         match value {
-            Value::Null => limbo_core::Value::Null,
-            Value::Integer(v) => limbo_core::Value::Integer(v),
+            Value::Null => limbo::Value::Null,
+            Value::Integer(v) => limbo::Value::Integer(v),
             Value::Real(v) => {
                 if v.is_nan() {
-                    limbo_core::Value::Null
+                    limbo::Value::Null
                 } else {
-                    limbo_core::Value::Float(v)
+                    limbo::Value::Float(v)
                 }
             }
-            Value::Text(v) => limbo_core::Value::from_text(&v),
-            Value::Blob(v) => limbo_core::Value::from_blob(v.to_owned()),
+            Value::Text(v) => limbo::Value::from_text(&v),
+            Value::Blob(v) => limbo::Value::from_blob(v.to_owned()),
         }
     }
 }
@@ -183,8 +185,8 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     };
 
     let found = 'value: {
-        let io = Arc::new(limbo_core::MemoryIO::new());
-        let db = limbo_core::Database::open_file(io.clone(), ":memory:", false)?;
+        let io = Arc::new(limbo::MemoryIO::new());
+        let db = limbo::Database::open_file(io.clone(), ":memory:", false)?;
         let conn = db.connect()?;
 
         let mut stmt = conn.prepare(sql)?;
@@ -192,7 +194,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
             stmt.bind_at(NonZero::new(idx + 1).unwrap(), value.clone().into())
         }
         loop {
-            use limbo_core::StepResult;
+            use limbo::StepResult;
             match stmt.step()? {
                 StepResult::IO => io.run_once()?,
                 StepResult::Row => {
@@ -206,7 +208,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     };
 
     assert_eq!(
-        Value::from(expected.clone()),
+        limbo::Value::from(Value::from(expected.clone())),
         found.clone(),
         "with expression {:?}",
         expr,
