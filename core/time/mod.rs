@@ -3,64 +3,68 @@ use std::str::FromStr as _;
 use chrono::prelude::*;
 use core::cmp::Ordering;
 use thiserror::Error;
-use turso_ext::ValueType;
 
-use turso_ext::{register_extension, scalar, ResultCode, Value};
+use crate::ext::register_scalar_function;
+use turso_ext::{scalar, ExtensionApi, ResultCode, Value, ValueType};
 
 mod time;
 
 use time::*;
 
-register_extension! {
-    scalars: {
-        time_now,
-        time_date,
-        make_date,
-        make_timestamp,
-        time_get,
-        time_get_year,
-        time_get_month,
-        time_get_day,
-        time_get_hour,
-        time_get_minute,
-        time_get_second,
-        time_get_nano,
-        time_get_weekday,
-        time_get_yearday,
-        time_get_isoyear,
-        time_get_isoweek,
-        time_unix,
-        to_timestamp,
-        time_milli,
-        time_micro,
-        time_nano,
-        time_to_unix,
-        time_to_milli,
-        time_to_micro,
-        time_to_nano,
-        time_after,
-        time_before,
-        time_compare,
-        time_equal,
-        dur_ns,
-        dur_us,
-        dur_ms,
-        dur_s,
-        dur_m,
-        dur_h,
-        time_add,
-        time_add_date,
-        time_sub,
-        time_since,
-        time_until,
-        time_trunc,
-        time_round,
-        time_fmt_iso,
-        time_fmt_datetime,
-        time_fmt_date,
-        time_fmt_time,
-        time_parse,
-    },
+pub fn register_extension(ext_api: &mut ExtensionApi) {
+    unsafe {
+        register_scalar_function(ext_api.ctx, c"time_now".as_ptr(), time_now);
+        register_scalar_function(ext_api.ctx, c"time_date".as_ptr(), time_date);
+        register_scalar_function(ext_api.ctx, c"make_date".as_ptr(), make_date);
+        register_scalar_function(ext_api.ctx, c"make_timestamp".as_ptr(), make_timestamp);
+        register_scalar_function(ext_api.ctx, c"time_get".as_ptr(), time_get);
+        register_scalar_function(ext_api.ctx, c"time_get_year".as_ptr(), time_get_year);
+        register_scalar_function(ext_api.ctx, c"time_get_month".as_ptr(), time_get_month);
+        register_scalar_function(ext_api.ctx, c"time_get_day".as_ptr(), time_get_day);
+        register_scalar_function(ext_api.ctx, c"time_get_hour".as_ptr(), time_get_hour);
+        register_scalar_function(ext_api.ctx, c"time_get_minute".as_ptr(), time_get_minute);
+        register_scalar_function(ext_api.ctx, c"time_get_second".as_ptr(), time_get_second);
+        register_scalar_function(ext_api.ctx, c"time_get_nano".as_ptr(), time_get_nano);
+        register_scalar_function(ext_api.ctx, c"time_get_weekday".as_ptr(), time_get_weekday);
+        register_scalar_function(ext_api.ctx, c"time_get_yearday".as_ptr(), time_get_yearday);
+        register_scalar_function(ext_api.ctx, c"time_get_isoyear".as_ptr(), time_get_isoyear);
+        register_scalar_function(ext_api.ctx, c"time_get_isoweek".as_ptr(), time_get_isoweek);
+        register_scalar_function(ext_api.ctx, c"time_unix".as_ptr(), time_unix);
+        register_scalar_function(ext_api.ctx, c"to_timestamp".as_ptr(), to_timestamp);
+        register_scalar_function(ext_api.ctx, c"time_milli".as_ptr(), time_milli);
+        register_scalar_function(ext_api.ctx, c"time_micro".as_ptr(), time_micro);
+        register_scalar_function(ext_api.ctx, c"time_nano".as_ptr(), time_nano);
+        register_scalar_function(ext_api.ctx, c"time_to_unix".as_ptr(), time_to_unix);
+        register_scalar_function(ext_api.ctx, c"time_to_milli".as_ptr(), time_to_milli);
+        register_scalar_function(ext_api.ctx, c"time_to_micro".as_ptr(), time_to_micro);
+        register_scalar_function(ext_api.ctx, c"time_to_nano".as_ptr(), time_to_nano);
+        register_scalar_function(ext_api.ctx, c"time_after".as_ptr(), time_after);
+        register_scalar_function(ext_api.ctx, c"time_before".as_ptr(), time_before);
+        register_scalar_function(ext_api.ctx, c"time_compare".as_ptr(), time_compare);
+        register_scalar_function(ext_api.ctx, c"time_equal".as_ptr(), time_equal);
+        register_scalar_function(ext_api.ctx, c"dur_ns".as_ptr(), dur_ns);
+        register_scalar_function(ext_api.ctx, c"dur_us".as_ptr(), dur_us);
+        register_scalar_function(ext_api.ctx, c"dur_ms".as_ptr(), dur_ms);
+        register_scalar_function(ext_api.ctx, c"dur_s".as_ptr(), dur_s);
+        register_scalar_function(ext_api.ctx, c"dur_m".as_ptr(), dur_m);
+        register_scalar_function(ext_api.ctx, c"dur_h".as_ptr(), dur_h);
+        register_scalar_function(ext_api.ctx, c"time_add".as_ptr(), time_add);
+        register_scalar_function(ext_api.ctx, c"time_add_date".as_ptr(), time_add_date);
+        register_scalar_function(ext_api.ctx, c"time_sub".as_ptr(), time_sub);
+        register_scalar_function(ext_api.ctx, c"time_since".as_ptr(), time_since);
+        register_scalar_function(ext_api.ctx, c"time_until".as_ptr(), time_until);
+        register_scalar_function(ext_api.ctx, c"time_trunc".as_ptr(), time_trunc);
+        register_scalar_function(ext_api.ctx, c"time_round".as_ptr(), time_round);
+        register_scalar_function(ext_api.ctx, c"time_fmt_iso".as_ptr(), time_fmt_iso);
+        register_scalar_function(
+            ext_api.ctx,
+            c"time_fmt_datetime".as_ptr(),
+            time_fmt_datetime,
+        );
+        register_scalar_function(ext_api.ctx, c"time_fmt_date".as_ptr(), time_fmt_date);
+        register_scalar_function(ext_api.ctx, c"time_fmt_time".as_ptr(), time_fmt_time);
+        register_scalar_function(ext_api.ctx, c"time_parse".as_ptr(), time_parse);
+    }
 }
 
 macro_rules! ok_tri {

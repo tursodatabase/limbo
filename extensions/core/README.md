@@ -423,7 +423,6 @@ turso_core = { path = "core", version = "0.0.17" }
 limbo_crypto = { path = "extensions/crypto", version = "0.0.17" }
 turso_ext = { path = "extensions/core", version = "0.0.17" }
 limbo_macros = { path = "macros", version = "0.0.17" }
-limbo_uuid = { path = "extensions/uuid", version = "0.0.17" }
 ...
 +limbo_csv = { path = "extensions/csv", version = "0.0.17" }
 

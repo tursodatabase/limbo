@@ -5,7 +5,7 @@ use chrono::{prelude::*, DurationRound};
 
 use turso_ext::Value;
 
-use crate::{Result, TimeError};
+use crate::time::{Result, TimeError};
 
 const DAYS_BEFORE_EPOCH: i64 = 719162;
 const TIME_BLOB_SIZE: usize = 13;

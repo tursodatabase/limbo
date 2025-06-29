@@ -1,7 +1,16 @@
-use turso_ext::{register_extension, scalar, ResultCode, Value, ValueType};
+use crate::ext::register_scalar_function;
+use turso_ext::{scalar, ExtensionApi, ResultCode, Value, ValueType};
 
-register_extension! {
-    scalars: {uuid4_str, uuid4_blob, uuid7_str, uuid7, uuid7_ts, uuid_str, uuid_blob },
+pub fn register_extension(ext_api: &mut ExtensionApi) {
+    unsafe {
+        register_scalar_function(ext_api.ctx, c"uuid4_str".as_ptr(), uuid4_str);
+        register_scalar_function(ext_api.ctx, c"uuid4".as_ptr(), uuid4_blob);
+        register_scalar_function(ext_api.ctx, c"uuid7_str".as_ptr(), uuid7_str);
+        register_scalar_function(ext_api.ctx, c"uuid7".as_ptr(), uuid7);
+        register_scalar_function(ext_api.ctx, c"uuid7_ts".as_ptr(), uuid7_ts);
+        register_scalar_function(ext_api.ctx, c"uuid_str".as_ptr(), uuid_str);
+        register_scalar_function(ext_api.ctx, c"uuid_blob".as_ptr(), uuid_blob);
+    }
 }
 
 #[scalar(name = "uuid4_str", alias = "gen_random_uuid")]
