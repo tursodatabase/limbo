@@ -32,6 +32,11 @@ test("Property .readonly of database if not set", async (t) => {
   t.is(db.readonly, false);
 });
 
+test("Property .open of database", async (t) => {
+  const db = new Database("foobar.db");
+  t.is(db.open, true);
+});
+
 test("Statement.get() returns data", async (t) => {
   const [db] = await connect(":memory:");
   const stmt = db.prepare("SELECT 1");
