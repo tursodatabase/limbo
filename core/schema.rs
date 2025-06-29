@@ -217,6 +217,8 @@ pub struct BTreeTable {
     pub has_rowid: bool,
     pub is_strict: bool,
     pub unique_sets: Option<Vec<Vec<(String, SortOrder)>>>,
+    pub table_check_constraints: Vec<CheckConstraint>,
+    pub column_check_constraints: Vec<CheckConstraint>,
 }
 
 impl BTreeTable {
@@ -380,6 +382,8 @@ fn create_table(
     let is_strict: bool;
     // BtreeSet here to preserve order of inserted keys
     let mut unique_sets: Vec<BTreeSet<UniqueColumnProps>> = vec![];
+    let mut table_check_constraints = vec![];
+    let mut column_check_constraints = vec![];
     match body {
         CreateTableBody::ColumnsAndConstraints {
             columns,
@@ -389,8 +393,18 @@ fn create_table(
             is_strict = options.contains(TableOptions::STRICT);
             if let Some(constraints) = constraints {
                 for c in constraints {
-                    if let limbo_sqlite3_parser::ast::TableConstraint::PrimaryKey {
-                        columns, ..
+                    if let limbo_sqlite3_parser::ast::NamedTableConstraint {
+                        name,
+                        constraint: limbo_sqlite3_parser::ast::TableConstraint::Check(expr),
+                    } = c
+                    {
+                        table_check_constraints.push(CheckConstraint {
+                            name: name.map(|name| name.0),
+                            expr,
+                        });
+                    } else if let limbo_sqlite3_parser::ast::TableConstraint::PrimaryKey {
+                        columns,
+                        ..
                     } = c.constraint
                     {
                         for column in columns {
@@ -505,6 +519,12 @@ fn create_table(
                         limbo_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
                             default = Some(expr.clone())
                         }
+                        limbo_sqlite3_parser::ast::ColumnConstraint::Check(expr) => {
+                            column_check_constraints.push(CheckConstraint {
+                                name: c_def.name.as_ref().map(|name| name.0.clone()),
+                                expr: expr.clone(),
+                            });
+                        }
                         // TODO: for now we don't check Resolve type of unique
                         limbo_sqlite3_parser::ast::ColumnConstraint::Unique(on_conflict) => {
                             if on_conflict.is_some() {
@@ -528,7 +548,6 @@ fn create_table(
                 {
                     primary_key = true;
                 }
-
                 cols.push(Column {
                     name: Some(normalize_ident(&name)),
                     ty,
@@ -554,12 +573,40 @@ fn create_table(
             col.is_rowid_alias = false;
         }
     }
+
+    // Ensure check constraints have valid columns
+    // for example
+    // CREATE TABLE t (b int check (a + b));
+    // should yield a ParseError, because there's no 'a' column
+    let all_check_constraints = table_check_constraints
+        .iter()
+        .chain(column_check_constraints.iter());
+    use crate::translate::expr::walk_expr;
+    use crate::translate::expr::WalkControl;
+    for check_constraint in all_check_constraints {
+        let _ = walk_expr(
+            &check_constraint.expr,
+            &mut |expr: &Expr| -> Result<WalkControl> {
+                match expr {
+                    Expr::Id(id) => cols
+                        .iter()
+                        .find(|col| col.name.as_ref().map_or(false, |name| *name == id.0))
+                        .ok_or_else(|| LimboError::ParseError(format!("no such column: {}", id.0)))
+                        .map(|_| WalkControl::Continue),
+                    _ => Ok(WalkControl::Continue),
+                }
+            },
+        )?;
+    }
+
     Ok(BTreeTable {
         root_page,
         name: table_name,
         has_rowid,
         primary_key_columns,
         columns: cols,
+        table_check_constraints,
+        column_check_constraints,
         is_strict,
         unique_sets: if unique_sets.is_empty() {
             None
@@ -578,6 +625,21 @@ fn create_table(
             )
         },
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckConstraint {
+    name: Option<String>,
+    pub expr: Expr,
+}
+
+impl CheckConstraint {
+    pub fn description(&self) -> String {
+        match self.name.as_ref() {
+            Some(name) => name.to_owned(),
+            _ => self.expr.to_string(),
+        }
+    }
 }
 
 pub fn _build_pseudo_table(columns: &[ResultColumn]) -> PseudoTable {
@@ -893,6 +955,8 @@ pub fn sqlite_schema_table() -> BTreeTable {
         has_rowid: true,
         is_strict: false,
         primary_key_columns: vec![],
+        table_check_constraints: vec![],
+        column_check_constraints: vec![],
         columns: vec![
             Column {
                 name: Some("type".to_string()),
@@ -1586,6 +1650,8 @@ mod tests {
             name: "t1".to_string(),
             has_rowid: true,
             is_strict: false,
+            column_check_constraints: vec![],
+            table_check_constraints: vec![],
             primary_key_columns: vec![("nonexistent".to_string(), SortOrder::Asc)],
             columns: vec![Column {
                 name: Some("a".to_string()),
@@ -1801,6 +1867,32 @@ mod tests {
         assert_eq!(index.columns[0].name, "b");
         assert!(matches!(index.columns[0].order, SortOrder::Asc));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_contraint() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a int check (a % 2 == 0), b int constraint isOdd check (b % 2 == 1), constraint maxSum check (a + b <= 255), check (a > 0));"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+
+        assert_eq!(table.column_check_constraints.len(), 2);
+        assert_eq!(table.table_check_constraints.len(), 2);
+
+        let names = [None, Some("isOdd".to_string())];
+        for (check, name) in table.column_check_constraints.iter().zip(names.iter()) {
+            assert_eq!(&check.name, name);
+        }
+
+        let names = [Some("maxSum".to_string()), None];
+        for (check, name) in table.table_check_constraints.iter().zip(names.iter()) {
+            assert_eq!(&check.name, name);
+        }
+
+        let sql = r#"CREATE TABLE t1 (a int);"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+
+        assert_eq!(table.column_check_constraints.len(), 0);
+        assert_eq!(table.table_check_constraints.len(), 0);
         Ok(())
     }
 }

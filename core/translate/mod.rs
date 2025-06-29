@@ -9,6 +9,7 @@
 
 pub(crate) mod aggregation;
 pub(crate) mod alter;
+pub(crate) mod check_constraint;
 pub(crate) mod collate;
 mod compound_select;
 pub(crate) mod delete;

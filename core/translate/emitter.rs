@@ -23,6 +23,7 @@ use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
 use crate::schema::Schema;
+use crate::translate::check_constraint::translate_check_constraint;
 use crate::translate::compound_select::emit_program_for_compound_select;
 use crate::translate::plan::{DeletePlan, Plan, QueryDestination, Search};
 use crate::translate::values::emit_values;
@@ -805,14 +806,19 @@ fn emit_update_insns(
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
     let start = if is_virtual { beg + 2 } else { beg + 1 };
+    let mut column_registers = vec![];
     for (idx, table_column) in table_ref.columns().iter().enumerate() {
         let target_reg = start + idx;
+        if !table_column.is_rowid_alias {
+            column_registers.push((target_reg, table_column));
+        }
         if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
             if has_user_provided_rowid
                 && (table_column.primary_key || table_column.is_rowid_alias)
                 && !is_virtual
             {
                 let rowid_set_clause_reg = rowid_set_clause_reg.unwrap();
+                column_registers.push((rowid_set_clause_reg, table_column));
                 translate_expr(
                     program,
                     Some(&plan.table_references),
@@ -834,6 +840,7 @@ fn emit_update_insns(
                     target_reg,
                     &t_ctx.resolver,
                 )?;
+
                 if table_column.notnull {
                     use crate::error::SQLITE_CONSTRAINT_NOTNULL;
                     program.emit_insn(Insn::HaltIfNull {
@@ -1010,6 +1017,8 @@ fn emit_update_insns(
 
             program.preassign_label_to_next_insn(record_label);
         }
+
+        translate_check_constraint(program, &btree_table, &column_registers, &t_ctx.resolver);
 
         let record_reg = program.alloc_register();
         program.emit_insn(Insn::MakeRecord {

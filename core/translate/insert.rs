@@ -24,6 +24,7 @@ use super::expr::{translate_expr, translate_expr_no_constant_opt, NoConstantOptR
 use super::optimizer::rewrite_expr;
 use super::plan::QueryDestination;
 use super::select::translate_select;
+use crate::translate::check_constraint::translate_check_constraint;
 
 struct TempTableCtx {
     cursor_id: usize,
@@ -411,6 +412,20 @@ pub fn translate_insert(
         program.preassign_label_to_next_insn(make_record_label);
     }
 
+    let column_registers: Vec<_> = column_mappings
+        .iter()
+        .enumerate()
+        .map(|(i, mapping)| {
+            let reg = if mapping.column.is_rowid_alias {
+                rowid_reg
+            } else {
+                column_registers_start + i
+            };
+            (reg, mapping.column)
+        })
+        .collect();
+    translate_check_constraint(&mut program, &btree_table, &column_registers, &resolver);
+
     match table.btree() {
         Some(t) if t.is_strict => {
             program.emit_insn(Insn::TypeCheck {
@@ -741,7 +756,6 @@ fn populate_columns_multiple_rows(
     let mut other_values_seen = 0;
     for (i, mapping) in column_mappings.iter().enumerate() {
         let target_reg = column_registers_start + i;
-
         other_values_seen += 1;
         if let Some(value_index) = mapping.value_index {
             // Decrement as we have now seen a value index instead

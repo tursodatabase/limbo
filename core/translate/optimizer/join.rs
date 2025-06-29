@@ -1645,6 +1645,8 @@ mod tests {
             name: name.to_string(),
             primary_key_columns: vec![],
             columns,
+            column_check_constraints: vec![],
+            table_check_constraints: vec![],
             has_rowid: true,
             is_strict: false,
             unique_sets: None,
