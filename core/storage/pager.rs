@@ -750,12 +750,14 @@ impl Pager {
             match state {
                 FlushState::Start => {
                     let db_size = header_accessor::get_database_size(self)?;
-                    for page_id in self.dirty_pages.borrow().iter() {
+                    for (dirty_page_idx, page_id) in self.dirty_pages.borrow().iter().enumerate() {
+                        let is_last_frame = dirty_page_idx == self.dirty_pages.borrow().len() - 1;
                         let mut cache = self.page_cache.write();
                         let page_key = PageCacheKey::new(*page_id);
                         let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                         let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
                         trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
+                        let db_size = if is_last_frame { db_size } else { 0 };
                         self.wal.borrow_mut().append_frame(
                             page.clone(),
                             db_size,

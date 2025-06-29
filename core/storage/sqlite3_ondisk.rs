@@ -1385,7 +1385,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
 
             let frame_h_page_number =
                 u32::from_be_bytes(frame_header_slice[0..4].try_into().unwrap());
-            let _frame_h_db_size = u32::from_be_bytes(frame_header_slice[4..8].try_into().unwrap());
+            let frame_h_db_size = u32::from_be_bytes(frame_header_slice[4..8].try_into().unwrap());
             let frame_h_salt_1 = u32::from_be_bytes(frame_header_slice[8..12].try_into().unwrap());
             let frame_h_salt_2 = u32::from_be_bytes(frame_header_slice[12..16].try_into().unwrap());
             let frame_h_checksum_1 =
@@ -1441,14 +1441,18 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
                 .lock()
                 .push(frame_h_page_number as u64);
 
+            let is_commit_record = frame_h_db_size > 0;
+            if is_commit_record {
+                wfs_data
+                    .max_frame
+                    .store(frame_idx.saturating_sub(1), Ordering::SeqCst);
+                wfs_data.last_checksum = cumulative_checksum;
+            }
+
             frame_idx += 1;
             current_offset += WAL_FRAME_HEADER_SIZE + page_size;
         }
 
-        wfs_data
-            .max_frame
-            .store(frame_idx.saturating_sub(1), Ordering::SeqCst);
-        wfs_data.last_checksum = cumulative_checksum;
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
     let c = Completion::new(CompletionType::Read(ReadCompletion::new(
