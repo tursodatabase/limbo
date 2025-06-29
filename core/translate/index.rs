@@ -223,7 +223,7 @@ pub fn translate_create_index(
     // TODO: SetCookie for schema change
     //
     // Parse the schema table to get the index root page and add new index to Schema
-    let parse_schema_where_clause = format!("name = '{}' AND type = 'index'", idx_name);
+    let parse_schema_where_clause = format!("name = '{idx_name}' AND type = 'index'");
     program.emit_insn(Insn::ParseSchema {
         db: sqlite_schema_cursor_id,
         where_clause: Some(parse_schema_where_clause),

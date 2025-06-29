@@ -175,28 +175,28 @@ impl Display for InteractionPlan {
             match interactions {
                 Interactions::Property(property) => {
                     let name = property.name();
-                    writeln!(f, "-- begin testing '{}'", name)?;
+                    writeln!(f, "-- begin testing '{name}'")?;
                     for interaction in property.interactions() {
                         write!(f, "\t")?;
 
                         match interaction {
-                            Interaction::Query(query) => writeln!(f, "{};", query)?,
+                            Interaction::Query(query) => writeln!(f, "{query};")?,
                             Interaction::Assumption(assumption) => {
                                 writeln!(f, "-- ASSUME {};", assumption.message)?
                             }
                             Interaction::Assertion(assertion) => {
                                 writeln!(f, "-- ASSERT {};", assertion.message)?
                             }
-                            Interaction::Fault(fault) => writeln!(f, "-- FAULT '{}';", fault)?,
+                            Interaction::Fault(fault) => writeln!(f, "-- FAULT '{fault}';")?,
                         }
                     }
-                    writeln!(f, "-- end testing '{}'", name)?;
+                    writeln!(f, "-- end testing '{name}'")?;
                 }
                 Interactions::Fault(fault) => {
-                    writeln!(f, "-- FAULT '{}'", fault)?;
+                    writeln!(f, "-- FAULT '{fault}'")?;
                 }
                 Interactions::Query(query) => {
-                    writeln!(f, "{};", query)?;
+                    writeln!(f, "{query};")?;
                 }
             }
         }
@@ -243,10 +243,10 @@ pub(crate) enum Interaction {
 impl Display for Interaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Query(query) => write!(f, "{}", query),
+            Self::Query(query) => write!(f, "{query}"),
             Self::Assumption(assumption) => write!(f, "ASSUME {}", assumption.message),
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
-            Self::Fault(fault) => write!(f, "FAULT '{}'", fault),
+            Self::Fault(fault) => write!(f, "FAULT '{fault}'"),
         }
     }
 }
@@ -652,7 +652,7 @@ impl Interaction {
                         ) {
                             Ok(db) => db,
                             Err(e) => {
-                                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+                                panic!("error opening simulator test file {db_path:?}: {e:?}");
                             }
                         };
                         env.db = db;

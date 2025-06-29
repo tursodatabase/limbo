@@ -44,8 +44,7 @@ impl VirtualTable {
                 .map(|(vtab, columns)| (VirtualTableType::Pragma(vtab), columns))?
         } else {
             return Err(LimboError::ParseError(format!(
-                "No such table-valued function: {}",
-                name
+                "No such table-valued function: {name}"
             )));
         };
 
@@ -93,7 +92,9 @@ impl VirtualTable {
 
     pub(crate) fn open(&self, conn: Arc<Connection>) -> crate::Result<VirtualTableCursor> {
         match &self.vtab_type {
-            VirtualTableType::Pragma(table) => Ok(VirtualTableCursor::Pragma(table.open(conn)?)),
+            VirtualTableType::Pragma(table) => {
+                Ok(VirtualTableCursor::Pragma(Box::new(table.open(conn)?)))
+            }
             VirtualTableType::External(table) => {
                 Ok(VirtualTableCursor::External(table.open(conn)?))
             }
@@ -132,7 +133,7 @@ impl VirtualTable {
 }
 
 pub enum VirtualTableCursor {
-    Pragma(PragmaVirtualTableCursor),
+    Pragma(Box<PragmaVirtualTableCursor>),
     External(ExtVirtualTableCursor),
 }
 
@@ -216,8 +217,7 @@ impl ExtVirtualTable {
         kind: VTabKind,
     ) -> crate::Result<(Self, String)> {
         let module = module.ok_or(LimboError::ExtensionError(format!(
-            "Virtual table module not found: {}",
-            module_name
+            "Virtual table module not found: {module_name}"
         )))?;
         if kind != module.module_kind {
             let expected = match kind {
@@ -225,8 +225,7 @@ impl ExtVirtualTable {
                 VTabKind::TableValuedFunction => "table-valued function",
             };
             return Err(LimboError::ExtensionError(format!(
-                "{} is not a {} module",
-                module_name, expected
+                "{module_name} is not a {expected} module"
             )));
         }
         let (schema, table_ptr) = module.implementation.create(args)?;

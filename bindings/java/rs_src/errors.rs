@@ -29,7 +29,7 @@ impl From<LimboError> for JniError {
             | LimboError::InvalidDatabasePointer
             | LimboError::InvalidConnectionPointer
             | LimboError::JNIErrors(_) => {
-                eprintln!("Error occurred: {:?}", value);
+                eprintln!("Error occurred: {value:?}");
                 JniError::Other(-1)
             }
         }

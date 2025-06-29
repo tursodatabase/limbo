@@ -169,7 +169,7 @@ impl Database {
         enable_mvcc: bool,
         enable_indexes: bool,
     ) -> Result<Arc<Database>> {
-        let wal_path = format!("{}-wal", path);
+        let wal_path = format!("{path}-wal");
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
         let db_size = db_file.size()?;
 
@@ -181,9 +181,9 @@ impl Database {
         } else {
             None
         };
-        let wal_has_frames = maybe_shared_wal.as_ref().map_or(false, |wal| {
-            unsafe { &*wal.get() }.max_frame.load(Ordering::SeqCst) > 0
-        });
+        let wal_has_frames = maybe_shared_wal
+            .as_ref()
+            .is_some_and(|wal| unsafe { &*wal.get() }.max_frame.load(Ordering::SeqCst) > 0);
 
         let is_empty = if db_size == 0 && !wal_has_frames {
             DB_STATE_UNITIALIZED
@@ -221,7 +221,7 @@ impl Database {
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
-                eprintln!("Warning: {}", e);
+                eprintln!("Warning: {e}");
             }
         }
         Ok(db)
@@ -340,10 +340,7 @@ impl Database {
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 "io_uring" => Arc::new(UringIO::new()?),
                 other => {
-                    return Err(LimboError::InvalidArgument(format!(
-                        "no such VFS: {}",
-                        other
-                    )));
+                    return Err(LimboError::InvalidArgument(format!("no such VFS: {other}")));
                 }
             },
         };
@@ -652,7 +649,7 @@ impl Connection {
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
-                eprintln!("Warning: {}", e);
+                eprintln!("Warning: {e}");
             }
         }
         Ok(())
@@ -661,7 +658,7 @@ impl Connection {
     // Clearly there is something to improve here, Vec<Vec<Value>> isn't a couple of tea
     /// Query the current rows/values of `pragma_name`.
     pub fn pragma_query(self: &Arc<Connection>, pragma_name: &str) -> Result<Vec<Vec<Value>>> {
-        let pragma = format!("PRAGMA {}", pragma_name);
+        let pragma = format!("PRAGMA {pragma_name}");
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
         loop {
@@ -689,7 +686,7 @@ impl Connection {
         pragma_name: &str,
         pragma_value: V,
     ) -> Result<Vec<Vec<Value>>> {
-        let pragma = format!("PRAGMA {} = {}", pragma_name, pragma_value);
+        let pragma = format!("PRAGMA {pragma_name} = {pragma_value}");
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
         loop {
@@ -719,7 +716,7 @@ impl Connection {
         pragma_name: &str,
         pragma_value: V,
     ) -> Result<Vec<Vec<Value>>> {
-        let pragma = format!("PRAGMA {}({})", pragma_name, pragma_value);
+        let pragma = format!("PRAGMA {pragma_name}({pragma_value})");
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
         loop {
@@ -836,7 +833,7 @@ impl std::fmt::Debug for SymbolTable {
 
 fn is_shared_library(path: &std::path::Path) -> bool {
     path.extension()
-        .map_or(false, |ext| ext == "so" || ext == "dylib" || ext == "dll")
+        .is_some_and(|ext| ext == "so" || ext == "dylib" || ext == "dll")
 }
 
 pub fn resolve_ext_path(extpath: &str) -> Result<std::path::PathBuf> {
@@ -844,8 +841,7 @@ pub fn resolve_ext_path(extpath: &str) -> Result<std::path::PathBuf> {
     if !path.exists() {
         if is_shared_library(path) {
             return Err(LimboError::ExtensionError(format!(
-                "Extension file not found: {}",
-                extpath
+                "Extension file not found: {extpath}"
             )));
         };
         let maybe = path.with_extension(std::env::consts::DLL_EXTENSION);
@@ -853,8 +849,7 @@ pub fn resolve_ext_path(extpath: &str) -> Result<std::path::PathBuf> {
             .exists()
             .then_some(maybe)
             .ok_or(LimboError::ExtensionError(format!(
-                "Extension file not found: {}",
-                extpath
+                "Extension file not found: {extpath}"
             )))
     } else {
         Ok(path.to_path_buf())

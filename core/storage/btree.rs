@@ -1644,7 +1644,7 @@ impl BTreeCursor {
 
         if matches!(
             self.seek_state,
-            CursorSeekState::Start { .. }
+            CursorSeekState::Start
                 | CursorSeekState::MovingBetweenPages { .. }
                 | CursorSeekState::InteriorPageBinarySearch { .. }
         ) {
@@ -1762,7 +1762,7 @@ impl BTreeCursor {
     ) -> Result<CursorResult<bool>> {
         if matches!(
             self.seek_state,
-            CursorSeekState::Start { .. }
+            CursorSeekState::Start
                 | CursorSeekState::MovingBetweenPages { .. }
                 | CursorSeekState::InteriorPageBinarySearch { .. }
         ) {
@@ -2140,7 +2140,7 @@ impl BTreeCursor {
                                     } else {
                                         write_info.state = WriteState::BalanceStart;
                                         // If we balance, we must save the cursor position and seek to it later.
-                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and 
+                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
                                         // save_context()/restore/context(), they are practically the same thing.
                                         self.save_context(CursorContext::TableRowId(bkey.to_rowid()));
                                     }
@@ -2171,14 +2171,14 @@ impl BTreeCursor {
                                     } else {
                                         write_info.state = WriteState::BalanceStart;
                                         // If we balance, we must save the cursor position and seek to it later.
-                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and 
+                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
                                         // save_context()/restore/context(), they are practically the same thing.
                                         self.save_context(CursorContext::IndexKeyRowId((*record).clone()));
                                     }
                                     continue;
                                 }
                             }
-                            other => panic!("unexpected cell type, expected TableLeaf or IndexLeaf, found: {:?}", other),
+                            other => panic!("unexpected cell type, expected TableLeaf or IndexLeaf, found: {other:?}"),
                         }
                     }
                     // insert cell
@@ -2312,7 +2312,7 @@ impl BTreeCursor {
                     return_if_io!(self.balance_non_root());
                 }
                 WriteState::Finish => return Ok(CursorResult::Ok(())),
-                _ => panic!("unexpected state on balance {:?}", state),
+                _ => panic!("unexpected state on balance {state:?}"),
             }
         }
     }
@@ -2368,9 +2368,7 @@ impl BTreeCursor {
                 );
                 assert!(
                     page_to_balance_idx <= parent_contents.cell_count(),
-                    "page_to_balance_idx={} is out of bounds for parent cell count {}",
-                    page_to_balance_idx,
-                    number_of_cells_in_parent
+                    "page_to_balance_idx={page_to_balance_idx} is out of bounds for parent cell count {number_of_cells_in_parent}"
                 );
                 // As there will be at maximum 3 pages used to balance:
                 // sibling_pointer is the index represeneting one of those 3 pages, and we initialize it to the last possible page.
@@ -3028,8 +3026,7 @@ impl BTreeCursor {
                     // FIXME: remove this lock
                     assert!(
                         left_pointer <= header_accessor::get_database_size(&self.pager)?,
-                        "invalid page number divider left pointer {} > database number of pages",
-                        left_pointer,
+                        "invalid page number divider left pointer {left_pointer} > database number of pages",
                     );
                     // FIXME: defragment shouldn't be needed
                     // defragment_page(parent_contents, self.usable_space() as u16);
@@ -4086,7 +4083,7 @@ impl BTreeCursor {
             .reusable_immutable_record
             .borrow()
             .as_ref()
-            .map_or(true, |record| record.is_invalidated());
+            .is_none_or(|record| record.is_invalidated());
         if !invalidated {
             *self.parse_record_state.borrow_mut() = ParseRecordState::Init;
             let record_ref =
@@ -5429,7 +5426,7 @@ fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
         assert!(cell.len() >= 4);
 
         if leaf_data {
-            assert!(cell[0] != 0, "payload is {:?}", cell);
+            assert!(cell[0] != 0, "payload is {cell:?}");
         }
     }
 }
@@ -6147,10 +6144,7 @@ fn debug_validate_cells_core(page: &PageContent, usable_space: u16) {
         // Rowid 1 (stored as SerialTypeKind::ConstInt1)
         assert!(
             size >= 2,
-            "cell size should be at least 2 bytes idx={}, cell={:?}, offset={}",
-            i,
-            buf,
-            offset
+            "cell size should be at least 2 bytes idx={i}, cell={buf:?}, offset={offset}"
         );
         if page.is_leaf() {
             assert!(page.as_ptr()[offset] != 0);
@@ -6727,7 +6721,7 @@ mod tests {
                     valid &= child_valid;
                     child_depth
                 }
-                _ => panic!("unsupported btree cell: {:?}", cell),
+                _ => panic!("unsupported btree cell: {cell:?}"),
             };
             if current_depth >= 100 {
                 tracing::error!("depth is too big");
@@ -6752,7 +6746,7 @@ mod tests {
                     }
                     previous_key = Some(_rowid);
                 }
-                _ => panic!("unsupported btree cell: {:?}", cell),
+                _ => panic!("unsupported btree cell: {cell:?}"),
             }
         }
         if let Some(right) = contents.rightmost_pointer() {
@@ -6838,7 +6832,7 @@ mod tests {
                         cell.first_overflow_page.is_some()
                     ));
                 }
-                _ => panic!("unsupported btree cell: {:?}", cell),
+                _ => panic!("unsupported btree cell: {cell:?}"),
             }
         }
         if let Some(rightmost) = contents.rightmost_pointer() {
@@ -6976,8 +6970,7 @@ mod tests {
                         cursor.seek(seek_key, SeekOp::GE { eq_only: true }).unwrap(),
                         CursorResult::Ok(true)
                     ),
-                    "key {} is not found",
-                    key
+                    "key {key} is not found"
                 );
             }
         }
@@ -7005,7 +6998,7 @@ mod tests {
     ) {
         const VALIDATE_INTERVAL: usize = 1000;
         let do_validate_btree = std::env::var("VALIDATE_BTREE")
-            .map_or(false, |v| v.parse().expect("validate should be bool"));
+            .is_ok_and(|v| v.parse().expect("validate should be bool"));
         let (mut rng, seed) = rng_from_time_or_env();
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
@@ -7013,7 +7006,7 @@ mod tests {
             let (pager, root_page) = empty_btree();
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let mut keys = SortedVec::new();
-            tracing::info!("seed: {}", seed);
+            tracing::info!("seed: {seed}");
             for insert_id in 0..inserts {
                 let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
                 run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
@@ -7082,7 +7075,7 @@ mod tests {
                             .unwrap();
                         if *key != cursor_rowid {
                             valid = false;
-                            println!("key {} is not found, got {}", key, cursor_rowid);
+                            println!("key {key} is not found, got {cursor_rowid}");
                             break;
                         }
                     }
@@ -7092,8 +7085,8 @@ mod tests {
                     && (!valid || matches!(validate_btree(pager.clone(), root_page), (_, false)))
                 {
                     let btree_after = format_btree(pager.clone(), root_page, 0);
-                    println!("btree before:\n{}", btree_before);
-                    println!("btree after:\n{}", btree_after);
+                    println!("btree before:\n{btree_before}");
+                    println!("btree after:\n{btree_after}");
                     panic!("invalid btree");
                 }
                 pager.end_read_tx().unwrap();
@@ -7115,8 +7108,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     *key, cursor_rowid,
-                    "key {} is not found, got {}",
-                    key, cursor_rowid
+                    "key {key} is not found, got {cursor_rowid}"
                 );
             }
             pager.end_read_tx().unwrap();
@@ -7148,7 +7140,7 @@ mod tests {
             };
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), index_root_page);
             let mut keys = SortedVec::new();
-            tracing::info!("seed: {}", seed);
+            tracing::info!("seed: {seed}");
             for i in 0..inserts {
                 pager.begin_read_tx().unwrap();
                 pager.begin_write_tx().unwrap();
@@ -7215,7 +7207,7 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                assert!(exists, "key {:?} is not found", key);
+                assert!(exists, "key {key:?} is not found");
             }
             // Check that key count is right
             cursor.move_to_root();
@@ -7241,13 +7233,11 @@ mod tests {
                 let cur = record.get_values().clone();
                 if let Some(prev) = prev {
                     if prev >= cur {
-                        println!("Seed: {}", seed);
+                        println!("Seed: {seed}");
                     }
                     assert!(
                         prev < cur,
-                        "keys are not in ascending order: {:?} < {:?}",
-                        prev,
-                        cur
+                        "keys are not in ascending order: {prev:?} < {cur:?}",
                     );
                 }
                 prev = Some(cur);
@@ -7510,8 +7500,7 @@ mod tests {
                             let leaf_page_id = contents.read_u32(8 + (i as usize * 4));
                             assert!(
                                 (2..=4).contains(&leaf_page_id),
-                                "Leaf page ID {} should be in range 2-4",
-                                leaf_page_id
+                                "Leaf page ID {leaf_page_id} should be in range 2-4"
                             );
                         }
                     }
@@ -8280,7 +8269,7 @@ mod tests {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let key = Value::Integer(*key);
             let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
-            assert!(exists, "key not found {}", key);
+            assert!(exists, "key not found {key}");
         }
     }
 
@@ -8375,7 +8364,7 @@ mod tests {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let key = Value::Integer(i);
             let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
-            assert!(exists, "Key {} should exist but doesn't", i);
+            assert!(exists, "Key {i} should exist but doesn't");
         }
 
         // Verify the deleted records don't exist.
@@ -8383,7 +8372,7 @@ mod tests {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let key = Value::Integer(i);
             let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
-            assert!(!exists, "Deleted key {} still exists", i);
+            assert!(!exists, "Deleted key {i} still exists");
         }
     }
 

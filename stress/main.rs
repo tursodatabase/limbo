@@ -321,7 +321,7 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
         writeln!(log_file, "{}", opts.nr_iterations)?;
         writeln!(log_file, "{}", ddl_statements.len())?;
         for stmt in &ddl_statements {
-            writeln!(log_file, "{}", stmt)?;
+            writeln!(log_file, "{stmt}")?;
         }
     }
     plan.ddl_statements = ddl_statements;
@@ -345,7 +345,7 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
             }
             let sql = generate_random_statement(&schema);
             if !opts.skip_log {
-                writeln!(log_file, "{}", sql)?;
+                writeln!(log_file, "{sql}")?;
             }
             queries.push(sql);
             if tx.is_some() {
@@ -415,7 +415,7 @@ pub fn init_tracing() -> Result<WorkerGuard, std::io::Error> {
         .with(EnvFilter::from_default_env())
         .try_init()
     {
-        println!("Unable to setup tracing appender: {:?}", e);
+        println!("Unable to setup tracing appender: {e:?}");
     }
     Ok(guard)
 }
@@ -458,7 +458,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Apply each DDL statement individually
         for stmt in &plan.ddl_statements {
             if opts.verbose {
-                println!("executing ddl {}", stmt);
+                println!("executing ddl {stmt}");
             }
             if let Err(e) = conn.execute(stmt, ()).await {
                 match e {
@@ -466,7 +466,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if e.contains("Corrupt database") {
                             panic!("Error creating table: {}", e);
                         } else {
-                            println!("Error creating table: {}", e);
+                            println!("Error creating table: {e}");
                         }
                     }
                     _ => panic!("Error creating table: {}", e),
@@ -500,7 +500,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let sql = &plan.queries_per_thread[thread][query_index];
                 if !opts.silent {
                     if opts.verbose {
-                        println!("executing query {}", sql);
+                        println!("executing query {sql}");
                     } else if query_index % 100 == 0 {
                         print!(
                             "\r{:.2} %",
@@ -515,9 +515,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             if e.contains("Corrupt database") {
                                 panic!("Error executing query: {}", e);
                             } else if e.contains("UNIQUE constraint failed") {
-                                println!("Skipping UNIQUE constraint violation: {}", e);
+                                println!("Skipping UNIQUE constraint violation: {e}");
                             } else {
-                                println!("Error executing query: {}", e);
+                                println!("Error executing query: {e}");
                             }
                         }
                         _ => panic!("Error executing query: {}", e),
@@ -545,6 +545,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         handle.await??;
     }
     println!("Done. SQL statements written to {}", opts.log_file);
-    println!("Database file: {}", db_file);
+    println!("Database file: {db_file}");
     Ok(())
 }

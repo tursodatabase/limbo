@@ -31,7 +31,7 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
             LimboConn::new(conn, io).to_ptr()
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {e}");
             std::ptr::null_mut()
         }
     }
@@ -67,7 +67,7 @@ impl LimboConn {
 
     fn get_error(&mut self) -> *const c_char {
         if let Some(err) = &self.err {
-            let err = format!("{}", err);
+            let err = format!("{err}");
             let c_str = std::ffi::CString::new(err).unwrap();
             self.err = None;
             c_str.into_raw() as *const c_char
