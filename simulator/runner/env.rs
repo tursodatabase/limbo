@@ -117,6 +117,8 @@ impl SimulatorEnv {
             disable_select_limit: cli_opts.disable_select_limit,
             disable_delete_select: cli_opts.disable_delete_select,
             disable_drop_select: cli_opts.disable_drop_select,
+            disable_fsync_no_wait: cli_opts.disable_fsync_no_wait,
+            disable_faulty_query: cli_opts.disable_faulty_query,
             page_size: 4096, // TODO: randomize this too
             max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
@@ -232,6 +234,8 @@ pub(crate) struct SimulatorOpts {
     pub(crate) disable_select_limit: bool,
     pub(crate) disable_delete_select: bool,
     pub(crate) disable_drop_select: bool,
+    pub(crate) disable_fsync_no_wait: bool,
+    pub(crate) disable_faulty_query: bool,
     pub(crate) disable_reopen_database: bool,
 
     pub(crate) max_interactions: usize,

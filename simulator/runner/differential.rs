@@ -337,6 +337,9 @@ fn execute_interaction_rusqlite(
             tracing::debug!("{:?}", results);
             stack.push(results);
         }
+        Interaction::FsyncQuery(..) => {
+            unimplemented!("cannot implement fsync query in rusqlite, as we do not control IO");
+        }
         Interaction::Assertion(_) => {
             interaction.execute_assertion(stack, env)?;
             stack.clear();
@@ -352,6 +355,9 @@ fn execute_interaction_rusqlite(
         }
         Interaction::Fault(_) => {
             interaction.execute_fault(env, connection_index)?;
+        }
+        Interaction::FaultyQuery(_) => {
+            unimplemented!("cannot implement faulty query in rusqlite, as we do not control IO");
         }
     }
 

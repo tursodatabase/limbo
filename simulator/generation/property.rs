@@ -99,33 +99,49 @@ pub(crate) enum Property {
         predicate: Predicate,
         queries: Vec<Query>,
     },
-    // Drop-Select is a property in which selecting from a dropped table
-    // should result in an error.
-    // The execution of the property is as follows
-    //     DROP TABLE <t>
-    //     I_0
-    //     I_1
-    //     ...
-    //     I_n
-    //     SELECT * FROM <t> WHERE <predicate> -> Error
-    // The interactions in the middle has the following constraints;
-    // - There will be no errors in the middle interactions.
-    // - The table `t` will not be created, no table will be renamed to `t`.
+    /// Drop-Select is a property in which selecting from a dropped table
+    /// should result in an error.
+    /// The execution of the property is as follows
+    ///     DROP TABLE <t>
+    ///     I_0
+    ///     I_1
+    ///     ...
+    ///     I_n
+    ///     SELECT * FROM <t> WHERE <predicate> -> Error
+    /// The interactions in the middle has the following constraints;
+    /// - There will be no errors in the middle interactions.
+    /// - The table `t` will not be created, no table will be renamed to `t`.
     DropSelect {
         table: String,
         queries: Vec<Query>,
         select: Select,
     },
-    // Select-Select-Optimizer is a property in which we test the optimizer by
-    // running two equivalent select queries, one with `SELECT <predicate> from <t>`
-    // and the other with `SELECT * from <t> WHERE <predicate>`. As highlighted by
-    // Rigger et al. in Non-Optimizing Reference Engine Construction(NoREC), SQLite
-    // tends to optimize `where` statements while keeping the result column expressions
-    // unoptimized. This property is used to test the optimizer. The property is successful
-    // if the two queries return the same number of rows.
+    /// Select-Select-Optimizer is a property in which we test the optimizer by
+    /// running two equivalent select queries, one with `SELECT <predicate> from <t>`
+    /// and the other with `SELECT * from <t> WHERE <predicate>`. As highlighted by
+    /// Rigger et al. in Non-Optimizing Reference Engine Construction(NoREC), SQLite
+    /// tends to optimize `where` statements while keeping the result column expressions
+    /// unoptimized. This property is used to test the optimizer. The property is successful
+    /// if the two queries return the same number of rows.
     SelectSelectOptimizer {
         table: String,
         predicate: Predicate,
+    },
+    /// FsyncNoWait is a property which tests if we do not loose any data after not waiting for fsync.
+    ///
+    /// # Interactions
+    /// - Executes the `query` without waiting for fsync
+    /// - Drop all connections and Reopen the database
+    /// - Execute the `query` again
+    /// - Query tables to assert that the values were inserted
+    ///
+    FsyncNoWait {
+        query: Query,
+        tables: Vec<String>,
+    },
+    FaultyQuery {
+        query: Query,
+        tables: Vec<String>,
     },
 }
 
@@ -138,6 +154,8 @@ impl Property {
             Property::DeleteSelect { .. } => "Delete-Select",
             Property::DropSelect { .. } => "Drop-Select",
             Property::SelectSelectOptimizer { .. } => "Select-Select-Optimizer",
+            Property::FsyncNoWait { .. } => "FsyncNoWait",
+            Property::FaultyQuery { .. } => "FaultyQuery",
         }
     }
     /// interactions construct a list of interactions, which is an executable representation of the property.
@@ -428,8 +446,52 @@ impl Property {
 
                 vec![assumption, select1, select2, assertion]
             }
+            Property::FsyncNoWait { query, tables } => {
+                let checks = assert_all_table_values(tables);
+                Vec::from_iter(
+                    std::iter::once(Interaction::FsyncQuery(query.clone())).chain(checks),
+                )
+            }
+            Property::FaultyQuery { query, tables } => {
+                let checks = assert_all_table_values(tables);
+                let first = std::iter::once(Interaction::FaultyQuery(query.clone()));
+                Vec::from_iter(first.chain(checks))
+            }
         }
     }
+}
+
+fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interaction> + use<'_> {
+    let checks = tables.iter().flat_map(|table| {
+        let select = Interaction::Query(Query::Select(Select {
+            table: table.clone(),
+            result_columns: vec![ResultColumn::Star],
+            predicate: Predicate::true_(),
+            limit: None,
+            distinct: Distinctness::All,
+        }));
+        let assertion = Interaction::Assertion(Assertion {
+            message: format!(
+                "table {} should contain all of its values after the wal reopened",
+                table
+            ),
+            func: Box::new({
+                let table = table.clone();
+                move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
+                    let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
+                        LimboError::InternalError(format!("table {} should exist", table))
+                    })?;
+                    let last = stack.last().unwrap();
+                    match last {
+                        Ok(vals) => Ok(*vals == table.rows),
+                        Err(err) => Err(LimboError::InternalError(format!("{}", err))),
+                    }
+                }
+            }),
+        });
+        [select, assertion].into_iter()
+    });
+    checks
 }
 
 #[derive(Debug)]
@@ -697,6 +759,28 @@ fn property_select_select_optimizer<R: rand::Rng>(rng: &mut R, env: &SimulatorEn
     }
 }
 
+fn property_fsync_no_wait<R: rand::Rng>(
+    rng: &mut R,
+    env: &SimulatorEnv,
+    remaining: &Remaining,
+) -> Property {
+    Property::FsyncNoWait {
+        query: Query::arbitrary_from(rng, (env, remaining)),
+        tables: env.tables.iter().map(|t| t.name.clone()).collect(),
+    }
+}
+
+fn property_faulty_query<R: rand::Rng>(
+    rng: &mut R,
+    env: &SimulatorEnv,
+    remaining: &Remaining,
+) -> Property {
+    Property::FaultyQuery {
+        query: Query::arbitrary_from(rng, (env, remaining)),
+        tables: env.tables.iter().map(|t| t.name.clone()).collect(),
+    }
+}
+
 impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
     fn arbitrary_from<R: rand::Rng>(
         rng: &mut R,
@@ -753,6 +837,22 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
+                ),
+                (
+                    if !env.opts.disable_fsync_no_wait {
+                        50.0 // Freestyle number
+                    } else {
+                        0.0
+                    },
+                    Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
+                ),
+                (
+                    if !env.opts.disable_faulty_query {
+                        20.0
+                    } else {
+                        0.0
+                    },
+                    Box::new(|rng: &mut R| property_faulty_query(rng, env, &remaining_)),
                 ),
             ],
             rng,

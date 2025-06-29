@@ -22,7 +22,7 @@ impl Delete {
 
         let t2 = table.clone();
 
-        table.rows.retain_mut(|r| self.predicate.test(r, &t2));
+        table.rows.retain_mut(|r| !self.predicate.test(r, &t2));
 
         vec![]
     }

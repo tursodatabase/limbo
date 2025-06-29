@@ -11,12 +11,7 @@ use turso_core::{Connection, Result, StepResult, IO};
 
 use crate::{
     model::{
-        query::{
-            predicate::Predicate,
-            select::{Distinctness, ResultColumn},
-            update::Update,
-            Create, CreateIndex, Delete, Drop, Insert, Query, Select,
-        },
+        query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
         table::SimValue,
     },
     runner::{env::SimConnection, io::SimulatorIO},
@@ -188,6 +183,14 @@ impl Display for InteractionPlan {
                                 writeln!(f, "-- ASSERT {};", assertion.message)?
                             }
                             Interaction::Fault(fault) => writeln!(f, "-- FAULT '{}';", fault)?,
+                            Interaction::FsyncQuery(query) => {
+                                writeln!(f, "-- FSYNC QUERY;")?;
+                                writeln!(f, "{};", query)?;
+                                writeln!(f, "{};", query)?
+                            }
+                            Interaction::FaultyQuery(query) => {
+                                writeln!(f, "{}; --FAULTY QUERY", query)?
+                            }
                         }
                     }
                     writeln!(f, "-- end testing '{}'", name)?;
@@ -238,6 +241,10 @@ pub(crate) enum Interaction {
     Assumption(Assertion),
     Assertion(Assertion),
     Fault(Fault),
+    /// Will attempt to run any random query. However, when the connection tries to sync it will
+    /// close all connections and reopen the database and assert that no data was lost
+    FsyncQuery(Query),
+    FaultyQuery(Query),
 }
 
 impl Display for Interaction {
@@ -247,6 +254,8 @@ impl Display for Interaction {
             Self::Assumption(assumption) => write!(f, "ASSUME {}", assumption.message),
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
             Self::Fault(fault) => write!(f, "FAULT '{}'", fault),
+            Self::FsyncQuery(query) => write!(f, "{}", query),
+            Self::FaultyQuery(query) => write!(f, "{} -- FAULTY QUERY", query),
         }
     }
 }
@@ -281,134 +290,6 @@ impl Display for Fault {
         match self {
             Fault::Disconnect => write!(f, "DISCONNECT"),
             Fault::ReopenDatabase => write!(f, "REOPEN_DATABASE"),
-        }
-    }
-}
-
-impl Interactions {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) {
-        match self {
-            Interactions::Property(property) => {
-                match property {
-                    Property::InsertValuesSelect {
-                        insert,
-                        row_index: _,
-                        queries,
-                        select,
-                    } => {
-                        insert.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::DoubleCreateFailure { create, queries } => {
-                        if env.tables.iter().any(|t| t.name == create.table.name) {
-                            return;
-                        }
-                        create.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                    }
-                    Property::SelectLimit { select } => {
-                        select.shadow(env);
-                    }
-                    Property::DeleteSelect {
-                        table,
-                        predicate,
-                        queries,
-                    } => {
-                        let delete = Query::Delete(Delete {
-                            table: table.clone(),
-                            predicate: predicate.clone(),
-                        });
-
-                        let select = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Star],
-                            predicate: predicate.clone(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        delete.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::DropSelect {
-                        table,
-                        queries,
-                        select,
-                    } => {
-                        let drop = Query::Drop(Drop {
-                            table: table.clone(),
-                        });
-
-                        drop.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::SelectSelectOptimizer { table, predicate } => {
-                        let select1 = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Expr(predicate.clone())],
-                            predicate: Predicate::true_(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        let select2 = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Star],
-                            predicate: predicate.clone(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        select1.shadow(env);
-                        select2.shadow(env);
-                    }
-                }
-                for interaction in property.interactions() {
-                    match interaction {
-                        Interaction::Query(query) => match query {
-                            Query::Create(create) => {
-                                create.shadow(env);
-                            }
-                            Query::Insert(insert) => {
-                                insert.shadow(env);
-                            }
-                            Query::Delete(delete) => {
-                                delete.shadow(env);
-                            }
-                            Query::Drop(drop) => {
-                                drop.shadow(env);
-                            }
-                            Query::Select(select) => {
-                                select.shadow(env);
-                            }
-                            Query::Update(update) => {
-                                update.shadow(env);
-                            }
-                            Query::CreateIndex(create_index) => {
-                                create_index.shadow(env);
-                            }
-                        },
-                        Interaction::Assertion(_) => {}
-                        Interaction::Assumption(_) => {}
-                        Interaction::Fault(_) => {}
-                    }
-                }
-            }
-            Interactions::Query(query) => {
-                query.shadow(env);
-            }
-            Interactions::Fault(_) => {}
         }
     }
 }
@@ -489,7 +370,6 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
                 num_interactions
             );
             let interactions = Interactions::arbitrary_from(rng, (env, plan.stats()));
-            interactions.shadow(env);
 
             plan.plan.push(interactions);
         }
@@ -503,7 +383,14 @@ impl Interaction {
     pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
         match self {
             Self::Query(query) => query.shadow(env),
-            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) => vec![],
+            Self::FsyncQuery(query) => {
+                let mut first = query.shadow(env);
+                first.extend(query.shadow(env));
+                first
+            }
+            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) | Self::FaultyQuery(_) => {
+                vec![]
+            }
         }
     }
     pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, io: &SimulatorIO) -> ResultSet {
@@ -557,9 +444,6 @@ impl Interaction {
         env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on assertions")
-            }
             Self::Assertion(assertion) => {
                 let result = assertion.func.as_ref()(stack, env);
                 match result {
@@ -573,10 +457,7 @@ impl Interaction {
                     ))),
                 }
             }
-            Self::Assumption(_) => {
-                unreachable!("unexpected: this function should only be called on assertions")
-            }
-            Self::Fault(_) => {
+            _ => {
                 unreachable!("unexpected: this function should only be called on assertions")
             }
         }
@@ -588,12 +469,6 @@ impl Interaction {
         env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on assumptions")
-            }
-            Self::Assertion(_) => {
-                unreachable!("unexpected: this function should only be called on assumptions")
-            }
             Self::Assumption(assumption) => {
                 let result = assumption.func.as_ref()(stack, env);
                 match result {
@@ -607,7 +482,7 @@ impl Interaction {
                     ))),
                 }
             }
-            Self::Fault(_) => {
+            _ => {
                 unreachable!("unexpected: this function should only be called on assumptions")
             }
         }
@@ -615,15 +490,6 @@ impl Interaction {
 
     pub(crate) fn execute_fault(&self, env: &mut SimulatorEnv, conn_index: usize) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
-            Self::Assertion(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
-            Self::Assumption(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
             Self::Fault(fault) => {
                 match fault {
                     Fault::Disconnect => {
@@ -637,35 +503,164 @@ impl Interaction {
                         env.connections[conn_index] = SimConnection::Disconnected;
                     }
                     Fault::ReopenDatabase => {
-                        // 1. Close all connections without default checkpoint-on-close behavior
-                        // to expose bugs related to how we handle WAL
-                        let num_conns = env.connections.len();
-                        env.connections.clear();
-
-                        // 2. Re-open database
-                        let db_path = env.db_path.clone();
-                        let db = match turso_core::Database::open_file(
-                            env.io.clone(),
-                            &db_path,
-                            false,
-                            false,
-                        ) {
-                            Ok(db) => db,
-                            Err(e) => {
-                                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
-                            }
-                        };
-                        env.db = db;
-
-                        for _ in 0..num_conns {
-                            env.connections
-                                .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
-                        }
+                        reopen_database(env);
                     }
                 }
                 Ok(())
             }
+            _ => {
+                unreachable!("unexpected: this function should only be called on faults")
+            }
         }
+    }
+
+    pub(crate) fn execute_fsync_query(
+        &self,
+        conn: Arc<Connection>,
+        env: &mut SimulatorEnv,
+    ) -> ResultSet {
+        if let Self::FsyncQuery(query) = self {
+            let query_str = query.to_string();
+            let rows = conn.query(&query_str);
+            if rows.is_err() {
+                let err = rows.err();
+                tracing::debug!(
+                    "Error running query '{}': {:?}",
+                    &query_str[0..query_str.len().min(4096)],
+                    err
+                );
+                return Err(err.unwrap());
+            }
+            let mut rows = rows.unwrap().unwrap();
+            let mut out = Vec::new();
+            while let Ok(row) = rows.step() {
+                match row {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let mut r = Vec::new();
+                        for v in row.get_values() {
+                            let v = v.into();
+                            r.push(v);
+                        }
+                        out.push(r);
+                    }
+                    StepResult::IO => {
+                        let syncing = {
+                            let files = env.io.files.borrow();
+                            // TODO: currently assuming we only have 1 file that is syncing
+                            files
+                                .iter()
+                                .any(|file| file.sync_completion.borrow().is_some())
+                        };
+                        if syncing {
+                            reopen_database(env);
+                        } else {
+                            rows.run_once().unwrap();
+                        }
+                    }
+                    StepResult::Done => {
+                        break;
+                    }
+                    StepResult::Interrupt | StepResult::Busy => {}
+                }
+            }
+
+            Ok(out)
+        } else {
+            unreachable!("unexpected: this function should only be called on queries")
+        }
+    }
+
+    pub(crate) fn execute_faulty_query(
+        &self,
+        conn: &Arc<Connection>,
+        env: &mut SimulatorEnv,
+    ) -> ResultSet {
+        use rand::Rng;
+        if let Self::FaultyQuery(query) = self {
+            let query_str = query.to_string();
+            let rows = conn.query(&query_str);
+            if rows.is_err() {
+                let err = rows.err();
+                tracing::debug!(
+                    "Error running query '{}': {:?}",
+                    &query_str[0..query_str.len().min(4096)],
+                    err
+                );
+                return Err(err.unwrap());
+            }
+            let mut rows = rows.unwrap().unwrap();
+            let mut out = Vec::new();
+            let mut current_prob = 0.05;
+            let mut incr = 0.001;
+            loop {
+                let syncing = {
+                    let files = env.io.files.borrow();
+                    // TODO: currently assuming we only have 1 file that is syncing
+                    files
+                        .iter()
+                        .any(|file| file.sync_completion.borrow().is_some())
+                };
+                let inject_fault = env.rng.gen_bool(current_prob);
+                if inject_fault || syncing {
+                    env.io.inject_fault(true);
+                }
+
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let mut r = Vec::new();
+                        for v in row.get_values() {
+                            let v = v.into();
+                            r.push(v);
+                        }
+                        out.push(r);
+                    }
+                    StepResult::IO => {
+                        rows.run_once()?;
+                        current_prob += incr;
+                        if current_prob > 1.0 {
+                            current_prob = 1.0;
+                        } else {
+                            incr *= 1.01;
+                        }
+                    }
+                    StepResult::Done => {
+                        break;
+                    }
+                    StepResult::Interrupt | StepResult::Busy => {}
+                }
+            }
+
+            Ok(out)
+        } else {
+            unreachable!("unexpected: this function should only be called on queries")
+        }
+    }
+}
+
+fn reopen_database(env: &mut SimulatorEnv) {
+    // 1. Close all connections without default checkpoint-on-close behavior
+    // to expose bugs related to how we handle WAL
+    let num_conns = env.connections.len();
+    env.connections.clear();
+
+    // Clear all open files
+    env.io.files.borrow_mut().clear();
+
+    // 2. Re-open database
+    let db_path = env.db_path.clone();
+    let db = match turso_core::Database::open_file(env.io.clone(), &db_path, false, false) {
+        Ok(db) => db,
+        Err(e) => {
+            panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+        }
+    };
+    env.db = db;
+
+    for _ in 0..num_conns {
+        env.connections
+            .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
     }
 }
 

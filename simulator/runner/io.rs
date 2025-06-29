@@ -79,12 +79,14 @@ impl IO for SimulatorIO {
             fault: Cell::new(false),
             nr_pread_faults: Cell::new(0),
             nr_pwrite_faults: Cell::new(0),
+            nr_sync_faults: Cell::new(0),
             nr_pread_calls: Cell::new(0),
             nr_pwrite_calls: Cell::new(0),
             nr_sync_calls: Cell::new(0),
             page_size: self.page_size,
             rng: RefCell::new(ChaCha8Rng::seed_from_u64(self.seed)),
             latency_probability: self.latency_probability,
+            sync_completion: RefCell::new(None),
         });
         self.files.borrow_mut().push(file.clone());
         Ok(file)
