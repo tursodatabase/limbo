@@ -15,20 +15,13 @@ path = "lib.rs"
 
 [features]
 antithesis = ["dep:antithesis_sdk"]
-default = ["fs", "uuid", "time", "json", "static", "series"]
+default = ["fs", "uuid", "time", "json"]
 fs = ["turso_ext/vfs"]
 json = []
 uuid = []
 io_uring = ["dep:io-uring", "rustix/io_uring", "dep:libc"]
-percentile = ["limbo_percentile/static"]
-regexp = ["limbo_regexp/static"]
-crypto = ["limbo_crypto/static"]
-series = ["limbo_series/static"]
-ipaddr = ["limbo_ipaddr/static"]
-static = ["turso_ext/static"]
 time = []
 fuzz = []
-csv = ["limbo_csv/static"]
 omit_autovacuum = []
 simulator = ["fuzz", "serde"]
 serde = ["dep:serde"]
@@ -63,12 +56,6 @@ julian_day_converter = "0.4.5"
 rand = "0.8.5"
 libm = "0.2"
 turso_macros = { workspace = true }
-limbo_regexp = { workspace = true, optional = true, features = ["static"] }
-limbo_percentile = { workspace = true, optional = true, features = ["static"] }
-limbo_crypto = { workspace = true, optional = true, features = ["static"] }
-limbo_series = { workspace = true, optional = true, features = ["static"] }
-limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
-limbo_csv = { workspace = true, optional = true, features = ["static"] }
 miette = "7.6.0"
 strum = { workspace = true }
 parking_lot = "0.12.3"

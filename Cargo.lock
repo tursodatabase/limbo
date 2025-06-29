@@ -1490,12 +1490,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ipnetwork"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
-
-[[package]]
 name = "is-terminal"
 version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1777,15 +1771,6 @@ dependencies = [
  "csv",
  "mimalloc",
  "tempfile",
- "turso_ext",
-]
-
-[[package]]
-name = "limbo_ipaddr"
-version = "0.1.0-pre.2"
-dependencies = [
- "ipnetwork",
- "mimalloc",
  "turso_ext",
 ]
 
@@ -3699,12 +3684,6 @@ dependencies = [
  "libc",
  "libloading",
  "libm",
- "limbo_crypto",
- "limbo_csv",
- "limbo_ipaddr",
- "limbo_percentile",
- "limbo_regexp",
- "limbo_series",
  "lru",
  "miette",
  "mimalloc",
