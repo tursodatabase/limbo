@@ -114,6 +114,6 @@ impl IO for SimulatorIO {
     }
 
     fn get_memory_io(&self) -> Arc<turso_core::MemoryIO> {
-        todo!()
+        Arc::new(turso_core::MemoryIO::new())
     }
 }
