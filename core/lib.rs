@@ -17,9 +17,11 @@ mod pseudo;
 pub mod result;
 mod schema;
 mod storage;
+#[allow(dead_code)]
+#[cfg(feature = "time")]
+mod time;
 mod translate;
 pub mod types;
-#[allow(dead_code)]
 mod util;
 #[cfg(feature = "uuid")]
 mod uuid;

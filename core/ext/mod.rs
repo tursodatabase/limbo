@@ -183,9 +183,7 @@ impl Connection {
             return Err("Failed to register regexp extension".to_string());
         }
         #[cfg(feature = "time")]
-        if unsafe { !limbo_time::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register time extension".to_string());
-        }
+        crate::time::register_extension(&mut ext_api);
         #[cfg(feature = "crypto")]
         if unsafe { !limbo_crypto::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register crypto extension".to_string());

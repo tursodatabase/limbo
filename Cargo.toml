@@ -19,7 +19,6 @@ members = [
     "extensions/regexp",
     "extensions/series",
     "extensions/tests",
-    "extensions/time",
     "macros",
     "simulator",
     "sqlite3",
@@ -50,7 +49,6 @@ limbo_percentile = { path = "extensions/percentile", version = "0.1.0-pre.2" }
 limbo_regexp = { path = "extensions/regexp", version = "0.1.0-pre.2" }
 limbo_series = { path = "extensions/series", version = "0.1.0-pre.2" }
 turso_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.1.0-pre.2" }
-limbo_time = { path = "extensions/time", version = "0.1.0-pre.2" }
 limbo_uuid = { path = "extensions/uuid", version = "0.1.0-pre.2" }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
