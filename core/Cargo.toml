@@ -18,7 +18,7 @@ antithesis = ["dep:antithesis_sdk"]
 default = ["fs", "uuid", "time", "json", "static", "series"]
 fs = ["turso_ext/vfs"]
 json = []
-uuid = ["limbo_uuid/static"]
+uuid = []
 io_uring = ["dep:io-uring", "rustix/io_uring", "dep:libc"]
 percentile = ["limbo_percentile/static"]
 regexp = ["limbo_regexp/static"]
@@ -63,7 +63,6 @@ julian_day_converter = "0.4.5"
 rand = "0.8.5"
 libm = "0.2"
 turso_macros = { workspace = true }
-limbo_uuid = { workspace = true, optional = true, features = ["static"] }
 limbo_regexp = { workspace = true, optional = true, features = ["static"] }
 limbo_percentile = { workspace = true, optional = true, features = ["static"] }
 limbo_time = { workspace = true, optional = true, features = ["static"] }
@@ -82,6 +81,7 @@ strum_macros = { workspace = true }
 bitflags = "2.9.0"
 serde = { workspace = true , optional = true, features = ["derive"] }
 paste = "1.0.15"
+uuid = { version = "1.11.0", features = ["v4", "v7"] }
 
 [build-dependencies]
 chrono = { version = "0.4.38", default-features = false }

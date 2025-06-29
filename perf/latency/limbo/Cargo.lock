@@ -673,15 +673,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_uuid"
-version = "0.1.0-pre.2"
-dependencies = [
- "mimalloc",
- "turso_ext",
- "uuid",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1220,7 +1211,6 @@ dependencies = [
  "libm",
  "limbo_series",
  "limbo_time",
- "limbo_uuid",
  "miette",
  "mimalloc",
  "parking_lot",
@@ -1239,6 +1229,7 @@ dependencies = [
  "turso_macros",
  "turso_sqlite3_parser",
  "uncased",
+ "uuid",
 ]
 
 [[package]]

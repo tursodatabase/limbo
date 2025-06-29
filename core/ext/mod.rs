@@ -173,9 +173,7 @@ impl Connection {
         #[allow(unused_variables)]
         let mut ext_api = self.build_turso_ext();
         #[cfg(feature = "uuid")]
-        if unsafe { !limbo_uuid::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register uuid extension".to_string());
-        }
+        crate::uuid::register_extension(&mut ext_api);
         #[cfg(feature = "percentile")]
         if unsafe { !limbo_percentile::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register percentile extension".to_string());

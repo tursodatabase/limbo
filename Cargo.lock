@@ -1891,15 +1891,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_uuid"
-version = "0.1.0-pre.2"
-dependencies = [
- "mimalloc",
- "turso_ext",
- "uuid",
-]
-
-[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3727,7 +3718,6 @@ dependencies = [
  "limbo_regexp",
  "limbo_series",
  "limbo_time",
- "limbo_uuid",
  "lru",
  "miette",
  "mimalloc",
@@ -3757,6 +3747,7 @@ dependencies = [
  "turso_macros",
  "turso_sqlite3_parser",
  "uncased",
+ "uuid",
 ]
 
 [[package]]

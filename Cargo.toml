@@ -20,7 +20,6 @@ members = [
     "extensions/series",
     "extensions/tests",
     "extensions/time",
-    "extensions/uuid",
     "macros",
     "simulator",
     "sqlite3",
