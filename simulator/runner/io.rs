@@ -114,6 +114,6 @@ impl IO for SimulatorIO {
     }
 
     fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
-        todo!()
+        Arc::new(limbo_core::MemoryIO::new())
     }
 }

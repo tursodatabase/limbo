@@ -1,14 +1,16 @@
 use std::sync::{Arc, Mutex};
 
 use limbo_core::{Connection, LimboError, Result, StepResult};
+use limbo_sim::{
+    generation::{
+        pick_index,
+        plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet},
+    },
+    model::{Shadow as _, SimConnection},
+};
 use tracing::instrument;
 
-use crate::generation::{
-    pick_index,
-    plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet},
-};
-
-use super::env::{SimConnection, SimulatorEnv};
+use crate::runner::env::LimboSimulatorEnv;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Execution {
@@ -56,7 +58,7 @@ impl ExecutionResult {
 }
 
 pub(crate) fn execute_plans(
-    env: Arc<Mutex<SimulatorEnv>>,
+    env: Arc<Mutex<LimboSimulatorEnv>>,
     plans: &mut [InteractionPlan],
     states: &mut [InteractionPlanState],
     last_execution: Arc<Mutex<Execution>>,
@@ -106,7 +108,7 @@ pub(crate) fn execute_plans(
 }
 
 fn execute_plan(
-    env: &mut SimulatorEnv,
+    env: &mut LimboSimulatorEnv,
     connection_index: usize,
     plans: &mut [InteractionPlan],
     states: &mut [InteractionPlanState],
@@ -176,7 +178,7 @@ pub(crate) enum ExecutionContinuation {
 
 #[instrument(skip(env, interaction, stack), fields(interaction = %interaction))]
 pub(crate) fn execute_interaction(
-    env: &mut SimulatorEnv,
+    env: &mut LimboSimulatorEnv,
     connection_index: usize,
     interaction: &Interaction,
     stack: &mut Vec<ResultSet>,
@@ -191,7 +193,7 @@ pub(crate) fn execute_interaction(
                 SimConnection::Disconnected => unreachable!(),
             };
 
-            let results = interaction.execute_query(conn, &env.io);
+            let results = interaction.execute_query(conn);
             tracing::debug!("{:?}", results);
             stack.push(results);
             limbo_integrity_check(conn)?;
