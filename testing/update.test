@@ -253,3 +253,10 @@ do_execsql_test_in_memory_any_error update_primary_key_unique_constraint_error {
     INSERT INTO t(b) VALUES (100), (200), (300);
     UPDATE t SET b = 2;
 }
+
+do_execsql_test_on_specific_db {:memory:} update-single-rowid {
+    CREATE TABLE t(x INTEGER PRIMARY KEY);
+    INSERT INTO t VALUES (1);
+    UPDATE t SET x = 2 WHERE x = 1;
+    SELECT * FROM t;
+} {2}

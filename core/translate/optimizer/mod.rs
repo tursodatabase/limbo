@@ -116,9 +116,6 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
         plan.contains_constant_false_condition = true;
         return Ok(());
     }
-    if let Some(ephemeral_plan) = &mut plan.ephemeral_plan {
-        optimize_select_plan(ephemeral_plan, schema)?;
-    }
     let _ = optimize_table_access(
         schema,
         &mut plan.table_references,

@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
 use crate::schema::{BTreeTable, Column, Type};
-use crate::translate::plan::{Operation, QueryDestination, SelectPlan};
+use crate::translate::optimizer::optimize_select_plan;
+use crate::translate::plan::{Operation, QueryDestination, Search, SelectPlan};
 use crate::vdbe::builder::CursorType;
 use crate::{
     bail_parse_error,
@@ -171,7 +172,6 @@ pub fn prepare_update_plan(
         })
         .collect::<Result<Vec<(usize, Expr)>, crate::LimboError>>()?;
 
-    let mut where_clause = vec![];
     let mut result_columns = vec![];
     if let Some(returning) = &mut body.returning {
         for rc in returning.iter_mut() {
@@ -210,7 +210,8 @@ pub fn prepare_update_plan(
         accum || columns[*idx].is_rowid_alias
     });
 
-    let (ephemeral_plan, where_clause) = if rowid_alias_used {
+    let (ephemeral_plan, mut where_clause) = if rowid_alias_used {
+        let mut where_clause = vec![];
         let internal_id = program.table_reference_counter.next();
 
         let joined_tables = vec![JoinedTable {
@@ -260,7 +261,7 @@ pub fn prepare_update_plan(
 
         let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(table.clone()));
 
-        let ephemeral_plan = SelectPlan {
+        let mut ephemeral_plan = SelectPlan {
             table_references,
             result_columns: vec![ResultSetColumn {
                 expr: Expr::RowId {
@@ -285,8 +286,24 @@ pub fn prepare_update_plan(
             distinctness: super::plan::Distinctness::NonDistinct,
             values: vec![],
         };
-        (Some(ephemeral_plan), vec![])
+
+        optimize_select_plan(&mut ephemeral_plan, schema)?;
+        let table = ephemeral_plan
+            .table_references
+            .joined_tables()
+            .first()
+            .unwrap();
+        // We do not need to emit an ephemeral plan if we are not going to loop over the table values
+        if matches!(table.op, Operation::Search(Search::RowidEq { .. })) {
+            (None, vec![])
+        } else {
+            (Some(ephemeral_plan), vec![])
+        }
     } else {
+        (None, vec![])
+    };
+
+    if ephemeral_plan.is_none() {
         // Parse the WHERE clause
         parse_where(
             body.where_clause.as_ref().map(|w| *w.clone()),
@@ -294,7 +311,6 @@ pub fn prepare_update_plan(
             Some(&result_columns),
             &mut where_clause,
         )?;
-        (None, where_clause)
     };
 
     // Parse the LIMIT/OFFSET clause
