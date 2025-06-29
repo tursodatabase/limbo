@@ -3,6 +3,7 @@ use turso_ext::{ConstraintInfo, ConstraintOp};
 use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
+    assert_always_less_than,
     function::AggFunc,
     schema::{BTreeTable, Column, FromClauseSubquery, Index, Table},
     vdbe::{
@@ -833,17 +834,19 @@ pub struct ColumnUsedMask(u128);
 
 impl ColumnUsedMask {
     pub fn set(&mut self, index: usize) {
-        assert!(
-            index < 128,
-            "ColumnUsedMask only supports up to 128 columns"
+        assert_always_less_than!(
+            index,
+            128,
+            "[ColumnUsedMask - set] ColumnUsedMask only supports up to 128 columns"
         );
         self.0 |= 1 << index;
     }
 
     pub fn get(&self, index: usize) -> bool {
-        assert!(
-            index < 128,
-            "ColumnUsedMask only supports up to 128 columns"
+        assert_always_less_than!(
+            index,
+            128,
+            "[ColumnUsedMask - get] ColumnUsedMask only supports up to 128 columns"
         );
         self.0 & (1 << index) != 0
     }

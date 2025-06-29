@@ -2,6 +2,7 @@ use fallible_iterator::FallibleIterator as _;
 use turso_sqlite3_parser::{ast, lexer::sql::Parser};
 
 use crate::{
+    assert_always_eq, assert_always_ne,
     function::{AlterTableFunc, Func},
     schema::{Column, Schema},
     util::normalize_ident,
@@ -48,7 +49,11 @@ pub fn translate_alter_table(
             let ast::Name(column_name) = column_name;
 
             // Tables always have at least one column.
-            assert_ne!(btree.columns.len(), 0);
+            assert_always_ne!(
+                btree.columns.len(),
+                0,
+                "[translate_alter_table] Tables always have at least one column"
+            );
 
             if btree.columns.len() == 1 {
                 return Err(LimboError::ParseError(format!(
@@ -249,7 +254,11 @@ pub fn translate_alter_table(
 
             program.cursor_loop(cursor_id, |program, rowid| {
                 let sqlite_schema_column_len = sqlite_schema.columns.len();
-                assert_eq!(sqlite_schema_column_len, 5);
+                assert_always_eq!(
+                    sqlite_schema_column_len,
+                    5,
+                    "[translate_alter_table] RenameColumn: sqlite schema should have 5 columns"
+                );
 
                 let first_column = program.alloc_registers(sqlite_schema_column_len);
 
@@ -330,7 +339,11 @@ pub fn translate_alter_table(
 
             program.cursor_loop(cursor_id, |program, rowid| {
                 let sqlite_schema_column_len = sqlite_schema.columns.len();
-                assert_eq!(sqlite_schema_column_len, 5);
+                assert_always_eq!(
+                    sqlite_schema_column_len,
+                    5,
+                    "[translate_alter_table] RenameTo: sqlite schema should have 5 columns"
+                );
 
                 let first_column = program.alloc_registers(sqlite_schema_column_len);
 

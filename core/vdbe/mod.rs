@@ -38,6 +38,7 @@ use crate::{
     vdbe::{builder::CursorType, insn::Insn},
 };
 
+use crate::assert_always_less_than;
 #[cfg(feature = "json")]
 use crate::json::JsonCacheCell;
 use crate::{Connection, MvStore, Result, TransactionState};
@@ -187,17 +188,17 @@ impl<const N: usize> Bitfield<N> {
     }
 
     fn set(&mut self, bit: usize) {
-        assert!(bit < N * 64, "bit out of bounds");
+        assert_always_less_than!(bit, N * 64, "[Bitfield - set] bit out of bounds");
         self.0[bit / 64] |= 1 << (bit % 64);
     }
 
     fn unset(&mut self, bit: usize) {
-        assert!(bit < N * 64, "bit out of bounds");
+        assert_always_less_than!(bit, N * 64, "[Bitfield - unset] bit out of bounds");
         self.0[bit / 64] &= !(1 << (bit % 64));
     }
 
     fn get(&self, bit: usize) -> bool {
-        assert!(bit < N * 64, "bit out of bounds");
+        assert_always_less_than!(bit, N * 64, "[Bitfield - get] bit out of bounds");
         (self.0[bit / 64] & (1 << (bit % 64))) != 0
     }
 }

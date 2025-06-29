@@ -4,6 +4,7 @@ use turso_sqlite3_parser::ast::{
     DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
 };
 
+use crate::assert_always_eq;
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{IndexColumn, Table};
 use crate::util::normalize_ident;
@@ -280,7 +281,11 @@ pub fn translate_insert(
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
     let rowid_alias_index = btree_table.columns.iter().position(|c| c.is_rowid_alias);
     let has_user_provided_rowid = {
-        assert_eq!(column_mappings.len(), btree_table.columns.len());
+        assert_always_eq!(
+            column_mappings.len(),
+            btree_table.columns.len(),
+            "[translate_insert] column mappings should correspond to btree columns"
+        );
         if let Some(index) = rowid_alias_index {
             column_mappings[index].value_index.is_some()
         } else {
