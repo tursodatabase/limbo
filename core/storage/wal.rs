@@ -611,9 +611,10 @@ impl Wal for WalFile {
             let frame = frame.clone();
             finish_read_page(page.get().id, buf, frame).unwrap();
         });
-        begin_read_wal_frame(
+        let _c = begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
+            self.page_size as usize,
             buffer_pool,
             complete,
         )?;
@@ -638,7 +639,8 @@ impl Wal for WalFile {
         });
         let c = begin_read_wal_frame(
             &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
+            offset,
+            WAL_FRAME_HEADER_SIZE + self.page_size as usize,
             buffer_pool,
             complete,
         )?;
