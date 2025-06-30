@@ -35,6 +35,9 @@ impl Schema {
             SCHEMA_TABLE_NAME.to_string(),
             Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
+        for function in VirtualTable::builtin_functions() {
+            tables.insert(function.name.to_owned(), Arc::new(Table::Virtual(function)));
+        }
         Self {
             tables,
             indexes,
@@ -316,6 +319,7 @@ impl PseudoTable {
             default: None,
             unique: false,
             collation: None,
+            hidden: false,
         });
     }
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
@@ -539,6 +543,7 @@ fn create_table(
                     default,
                     unique,
                     collation,
+                    hidden: false,
                 });
             }
             if options.contains(TableOptions::WITHOUT_ROWID) {
@@ -610,6 +615,7 @@ pub struct Column {
     pub default: Option<Expr>,
     pub unique: bool,
     pub collation: Option<CollationSeq>,
+    pub hidden: bool,
 }
 
 impl Column {
@@ -688,6 +694,7 @@ impl From<ColumnDefinition> for Column {
             is_rowid_alias: primary_key && matches!(ty, Type::Integer),
             unique,
             collation,
+            hidden: false,
         }
     }
 }
@@ -904,6 +911,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             },
             Column {
                 name: Some("name".to_string()),
@@ -915,6 +923,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             },
             Column {
                 name: Some("tbl_name".to_string()),
@@ -926,6 +935,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             },
             Column {
                 name: Some("rootpage".to_string()),
@@ -937,6 +947,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             },
             Column {
                 name: Some("sql".to_string()),
@@ -948,6 +959,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             },
         ],
         unique_sets: None,
@@ -1597,6 +1609,7 @@ mod tests {
                 default: None,
                 unique: false,
                 collation: None,
+                hidden: false,
             }],
             unique_sets: None,
         };

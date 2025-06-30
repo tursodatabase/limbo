@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
 use turso_ext::{
-    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
-    VTable, Value,
+    register_extension, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo,
+    OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
 };
 
 register_extension! {
     vtabs: { GenerateSeriesVTabModule }
 }
 
-macro_rules! try_option {
-    ($expr:expr, $err:expr) => {
-        match $expr {
-            Some(val) => val,
-            None => return $err,
-        }
+macro_rules! extract_arg_integer {
+    ($args:expr, $idx:expr, $unknown_type_default:expr) => {
+        $args
+            .get($idx)
+            .map(|v| v.to_integer().unwrap_or($unknown_type_default))
+            .unwrap_or(-1)
     };
 }
 
@@ -53,6 +53,66 @@ impl VTable for GenerateSeriesTable {
             current: 0,
         })
     }
+
+    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+        // The bits of `idx_num` are used to indicate which arguments are available to the filter method:
+        // - Bit 0 set -> 'start' is available
+        // - Bit 1 set -> 'stop' is available
+        // - Bit 2 set -> 'step' is available
+        let mut idx_num = 0;
+        let mut start_idx = None;
+        let mut stop_idx = None;
+        let mut step_idx = None;
+
+        for (i, c) in constraints.iter().enumerate() {
+            if !c.usable || c.op != ConstraintOp::Eq {
+                continue;
+            }
+            match c.column_index {
+                1 => {
+                    start_idx = Some(i);
+                    idx_num |= 1;
+                }
+                2 => {
+                    stop_idx = Some(i);
+                    idx_num |= 2;
+                }
+                3 => {
+                    step_idx = Some(i);
+                    idx_num |= 4;
+                }
+                _ => {}
+            }
+        }
+
+        let mut argv_idx = 1;
+        let constraint_usages = constraints
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if Some(i) == start_idx || Some(i) == stop_idx || Some(i) == step_idx {
+                    let usage = ConstraintUsage {
+                        argv_index: Some(argv_idx),
+                        omit: true,
+                    };
+                    argv_idx += 1;
+                    usage
+                } else {
+                    ConstraintUsage {
+                        argv_index: Some(0),
+                        omit: false,
+                    }
+                }
+            })
+            .collect();
+
+        IndexInfo {
+            idx_num,
+            idx_str: Some(idx_num.to_string()),
+            constraint_usages,
+            ..Default::default()
+        }
+    }
 }
 
 /// The cursor for iterating over the generated sequence
@@ -90,20 +150,36 @@ impl GenerateSeriesCursor {
 impl VTabCursor for GenerateSeriesCursor {
     type Error = ResultCode;
 
-    fn filter(&mut self, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
-        // args are the start, stop, and step
-        if args.is_empty() || args.len() > 3 {
+    fn filter(&mut self, args: &[Value], idx_info: Option<(&str, i32)>) -> ResultCode {
+        let mut start = -1;
+        let mut stop = -1;
+        let mut step = 1;
+
+        if let Some((_, idx_num)) = idx_info {
+            let mut arg_idx = 0;
+            // For the semantics of `idx_num`, see the comment in the `best_index` method.
+            if idx_num & 1 != 0 {
+                start = extract_arg_integer!(args, arg_idx, -1);
+                arg_idx += 1;
+            }
+            if idx_num & 2 != 0 {
+                stop = extract_arg_integer!(args, arg_idx, i64::MAX);
+                arg_idx += 1;
+            }
+            if idx_num & 4 != 0 {
+                step = args
+                    .get(arg_idx)
+                    .map(|v| v.to_integer().unwrap_or(1))
+                    .unwrap_or(1);
+            }
+        }
+
+        if start == -1 {
             return ResultCode::InvalidArgs;
         }
-        let start = try_option!(args[0].to_integer(), ResultCode::InvalidArgs);
-        let stop = try_option!(
-            args.get(1).map(|v| v.to_integer().unwrap_or(i64::MAX)),
-            ResultCode::EOF // Sqlite returns an empty series for wacky args
-        );
-        let mut step = args
-            .get(2)
-            .map(|v| v.to_integer().unwrap_or(1))
-            .unwrap_or(1);
+        if stop == -1 {
+            return ResultCode::EOF; // Sqlite returns an empty series for wacky args
+        }
 
         // Convert zero step to 1, matching SQLite behavior
         if step == 0 {
@@ -237,7 +313,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        match cursor.filter(&args, None) {
+        match cursor.filter(&args, Some(("idx", 1 | 2 | 4))) {
             ResultCode::OK => (),
             ResultCode::EOF => return Ok(vec![]),
             err => return Err(err),
@@ -553,7 +629,7 @@ mod tests {
         ];
 
         // Initialize cursor through filter
-        cursor.filter(&args, None);
+        cursor.filter(&args, Some(("idx", 1 | 2 | 4)));
 
         let mut rowids = vec![];
         while !cursor.eof() {

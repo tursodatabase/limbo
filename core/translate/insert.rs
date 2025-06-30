@@ -612,25 +612,30 @@ fn resolve_columns_for_insert<'a>(
     let table_columns = table.columns();
     // Case 1: No columns specified - map values to columns in order
     if columns.is_none() {
-        if num_values != table_columns.len() {
+        let mut value_idx = 0;
+        let mut column_mappings = Vec::with_capacity(table_columns.len());
+        for col in table_columns {
+            let mapping = ColumnMapping {
+                column: col,
+                value_index: if col.hidden { None } else { Some(value_idx) },
+                default_value: col.default.as_ref(),
+            };
+            if !col.hidden {
+                value_idx += 1;
+            }
+            column_mappings.push(mapping);
+        }
+
+        if num_values != value_idx {
             crate::bail_parse_error!(
                 "table {} has {} columns but {} values were supplied",
                 &table.get_name(),
-                table_columns.len(),
+                value_idx,
                 num_values
             );
         }
 
-        // Map each column to either its corresponding value index or None
-        return Ok(table_columns
-            .iter()
-            .enumerate()
-            .map(|(i, col)| ColumnMapping {
-                column: col,
-                value_index: if i < num_values { Some(i) } else { None },
-                default_value: col.default.as_ref(),
-            })
-            .collect());
+        return Ok(column_mappings);
     }
 
     // Case 2: Columns specified - map named columns to their values
@@ -819,6 +824,12 @@ fn populate_column_registers(
             if write_directly_to_rowid_reg {
                 program.emit_insn(Insn::SoftNull { reg: target_reg });
             }
+        } else if mapping.column.hidden {
+            program.emit_insn(Insn::Null {
+                dest: target_reg,
+                dest_end: None,
+            });
+            program.mark_last_insn_constant();
         } else if let Some(default_expr) = mapping.default_value {
             translate_expr_no_constant_opt(
                 program,
