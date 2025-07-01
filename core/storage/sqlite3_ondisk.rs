@@ -45,10 +45,16 @@
 
 use tracing::{instrument, Level};
 
+use super::pager::PageRef;
+use super::wal::LimboRwLock;
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
 use crate::io::{
     Buffer, Complete, Completion, CompletionType, ReadCompletion, SyncCompletion, WriteCompletion,
+};
+use crate::storage::btree::offset::{
+    BTREE_CELL_CONTENT_AREA, BTREE_CELL_COUNT, BTREE_FIRST_FREEBLOCK, BTREE_FRAGMENTED_BYTES_COUNT,
+    BTREE_PAGE_TYPE, BTREE_RIGHTMOST_PTR,
 };
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
@@ -64,9 +70,6 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-
-use super::pager::PageRef;
-use super::wal::LimboRwLock;
 
 /// The size of the database header in bytes.
 pub const DATABASE_HEADER_SIZE: usize = 100;
@@ -357,6 +360,8 @@ pub struct OverflowCell {
 
 #[derive(Debug)]
 pub struct PageContent {
+    /// the position where page content starts. it's 100 for page 1(database file header is 100 bytes),
+    /// 0 for all other pages.
     pub offset: usize,
     pub buffer: Arc<RefCell<Buffer>>,
     pub overflow_cells: Vec<OverflowCell>,
@@ -373,6 +378,7 @@ impl Clone for PageContent {
     }
 }
 
+const CELL_POINTER_SIZE_BYTES: usize = 2;
 impl PageContent {
     pub fn new(offset: usize, buffer: Arc<RefCell<Buffer>>) -> Self {
         Self {
@@ -383,7 +389,7 @@ impl PageContent {
     }
 
     pub fn page_type(&self) -> PageType {
-        self.read_u8(0).try_into().unwrap()
+        self.read_u8(BTREE_PAGE_TYPE).try_into().unwrap()
     }
 
     pub fn maybe_page_type(&self) -> Option<PageType> {
@@ -452,19 +458,14 @@ impl PageContent {
         buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
     }
 
-    /// The second field of the b-tree page header is the offset of the first freeblock, or zero if there are no freeblocks on the page.
-    /// A freeblock is a structure used to identify unallocated space within a b-tree page.
-    /// Freeblocks are organized as a chain.
-    ///
-    /// To be clear, freeblocks do not mean the regular unallocated free space to the left of the cell content area pointer, but instead
-    /// blocks of at least 4 bytes WITHIN the cell content area that are not in use due to e.g. deletions.
+    /// The offset of the first freeblock, or zero if there are no freeblocks on the page.
     pub fn first_freeblock(&self) -> u16 {
-        self.read_u16(1)
+        self.read_u16(BTREE_FIRST_FREEBLOCK)
     }
 
     /// The number of cells on the page.
     pub fn cell_count(&self) -> usize {
-        self.read_u16(3) as usize
+        self.read_u16(BTREE_CELL_COUNT) as usize
     }
 
     /// The size of the cell pointer array in bytes.
@@ -486,11 +487,13 @@ impl PageContent {
     }
 
     /// The start of the cell content area.
-    /// SQLite strives to place cells as far toward the end of the b-tree page as it can,
-    /// in order to leave space for future growth of the cell pointer array.
-    /// = the cell content area pointer moves leftward as cells are added to the page
-    pub fn cell_content_area(&self) -> u16 {
-        self.read_u16(5)
+    pub fn cell_content_area(&self) -> u32 {
+        let offset = self.read_u16(BTREE_CELL_CONTENT_AREA);
+        if offset == 0 {
+            MAX_PAGE_SIZE
+        } else {
+            offset as u32
+        }
     }
 
     /// The size of the page header in bytes.
@@ -504,16 +507,15 @@ impl PageContent {
         }
     }
 
-    /// The total number of bytes in all fragments is stored in the fifth field of the b-tree page header.
-    /// Fragments are isolated groups of 1, 2, or 3 unused bytes within the cell content area.
+    /// The total number of bytes in all fragments
     pub fn num_frag_free_bytes(&self) -> u8 {
-        self.read_u8(7)
+        self.read_u8(BTREE_FRAGMENTED_BYTES_COUNT)
     }
 
     pub fn rightmost_pointer(&self) -> Option<u32> {
         match self.page_type() {
-            PageType::IndexInterior => Some(self.read_u32(8)),
-            PageType::TableInterior => Some(self.read_u32(8)),
+            PageType::IndexInterior => Some(self.read_u32(BTREE_RIGHTMOST_PTR)),
+            PageType::TableInterior => Some(self.read_u32(BTREE_RIGHTMOST_PTR)),
             PageType::IndexLeaf => None,
             PageType::TableLeaf => None,
         }
@@ -521,9 +523,11 @@ impl PageContent {
 
     pub fn rightmost_pointer_raw(&self) -> Option<*mut u8> {
         match self.page_type() {
-            PageType::IndexInterior | PageType::TableInterior => {
-                Some(unsafe { self.as_ptr().as_mut_ptr().add(self.offset + 8) })
-            }
+            PageType::IndexInterior | PageType::TableInterior => Some(unsafe {
+                self.as_ptr()
+                    .as_mut_ptr()
+                    .add(self.offset + BTREE_RIGHTMOST_PTR)
+            }),
             PageType::IndexLeaf => None,
             PageType::TableLeaf => None,
         }
@@ -540,16 +544,14 @@ impl PageContent {
         let buf = self.as_ptr();
 
         let ncells = self.cell_count();
-        // the page header is 12 bytes for interior pages, 8 bytes for leaf pages
-        // this is because the 4 last bytes in the interior page's header are used for the rightmost pointer.
-        let cell_pointer_array_start = self.header_size();
         assert!(
             idx < ncells,
             "cell_get: idx out of bounds: idx={}, ncells={}",
             idx,
             ncells
         );
-        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer_array_start = self.header_size();
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 
         // SAFETY: this buffer is valid as long as the page is alive. We could store the page in the cell and do some lifetime magic
@@ -570,9 +572,8 @@ impl PageContent {
     pub fn cell_table_interior_read_rowid(&self, idx: usize) -> Result<i64> {
         debug_assert!(self.page_type() == PageType::TableInterior);
         let buf = self.as_ptr();
-        const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
-        let cell_pointer_array_start = INTERIOR_PAGE_HEADER_SIZE_BYTES;
-        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer_array_start = self.header_size();
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         const LEFT_CHILD_PAGE_SIZE_BYTES: usize = 4;
         let (rowid, _) = read_varint(&buf[cell_pointer + LEFT_CHILD_PAGE_SIZE_BYTES..])?;
@@ -584,9 +585,8 @@ impl PageContent {
     pub fn cell_table_interior_read_left_child_page(&self, idx: usize) -> Result<u32> {
         debug_assert!(self.page_type() == PageType::TableInterior);
         let buf = self.as_ptr();
-        const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
-        let cell_pointer_array_start = INTERIOR_PAGE_HEADER_SIZE_BYTES;
-        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer_array_start = self.header_size();
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         Ok(u32::from_be_bytes([
             buf[cell_pointer],
@@ -601,9 +601,8 @@ impl PageContent {
     pub fn cell_table_leaf_read_rowid(&self, idx: usize) -> Result<i64> {
         debug_assert!(self.page_type() == PageType::TableLeaf);
         let buf = self.as_ptr();
-        const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
-        let cell_pointer_array_start = LEAF_PAGE_HEADER_SIZE_BYTES;
-        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer_array_start = self.header_size();
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         let mut pos = cell_pointer;
         let (_, nr) = read_varint(&buf[pos..])?;
@@ -623,7 +622,7 @@ impl PageContent {
         (self.offset + header_size, self.cell_pointer_array_size())
     }
 
-    /// Get region of a cell's payload
+    /// Get region(start end length) of a cell's payload
     pub fn cell_get_raw_region(
         &self,
         idx: usize,
@@ -635,7 +634,7 @@ impl PageContent {
         let ncells = self.cell_count();
         let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
         assert!(idx < ncells, "cell_get: idx out of bounds");
-        let cell_pointer = cell_pointer_array_start + (idx * 2); // pointers are 2 bytes each
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
         let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
         let start = cell_pointer;
         let len = match self.page_type() {
