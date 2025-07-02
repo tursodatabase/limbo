@@ -1747,6 +1747,8 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// enable capture-changes logic for the connection
+    CaptureDataChanges,
     /// Run integrity check on the database file
     IntegrityCheck,
     /// `journal_mode` pragma
@@ -1765,8 +1767,6 @@ pub enum PragmaName {
     UserVersion,
     /// trigger a checkpoint to run on database(s) if WAL is enabled
     WalCheckpoint,
-    /// enable capture-changes logic for the connection
-    CaptureDataChanges,
 }
 
 /// `CREATE TRIGGER` time
