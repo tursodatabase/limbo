@@ -11,7 +11,7 @@ use crate::{
     },
     types::SeekOp,
     vdbe::{
-        builder::{CursorKey, CursorType, ProgramBuilder},
+        builder::{CursorKey, CursorType, ProgramBuilder, ProgramBuilderFlags},
         insn::{CmpInsFlags, IdxInsertFlags, Insn},
         BranchOffset, CursorID,
     },
@@ -117,6 +117,32 @@ pub fn init_loop(
         t_ctx.meta_left_joins.len() == tables.joined_tables().len(),
         "meta_left_joins length does not match tables length"
     );
+
+    let capture_changes = program
+        .flags()
+        .contains(ProgramBuilderFlags::CaptureChanges);
+    if capture_changes
+        && matches!(
+            mode,
+            OperationMode::INSERT | OperationMode::UPDATE | OperationMode::DELETE
+        )
+    {
+        let Some(turso_cdc_table) = t_ctx.resolver.schema.get_table("turso_cdc") else {
+            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        };
+        let Some(turso_cdc_btree) = turso_cdc_table.btree().clone() else {
+            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        };
+        let turso_cdc_cursor_id =
+            program.alloc_cursor_id(CursorType::BTreeTable(turso_cdc_btree.clone()));
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: turso_cdc_cursor_id,
+            root_page: turso_cdc_btree.root_page.into(),
+            name: turso_cdc_btree.name.clone(),
+        });
+        t_ctx.cdc_cursor_id = Some(turso_cdc_cursor_id);
+    }
+
     // Initialize ephemeral indexes for distinct aggregates
     for (i, agg) in aggregates
         .iter_mut()

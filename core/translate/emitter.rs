@@ -31,7 +31,7 @@ use crate::vdbe::builder::{CursorKey, CursorType, ProgramBuilder};
 use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, InsertFlags, RegisterOrLiteral};
 use crate::vdbe::CursorID;
 use crate::vdbe::{insn::Insn, BranchOffset};
-use crate::{Result, SymbolTable};
+use crate::{bail_parse_error, Result, SymbolTable};
 
 pub struct Resolver<'a> {
     pub schema: &'a Schema,
@@ -149,6 +149,8 @@ pub struct TranslateCtx<'a> {
     /// - First: all `GROUP BY` expressions, in the order they appear in the `GROUP BY` clause.
     /// - Then: remaining non-aggregate expressions that are not part of `GROUP BY`.
     pub non_aggregate_expressions: Vec<(&'a Expr, bool)>,
+    /// Cursor id for turso_cdc table (if capture_changes=on is set and query can modify the data)
+    pub cdc_cursor_id: Option<usize>,
 }
 
 impl<'a> TranslateCtx<'a> {
@@ -175,6 +177,7 @@ impl<'a> TranslateCtx<'a> {
             result_columns_to_skip_in_orderby_sorter: None,
             resolver: Resolver::new(schema, syms),
             non_aggregate_expressions: Vec::new(),
+            cdc_cursor_id: None,
         }
     }
 }
@@ -564,6 +567,22 @@ fn emit_delete_insns(
                     cursor_id: index_cursor_id,
                 });
             }
+        }
+
+        if let Some(turso_cdc_cursor_id) = t_ctx.cdc_cursor_id {
+            let rowid_reg = program.alloc_register();
+            program.emit_insn(Insn::RowId {
+                cursor_id: main_table_cursor_id,
+                dest: rowid_reg,
+            });
+            emit_cdc_insns(
+                program,
+                &t_ctx.resolver,
+                OperationMode::DELETE,
+                turso_cdc_cursor_id,
+                rowid_reg,
+                &table_reference.identifier, // is it OK to use identifier here?
+            )?;
         }
 
         program.emit_insn(Insn::Delete {
@@ -1076,6 +1095,53 @@ fn emit_update_insns(
             });
         }
 
+        if let Some(cdc_cursor_id) = t_ctx.cdc_cursor_id {
+            let rowid_reg = program.alloc_register();
+            if has_user_provided_rowid {
+                program.emit_insn(Insn::RowId {
+                    cursor_id: cursor_id,
+                    dest: rowid_reg,
+                });
+                emit_cdc_insns(
+                    program,
+                    &t_ctx.resolver,
+                    OperationMode::DELETE,
+                    cdc_cursor_id,
+                    rowid_reg,
+                    &table_ref.identifier, // is it OK to use identifier here?
+                )?;
+                program.emit_insn(Insn::Copy {
+                    src_reg: rowid_set_clause_reg.expect(
+                        "rowid_set_clause_reg must be set because has_user_provided_rowid is true",
+                    ),
+                    dst_reg: rowid_reg,
+                    amount: 1,
+                });
+                emit_cdc_insns(
+                    program,
+                    &t_ctx.resolver,
+                    OperationMode::INSERT,
+                    cdc_cursor_id,
+                    rowid_reg,
+                    &table_ref.identifier, // is it OK to use identifier here?
+                )?;
+            } else {
+                program.emit_insn(Insn::Copy {
+                    src_reg: rowid_set_clause_reg.unwrap_or(beg),
+                    dst_reg: rowid_reg,
+                    amount: 1,
+                });
+                emit_cdc_insns(
+                    program,
+                    &t_ctx.resolver,
+                    OperationMode::UPDATE,
+                    cdc_cursor_id,
+                    rowid_reg,
+                    &table_ref.identifier, // is it OK to use identifier here?
+                )?;
+            }
+        }
+
         // If we are updating the rowid, we cannot rely on overwrite on the
         // Insert instruction to update the cell. We need to first delete the current cell
         // and later insert the updated record
@@ -1112,6 +1178,80 @@ fn emit_update_insns(
         program.preassign_label_to_next_insn(label);
     }
 
+    Ok(())
+}
+
+pub fn emit_cdc_insns(
+    program: &mut ProgramBuilder,
+    resolver: &Resolver,
+    operation_mode: OperationMode,
+    cdc_cursor_id: usize,
+    rowid_reg: usize,
+    table_name: &str,
+) -> Result<()> {
+    // (operation_id INTEGER PRIMARY KEY, operation_time INTEGER, operation_type INTEGER, table_name TEXT, row_key BLOB)
+    let turso_cdc_registers = program.alloc_registers(5);
+    program.emit_insn(Insn::Null {
+        dest: turso_cdc_registers,
+        dest_end: None,
+    });
+    program.mark_last_insn_constant();
+
+    let Some(unixepoch_fn) = resolver.resolve_function("unixepoch", 0) else {
+        bail_parse_error!("no function {}", "unixepoch");
+    };
+    let unixepoch_fn_ctx = crate::function::FuncCtx {
+        func: unixepoch_fn,
+        arg_count: 0,
+    };
+
+    program.emit_insn(Insn::Function {
+        constant_mask: 0,
+        start_reg: 0,
+        dest: turso_cdc_registers + 1,
+        func: unixepoch_fn_ctx,
+    });
+
+    let operation_type = match operation_mode {
+        OperationMode::INSERT => 1,
+        OperationMode::UPDATE | OperationMode::SELECT => 0,
+        OperationMode::DELETE => -1,
+    };
+    program.emit_int(operation_type, turso_cdc_registers + 2);
+    program.mark_last_insn_constant();
+
+    program.emit_string8(table_name.to_string(), turso_cdc_registers + 3);
+    program.mark_last_insn_constant();
+
+    program.emit_insn(Insn::Copy {
+        src_reg: rowid_reg,
+        dst_reg: turso_cdc_registers + 4,
+        amount: 0,
+    });
+
+    let rowid_reg = program.alloc_register();
+    // todo(sivukhin): we **must** guarantee sequential generation or operation_id column
+    program.emit_insn(Insn::NewRowid {
+        cursor: cdc_cursor_id,
+        rowid_reg,
+        prev_largest_reg: 0,
+    });
+
+    let record_reg = program.alloc_register();
+    program.emit_insn(Insn::MakeRecord {
+        start_reg: turso_cdc_registers,
+        count: 5,
+        dest_reg: record_reg,
+        index_name: None,
+    });
+
+    program.emit_insn(Insn::Insert {
+        cursor: cdc_cursor_id,
+        key_reg: rowid_reg,
+        record_reg,
+        flag: InsertFlags::new(),
+        table_name: "turso_cdc".to_string(),
+    });
     Ok(())
 }
 
