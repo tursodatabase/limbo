@@ -1044,6 +1044,30 @@ pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
     }
 }
 
+pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
+    const TRUE_VALUES: &[&str] = &["yes", "true", "on"];
+    const FALSE_VALUES: &[&str] = &["no", "false", "off"];
+    if let Ok(number) = parse_signed_number(expr) {
+        if let Value::Integer(x @ (0 | 1)) = number {
+            return Ok(x != 0);
+        }
+    } else {
+        if let Expr::Name(name) = expr {
+            let ident = normalize_ident(&name.0);
+            if TRUE_VALUES.contains(&ident.as_str()) {
+                return Ok(true);
+            }
+            if FALSE_VALUES.contains(&ident.as_str()) {
+                return Ok(false);
+            }
+        }
+    }
+    Err(LimboError::InvalidArgument(
+        "boolean pragma value must be either 0|1 integer or yes|true|on|no|false|off token"
+            .to_string(),
+    ))
+}
+
 // for TVF's we need these at planning time so we cannot emit translate_expr
 pub fn vtable_args(args: &[ast::Expr]) -> Vec<turso_ext::Value> {
     let mut vtable_args = Vec::new();
@@ -1076,7 +1100,7 @@ pub fn vtable_args(args: &[ast::Expr]) -> Vec<turso_ext::Value> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use turso_sqlite3_parser::ast::{self, Expr, Id, Literal, Operator::*, Type};
+    use turso_sqlite3_parser::ast::{self, Expr, Id, Literal, Name, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {
@@ -2030,5 +2054,45 @@ pub mod tests {
             parse_numeric_literal("-9223372036854775809").unwrap(),
             Value::Float(-9.223_372_036_854_776e18)
         );
+    }
+
+    #[test]
+    fn test_parse_pragma_bool() {
+        assert_eq!(
+            parse_pragma_bool(&Expr::Literal(Literal::Numeric("1".into()))).unwrap(),
+            true
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("true".into()))).unwrap(),
+            true
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("on".into()))).unwrap(),
+            true
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("yes".into()))).unwrap(),
+            true
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Literal(Literal::Numeric("0".into()))).unwrap(),
+            false
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("false".into()))).unwrap(),
+            false
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("off".into()))).unwrap(),
+            false
+        );
+        assert_eq!(
+            parse_pragma_bool(&Expr::Name(Name("no".into()))).unwrap(),
+            false
+        );
+
+        assert!(parse_pragma_bool(&Expr::Name(Name("nono".into()))).is_err());
+        assert!(parse_pragma_bool(&Expr::Name(Name("10".into()))).is_err());
+        assert!(parse_pragma_bool(&Expr::Name(Name("-1".into()))).is_err());
     }
 }
