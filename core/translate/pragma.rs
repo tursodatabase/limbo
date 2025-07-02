@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, Expr};
+use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr};
 use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 
 use crate::schema::Schema;
@@ -214,60 +214,11 @@ fn update_pragma(
             connection.set_capture_data_changes(value);
             if value {
                 // make sure that we have turso_cdc table created
-                let columns = vec![
-                    ast::ColumnDefinition {
-                        col_name: ast::Name("operation_id".to_string()),
-                        col_type: Some(ast::Type {
-                            name: "INTEGER".to_string(),
-                            size: None,
-                        }),
-                        constraints: vec![ast::NamedColumnConstraint {
-                            name: None,
-                            constraint: ast::ColumnConstraint::PrimaryKey {
-                                order: None,
-                                conflict_clause: None,
-                                auto_increment: false,
-                            },
-                        }],
-                    },
-                    ast::ColumnDefinition {
-                        col_name: ast::Name("operation_time".to_string()),
-                        col_type: Some(ast::Type {
-                            name: "INTEGER".to_string(),
-                            size: None,
-                        }),
-                        constraints: vec![],
-                    },
-                    ast::ColumnDefinition {
-                        col_name: ast::Name("operation_type".to_string()),
-                        col_type: Some(ast::Type {
-                            name: "INTEGER".to_string(),
-                            size: None,
-                        }),
-                        constraints: vec![],
-                    },
-                    ast::ColumnDefinition {
-                        col_name: ast::Name("table_name".to_string()),
-                        col_type: Some(ast::Type {
-                            name: "TEXT".to_string(),
-                            size: None,
-                        }),
-                        constraints: vec![],
-                    },
-                    ast::ColumnDefinition {
-                        col_name: ast::Name("row_key".to_string()),
-                        col_type: Some(ast::Type {
-                            name: "BLOB".to_string(),
-                            size: None,
-                        }),
-                        constraints: vec![],
-                    },
-                ];
                 return translate_create_table(
-                    QualifiedName::single(ast::Name("turso_cdc".into())),
+                    QualifiedName::single(ast::Name(TURSO_CDC_TABLE_NAME.into())),
                     false,
                     ast::CreateTableBody::columns_and_constraints_from_definition(
-                        columns,
+                        turso_cdc_table_columns(),
                         None,
                         ast::TableOptions::NONE,
                     )
@@ -476,4 +427,57 @@ fn update_cache_size(
         .expect("couldn't update page cache size");
 
     Ok(())
+}
+
+pub const TURSO_CDC_TABLE_NAME: &str = "turso_cdc";
+fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
+    vec![
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_id".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![ast::NamedColumnConstraint {
+                name: None,
+                constraint: ast::ColumnConstraint::PrimaryKey {
+                    order: None,
+                    conflict_clause: None,
+                    auto_increment: false,
+                },
+            }],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_time".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_type".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("table_name".to_string()),
+            col_type: Some(ast::Type {
+                name: "TEXT".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("row_key".to_string()),
+            col_type: Some(ast::Type {
+                name: "BLOB".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+    ]
 }

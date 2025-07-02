@@ -25,6 +25,7 @@ use crate::function::Func;
 use crate::schema::Schema;
 use crate::translate::compound_select::emit_program_for_compound_select;
 use crate::translate::plan::{DeletePlan, Plan, QueryDestination, Search};
+use crate::translate::pragma::TURSO_CDC_TABLE_NAME;
 use crate::translate::values::emit_values;
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::{CursorKey, CursorType, ProgramBuilder};
@@ -1250,7 +1251,7 @@ pub fn emit_cdc_insns(
         key_reg: rowid_reg,
         record_reg,
         flag: InsertFlags::new(),
-        table_name: "turso_cdc".to_string(),
+        table_name: TURSO_CDC_TABLE_NAME.to_string(),
     });
     Ok(())
 }

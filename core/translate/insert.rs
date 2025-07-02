@@ -7,6 +7,7 @@ use turso_sqlite3_parser::ast::{
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{IndexColumn, Table};
 use crate::translate::emitter::{emit_cdc_insns, OperationMode};
+use crate::translate::pragma::TURSO_CDC_TABLE_NAME;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderFlags, ProgramBuilderOpts};
 use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
@@ -121,11 +122,11 @@ pub fn translate_insert(
         .flags()
         .contains(ProgramBuilderFlags::CaptureDataChanges);
     let turso_cdc_table = if capture_data_changes {
-        let Some(turso_cdc_table) = schema.get_table("turso_cdc") else {
-            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        let Some(turso_cdc_table) = schema.get_table(TURSO_CDC_TABLE_NAME) else {
+            crate::bail_parse_error!("no such table: {}", TURSO_CDC_TABLE_NAME);
         };
         let Some(turso_cdc_btree) = turso_cdc_table.btree().clone() else {
-            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+            crate::bail_parse_error!("no such table: {}", TURSO_CDC_TABLE_NAME);
         };
         Some((
             program.alloc_cursor_id(CursorType::BTreeTable(turso_cdc_btree.clone())),

@@ -7,6 +7,7 @@ use crate::{
     schema::{Affinity, Index, IndexColumn, Table},
     translate::{
         plan::{DistinctCtx, Distinctness},
+        pragma::TURSO_CDC_TABLE_NAME,
         result_row::emit_select_result,
     },
     types::SeekOp,
@@ -127,11 +128,11 @@ pub fn init_loop(
             OperationMode::INSERT | OperationMode::UPDATE | OperationMode::DELETE
         )
     {
-        let Some(turso_cdc_table) = t_ctx.resolver.schema.get_table("turso_cdc") else {
-            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        let Some(turso_cdc_table) = t_ctx.resolver.schema.get_table(TURSO_CDC_TABLE_NAME) else {
+            crate::bail_parse_error!("no such table: {}", TURSO_CDC_TABLE_NAME);
         };
         let Some(turso_cdc_btree) = turso_cdc_table.btree().clone() else {
-            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+            crate::bail_parse_error!("no such table: {}", TURSO_CDC_TABLE_NAME);
         };
         let turso_cdc_cursor_id =
             program.alloc_cursor_id(CursorType::BTreeTable(turso_cdc_btree.clone()));
