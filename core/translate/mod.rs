@@ -37,7 +37,7 @@ mod values;
 use crate::schema::Schema;
 use crate::storage::pager::Pager;
 use crate::translate::delete::translate_delete;
-use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
+use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderFlags, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::Program;
 use crate::{bail_parse_error, Connection, Result, SymbolTable};
 use alter::translate_alter_table;
@@ -73,8 +73,14 @@ pub fn translate(
             | ast::Stmt::Update(..)
     );
 
+    let flags = if connection.get_capture_changes() {
+        ProgramBuilderFlags::CaptureChanges
+    } else {
+        ProgramBuilderFlags::empty()
+    };
     let mut program = ProgramBuilder::new(
         query_mode,
+        flags,
         // These options will be extended whithin each translate program
         ProgramBuilderOpts {
             num_cursors: 1,

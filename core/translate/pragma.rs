@@ -3,14 +3,15 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::PragmaName;
 use turso_sqlite3_parser::ast::{self, Expr};
+use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;
 use crate::storage::sqlite3_ondisk::MIN_PAGE_CACHE_SIZE;
 use crate::storage::wal::CheckpointMode;
-use crate::util::{normalize_ident, parse_signed_number};
+use crate::translate::schema::translate_create_table;
+use crate::util::{normalize_ident, parse_pragma_bool, parse_signed_number};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::{Cookie, Insn};
 use crate::{bail_parse_error, storage, LimboError, Value};
@@ -206,6 +207,78 @@ fn update_pragma(
             Ok(program)
         }
         PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
+        PragmaName::CaptureChanges => {
+            let value = parse_pragma_bool(&value)?;
+            // todo(sivukhin): ideally, we should consistently update capture_changes connection flag only after successfull execution of schema change statement
+            // but for now, let's keep it as is...
+            connection.set_capture_changes(value);
+            if value {
+                // make sure that we have turso_cdc table created
+                let columns = vec![
+                    ast::ColumnDefinition {
+                        col_name: ast::Name("operation_id".to_string()),
+                        col_type: Some(ast::Type {
+                            name: "INTEGER".to_string(),
+                            size: None,
+                        }),
+                        constraints: vec![ast::NamedColumnConstraint {
+                            name: None,
+                            constraint: ast::ColumnConstraint::PrimaryKey {
+                                order: None,
+                                conflict_clause: None,
+                                auto_increment: false,
+                            },
+                        }],
+                    },
+                    ast::ColumnDefinition {
+                        col_name: ast::Name("operation_time".to_string()),
+                        col_type: Some(ast::Type {
+                            name: "INTEGER".to_string(),
+                            size: None,
+                        }),
+                        constraints: vec![],
+                    },
+                    ast::ColumnDefinition {
+                        col_name: ast::Name("operation_type".to_string()),
+                        col_type: Some(ast::Type {
+                            name: "INTEGER".to_string(),
+                            size: None,
+                        }),
+                        constraints: vec![],
+                    },
+                    ast::ColumnDefinition {
+                        col_name: ast::Name("table_name".to_string()),
+                        col_type: Some(ast::Type {
+                            name: "TEXT".to_string(),
+                            size: None,
+                        }),
+                        constraints: vec![],
+                    },
+                    ast::ColumnDefinition {
+                        col_name: ast::Name("row_key".to_string()),
+                        col_type: Some(ast::Type {
+                            name: "BLOB".to_string(),
+                            size: None,
+                        }),
+                        constraints: vec![],
+                    },
+                ];
+                return translate_create_table(
+                    QualifiedName::single(ast::Name("turso_cdc".into())),
+                    false,
+                    ast::CreateTableBody::columns_and_constraints_from_definition(
+                        columns,
+                        None,
+                        ast::TableOptions::NONE,
+                    )
+                    .unwrap(),
+                    true,
+                    schema,
+                    program,
+                );
+            }
+            Ok(program)
+        }
     }
 }
 
@@ -355,6 +428,11 @@ fn query_pragma(
         }
         PragmaName::IntegrityCheck => {
             translate_integrity_check(schema, &mut program)?;
+        }
+        PragmaName::CaptureChanges => {
+            program.emit_bool(connection.get_capture_changes(), register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
         }
     }
 
