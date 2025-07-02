@@ -2056,38 +2056,15 @@ pub mod tests {
 
     #[test]
     fn test_parse_pragma_bool() {
-        assert_eq!(
-            parse_pragma_bool(&Expr::Literal(Literal::Numeric("1".into()))).unwrap(),
-            true
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("true".into()))).unwrap(),
-            true
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("on".into()))).unwrap(),
-            true
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("yes".into()))).unwrap(),
-            true
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Literal(Literal::Numeric("0".into()))).unwrap(),
-            false
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("false".into()))).unwrap(),
-            false
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("off".into()))).unwrap(),
-            false
-        );
-        assert_eq!(
-            parse_pragma_bool(&Expr::Name(Name("no".into()))).unwrap(),
-            false
-        );
+        assert!(parse_pragma_bool(&Expr::Literal(Literal::Numeric("1".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name("true".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name("on".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name("yes".into()))).unwrap(),);
+
+        assert!(!parse_pragma_bool(&Expr::Literal(Literal::Numeric("0".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name("false".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name("off".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name("no".into()))).unwrap(),);
 
         assert!(parse_pragma_bool(&Expr::Name(Name("nono".into()))).is_err());
         assert!(parse_pragma_bool(&Expr::Name(Name("10".into()))).is_err());
