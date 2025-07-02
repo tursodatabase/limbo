@@ -118,10 +118,10 @@ pub fn init_loop(
         "meta_left_joins length does not match tables length"
     );
 
-    let capture_changes = program
+    let capture_data_changes = program
         .flags()
-        .contains(ProgramBuilderFlags::CaptureChanges);
-    if capture_changes
+        .contains(ProgramBuilderFlags::CaptureDataChanges);
+    if capture_data_changes
         && matches!(
             mode,
             OperationMode::INSERT | OperationMode::UPDATE | OperationMode::DELETE

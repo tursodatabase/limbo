@@ -207,11 +207,11 @@ fn update_pragma(
             Ok(program)
         }
         PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
-        PragmaName::CaptureChanges => {
+        PragmaName::CaptureDataChanges => {
             let value = parse_pragma_bool(&value)?;
-            // todo(sivukhin): ideally, we should consistently update capture_changes connection flag only after successfull execution of schema change statement
+            // todo(sivukhin): ideally, we should consistently update capture_data_changes connection flag only after successfull execution of schema change statement
             // but for now, let's keep it as is...
-            connection.set_capture_changes(value);
+            connection.set_capture_data_changes(value);
             if value {
                 // make sure that we have turso_cdc table created
                 let columns = vec![
@@ -429,8 +429,8 @@ fn query_pragma(
         PragmaName::IntegrityCheck => {
             translate_integrity_check(schema, &mut program)?;
         }
-        PragmaName::CaptureChanges => {
-            program.emit_bool(connection.get_capture_changes(), register);
+        PragmaName::CaptureDataChanges => {
+            program.emit_bool(connection.get_capture_data_changes(), register);
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
         }

@@ -73,8 +73,8 @@ pub fn translate(
             | ast::Stmt::Update(..)
     );
 
-    let flags = if connection.get_capture_changes() {
-        ProgramBuilderFlags::CaptureChanges
+    let flags = if connection.get_capture_data_changes() {
+        ProgramBuilderFlags::CaptureDataChanges
     } else {
         ProgramBuilderFlags::empty()
     };

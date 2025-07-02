@@ -1766,7 +1766,7 @@ pub enum PragmaName {
     /// trigger a checkpoint to run on database(s) if WAL is enabled
     WalCheckpoint,
     /// enable capture-changes logic for the connection
-    CaptureChanges,
+    CaptureDataChanges,
 }
 
 /// `CREATE TRIGGER` time

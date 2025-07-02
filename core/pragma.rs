@@ -77,9 +77,9 @@ fn pragma_for(pragma: PragmaName) -> Pragma {
             PragmaFlags::NeedSchema | PragmaFlags::ReadOnly | PragmaFlags::Result0,
             &["message"],
         ),
-        CaptureChanges => Pragma::new(
+        CaptureDataChanges => Pragma::new(
             PragmaFlags::NeedSchema | PragmaFlags::Result0 | PragmaFlags::SchemaReq,
-            &["capture_changes"],
+            &["capture_data_changes"],
         ),
     }
 }

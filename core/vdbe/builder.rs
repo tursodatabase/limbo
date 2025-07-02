@@ -137,7 +137,7 @@ pub enum QueryMode {
 
 bitflags! {
     pub struct ProgramBuilderFlags: u8 {
-        const CaptureChanges = 0x01; /* emit plans with capture changes instructurs for INSERT/DELETE/UPDATE operations */
+        const CaptureDataChanges = 0x01; /* emit plans with capture data changes instructions for INSERT/DELETE/UPDATE statements */
     }
 }
 

@@ -149,7 +149,7 @@ pub struct TranslateCtx<'a> {
     /// - First: all `GROUP BY` expressions, in the order they appear in the `GROUP BY` clause.
     /// - Then: remaining non-aggregate expressions that are not part of `GROUP BY`.
     pub non_aggregate_expressions: Vec<(&'a Expr, bool)>,
-    /// Cursor id for turso_cdc table (if capture_changes=on is set and query can modify the data)
+    /// Cursor id for turso_cdc table (if capture_data_changes=on is set and query can modify the data)
     pub cdc_cursor_id: Option<usize>,
 }
 

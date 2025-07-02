@@ -117,10 +117,10 @@ pub fn translate_insert(
     let halt_label = program.allocate_label();
     let loop_start_label = program.allocate_label();
 
-    let capture_changes = program
+    let capture_data_changes = program
         .flags()
-        .contains(ProgramBuilderFlags::CaptureChanges);
-    let turso_cdc_table = if capture_changes {
+        .contains(ProgramBuilderFlags::CaptureDataChanges);
+    let turso_cdc_table = if capture_data_changes {
         let Some(turso_cdc_table) = schema.get_table("turso_cdc") else {
             crate::bail_parse_error!("no such table: {}", "turso_cdc");
         };
