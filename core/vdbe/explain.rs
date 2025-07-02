@@ -1591,6 +1591,8 @@ pub fn insn_to_str(
                 max_errors,
                 roots,
                 message_register,
+                start_count_register,
+                max_error_updated_register,
             } => (
                 "IntegrityCk",
                 *max_errors as i32,
@@ -1598,7 +1600,7 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("roots={:?} message_register={}", roots, message_register),
+                format!("roots={:?} message_register={}, start_count_register={} max_error_updated_register={}", roots, message_register, start_count_register, max_error_updated_register),
             ),
             Insn::RowData { cursor_id, dest } => (
                 "RowData",
