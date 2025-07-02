@@ -1051,15 +1051,13 @@ pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
         if let Value::Integer(x @ (0 | 1)) = number {
             return Ok(x != 0);
         }
-    } else {
-        if let Expr::Name(name) = expr {
-            let ident = normalize_ident(&name.0);
-            if TRUE_VALUES.contains(&ident.as_str()) {
-                return Ok(true);
-            }
-            if FALSE_VALUES.contains(&ident.as_str()) {
-                return Ok(false);
-            }
+    } else if let Expr::Name(name) = expr {
+        let ident = normalize_ident(&name.0);
+        if TRUE_VALUES.contains(&ident.as_str()) {
+            return Ok(true);
+        }
+        if FALSE_VALUES.contains(&ident.as_str()) {
+            return Ok(false);
         }
     }
     Err(LimboError::InvalidArgument(

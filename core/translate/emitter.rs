@@ -1100,7 +1100,7 @@ fn emit_update_insns(
             let rowid_reg = program.alloc_register();
             if has_user_provided_rowid {
                 program.emit_insn(Insn::RowId {
-                    cursor_id: cursor_id,
+                    cursor_id,
                     dest: rowid_reg,
                 });
                 emit_cdc_insns(
