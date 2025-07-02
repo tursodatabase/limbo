@@ -368,7 +368,12 @@ impl Limbo {
             };
             (
                 io.clone(),
-                Database::open_file(io.clone(), path, false, false)?,
+                Database::open_file(
+                    io.clone(),
+                    path,
+                    self.opts.enable_mvcc,
+                    self.opts.enable_indexes,
+                )?,
             )
         };
         self.io = io;
