@@ -7,9 +7,10 @@ use turso_sqlite3_parser::ast::{
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{IndexColumn, Table};
 use crate::util::normalize_ident;
-use crate::vdbe::builder::ProgramBuilderOpts;
+use crate::vdbe::builder::{ProgramBuilderFlags, ProgramBuilderOpts};
 use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
 use crate::vdbe::BranchOffset;
+use crate::{bail_parse_error, Result, SymbolTable, VirtualTable};
 use crate::{
     schema::{Column, Schema},
     vdbe::{
@@ -17,7 +18,6 @@ use crate::{
         insn::Insn,
     },
 };
-use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
 use super::expr::{translate_expr, translate_expr_no_constant_opt, NoConstantOptReason};
@@ -115,6 +115,24 @@ pub fn translate_insert(
 
     let halt_label = program.allocate_label();
     let loop_start_label = program.allocate_label();
+
+    let capture_changes = program
+        .flags()
+        .contains(ProgramBuilderFlags::CaptureChanges);
+    let turso_cdc_table = if capture_changes {
+        let Some(turso_cdc_table) = schema.get_table("turso_cdc") else {
+            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        };
+        let Some(turso_cdc_btree) = turso_cdc_table.btree().clone() else {
+            crate::bail_parse_error!("no such table: {}", "turso_cdc");
+        };
+        Some((
+            program.alloc_cursor_id(CursorType::BTreeTable(turso_cdc_btree.clone())),
+            turso_cdc_btree,
+        ))
+    } else {
+        None
+    };
 
     let mut yield_reg_opt = None;
     let mut temp_table_ctx = None;
@@ -328,6 +346,15 @@ pub fn translate_insert(
             &resolver,
         )?;
     }
+    // Open turso_cdc table btree for writing if necessary
+    if let Some((turso_cdc_cursor_id, turso_cdc_btree)) = &turso_cdc_table {
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: *turso_cdc_cursor_id,
+            root_page: RegisterOrLiteral::Literal(turso_cdc_btree.root_page),
+            name: turso_cdc_btree.name.clone(),
+        });
+    }
+
     // Open all the index btrees for writing
     for idx_cursor in idx_cursors.iter() {
         program.emit_insn(Insn::OpenWrite {
@@ -412,6 +439,68 @@ pub fn translate_insert(
             });
         }
         _ => (),
+    }
+
+    // Write record to the turso_cdc table if necessary
+    if let Some((turso_cdc_cursor_id, turso_cdc_btree)) = &turso_cdc_table {
+        // (operation_id INTEGER PRIMARY KEY, operation_time INTEGER, operation_type INTEGER, table_name TEXT, row_key BLOB)
+        let turso_cdc_registers = program.alloc_registers(5);
+        program.emit_insn(Insn::Null {
+            dest: turso_cdc_registers,
+            dest_end: None,
+        });
+        program.mark_last_insn_constant();
+
+        let Some(unixepoch_fn) = resolver.resolve_function("unixepoch", 0) else {
+            bail_parse_error!("no function {}", "unixepoch");
+        };
+        let unixepoch_fn_ctx = crate::function::FuncCtx {
+            func: unixepoch_fn,
+            arg_count: 0,
+        };
+
+        program.emit_insn(Insn::Function {
+            constant_mask: 0,
+            start_reg: 0,
+            dest: turso_cdc_registers + 1,
+            func: unixepoch_fn_ctx,
+        });
+
+        program.emit_int(1, turso_cdc_registers + 2);
+        program.mark_last_insn_constant();
+
+        program.emit_string8(table_name.0.clone(), turso_cdc_registers + 3);
+        program.mark_last_insn_constant();
+
+        program.emit_insn(Insn::Copy {
+            src_reg: rowid_reg,
+            dst_reg: turso_cdc_registers + 4,
+            amount: 0,
+        });
+
+        let rowid_reg = program.alloc_register();
+        // todo(sivukhin): we **must** guarantee sequential generation or operation_id column
+        program.emit_insn(Insn::NewRowid {
+            cursor: *turso_cdc_cursor_id,
+            rowid_reg,
+            prev_largest_reg: 0,
+        });
+
+        let record_reg = program.alloc_register();
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: turso_cdc_registers,
+            count: 5,
+            dest_reg: record_reg,
+            index_name: None,
+        });
+
+        program.emit_insn(Insn::Insert {
+            cursor: *turso_cdc_cursor_id,
+            key_reg: rowid_reg,
+            record_reg,
+            flag: InsertFlags::new(),
+            table_name: turso_cdc_btree.name.clone(),
+        });
     }
 
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
