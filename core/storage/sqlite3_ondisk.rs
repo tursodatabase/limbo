@@ -1481,7 +1481,7 @@ pub fn begin_read_wal_frame(
     Ok(c)
 }
 
-#[instrument(skip(io, page, write_counter, wal_header, checksums), level = Level::TRACE)]
+#[instrument(err,skip(io, page, write_counter, wal_header, checksums), level = Level::TRACE)]
 #[allow(clippy::too_many_arguments)]
 pub fn begin_write_wal_frame(
     io: &Arc<dyn File>,

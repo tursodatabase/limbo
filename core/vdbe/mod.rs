@@ -394,7 +394,7 @@ impl Program {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     pub fn commit_txn(
         &self,
         pager: Rc<Pager>,
@@ -460,7 +460,7 @@ impl Program {
         }
     }
 
-    #[instrument(skip(self, pager, connection), level = Level::TRACE)]
+    #[instrument(err,skip(self, pager, connection), level = Level::TRACE)]
     fn step_end_write_txn(
         &self,
         pager: &Rc<Pager>,
@@ -476,9 +476,15 @@ impl Program {
             connection.wal_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
-            PagerCacheflushStatus::Done(_) => {
+            PagerCacheflushStatus::Done(status) => {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
+                }
+                if matches!(
+                    status,
+                    crate::storage::pager::PagerCacheflushResult::Rollback
+                ) {
+                    pager.rollback(change_schema, connection)?;
                 }
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;

@@ -606,7 +606,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
-    #[instrument(skip(self), level = Level::TRACE, name = "prev")]
+    #[instrument(err,skip(self), level = Level::TRACE, name = "prev")]
     fn get_prev_record(&mut self) -> Result<CursorResult<bool>> {
         loop {
             let page = self.stack.top();
@@ -717,7 +717,7 @@ impl BTreeCursor {
 
     /// Reads the record of a cell that has overflow pages. This is a state machine that requires to be called until completion so everything
     /// that calls this function should be reentrant.
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     fn process_overflow_read(
         &self,
         payload: &'static [u8],
@@ -1121,7 +1121,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the next record and return it.
     /// Used in forwards iteration, which is the default.
-    #[instrument(skip(self), level = Level::TRACE, name = "next")]
+    #[instrument(err,skip(self), level = Level::TRACE, name = "next")]
     fn get_next_record(&mut self) -> Result<CursorResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
@@ -1261,20 +1261,21 @@ impl BTreeCursor {
     }
 
     /// Move the cursor to the root page of the btree.
-    #[instrument(skip_all, level = Level::TRACE)]
-    fn move_to_root(&mut self) {
+    #[instrument(err, skip_all, level = Level::TRACE)]
+    fn move_to_root(&mut self) -> Result<()> {
         self.seek_state = CursorSeekState::Start;
         self.going_upwards = false;
         tracing::trace!(root_page = self.root_page);
-        let mem_page = self.read_page(self.root_page).unwrap();
+        let mem_page = self.read_page(self.root_page)?;
         self.stack.clear();
         self.stack.push(mem_page);
+        Ok(())
     }
 
     /// Move the cursor to the rightmost record in the btree.
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     fn move_to_rightmost(&mut self) -> Result<CursorResult<bool>> {
-        self.move_to_root();
+        self.move_to_root()?;
 
         loop {
             let mem_page = self.stack.top();
@@ -1307,7 +1308,7 @@ impl BTreeCursor {
     }
 
     /// Specialized version of move_to() for table btrees.
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     fn tablebtree_move_to(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<()>> {
         'outer: loop {
             let page = self.stack.top();
@@ -1425,7 +1426,7 @@ impl BTreeCursor {
     }
 
     /// Specialized version of move_to() for index btrees.
-    #[instrument(skip(self, index_key), level = Level::TRACE)]
+    #[instrument(err,skip(self, index_key), level = Level::TRACE)]
     fn indexbtree_move_to(
         &mut self,
         index_key: &ImmutableRecord,
@@ -1641,7 +1642,7 @@ impl BTreeCursor {
 
     /// Specialized version of do_seek() for table btrees that uses binary search instead
     /// of iterating cells in order.
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     fn tablebtree_seek(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<bool>> {
         turso_assert!(
             self.mv_cursor.is_none(),
@@ -1761,7 +1762,7 @@ impl BTreeCursor {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     fn indexbtree_seek(
         &mut self,
         key: &ImmutableRecord,
@@ -2032,7 +2033,7 @@ impl BTreeCursor {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         turso_assert!(
             self.mv_cursor.is_none(),
@@ -2072,7 +2073,7 @@ impl BTreeCursor {
             self.seek_state = CursorSeekState::Start;
         }
         if matches!(self.seek_state, CursorSeekState::Start) {
-            self.move_to_root();
+            self.move_to_root()?;
         }
 
         let ret = match key {
@@ -2085,7 +2086,7 @@ impl BTreeCursor {
 
     /// Insert a record into the btree.
     /// If the insert operation overflows the page, it will be split and the btree will be balanced.
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(err,skip_all, level = Level::TRACE)]
     fn insert_into_page(&mut self, bkey: &BTreeKey) -> Result<CursorResult<()>> {
         let record = bkey
             .get_record()
@@ -2266,7 +2267,7 @@ impl BTreeCursor {
     /// This is a naive algorithm that doesn't try to distribute cells evenly by content.
     /// It will try to split the page in half by keys not by content.
     /// Sqlite tries to have a page at least 40% full.
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     fn balance(&mut self) -> Result<CursorResult<()>> {
         turso_assert!(
             matches!(self.state, CursorState::Write(_)),
@@ -3938,7 +3939,7 @@ impl BTreeCursor {
 
     pub fn seek_end(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none()); // unsure about this -_-
-        self.move_to_root();
+        self.move_to_root()?;
         loop {
             let mem_page = self.stack.top();
             let page_id = mem_page.get().get().id;
@@ -3990,7 +3991,7 @@ impl BTreeCursor {
             self.invalidate_record();
             self.has_record.replace(cursor_has_record);
         } else {
-            self.move_to_root();
+            self.move_to_root()?;
 
             let cursor_has_record = return_if_io!(self.get_next_record());
             self.invalidate_record();
@@ -4031,7 +4032,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(cursor_has_record))
     }
 
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn rowid(&mut self) -> Result<CursorResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mv_cursor = mv_cursor.borrow();
@@ -4073,7 +4074,7 @@ impl BTreeCursor {
         }
     }
 
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<bool>> {
         assert!(self.mv_cursor.is_none());
         // Empty trace to capture the span information
@@ -4094,7 +4095,7 @@ impl BTreeCursor {
     /// Return a reference to the record the cursor is currently pointing to.
     /// If record was not parsed yet, then we have to parse it and in case of I/O we yield control
     /// back.
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn record(&self) -> Result<CursorResult<Option<Ref<ImmutableRecord>>>> {
         if !self.has_record.get() {
             return Ok(CursorResult::Ok(None));
@@ -4162,7 +4163,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(Some(record_ref)))
     }
 
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn insert(
         &mut self,
         key: &BTreeKey,
@@ -4232,7 +4233,7 @@ impl BTreeCursor {
     /// 7. WaitForBalancingToComplete -> perform balancing
     /// 8. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
     /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
 
@@ -4722,10 +4723,10 @@ impl BTreeCursor {
     /// ```
     ///
     /// The destruction order would be: [4',4,5,2,6,7,3,1]
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn btree_destroy(&mut self) -> Result<CursorResult<Option<usize>>> {
         if let CursorState::None = &self.state {
-            self.move_to_root();
+            self.move_to_root()?;
             self.state = CursorState::Destroy(DestroyInfo {
                 state: DestroyState::Start,
             });
@@ -4998,10 +4999,10 @@ impl BTreeCursor {
     /// Count the number of entries in the b-tree
     ///
     /// Only supposed to be used in the context of a simple Count Select Statement
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(err,skip(self), level = Level::TRACE)]
     pub fn count(&mut self) -> Result<CursorResult<usize>> {
         if self.count == 0 {
-            self.move_to_root();
+            self.move_to_root()?;
         }
 
         if let Some(_mv_cursor) = &self.mv_cursor {
@@ -5034,7 +5035,7 @@ impl BTreeCursor {
                 loop {
                     if !self.stack.has_parent() {
                         // All pages of the b-tree have been visited. Return successfully
-                        self.move_to_root();
+                        self.move_to_root()?;
 
                         return Ok(CursorResult::Ok(self.count));
                     }
@@ -7066,10 +7067,10 @@ mod tests {
                 }
                 run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
-                cursor.move_to_root();
+                cursor.move_to_root().unwrap();
                 let mut valid = true;
                 if do_validate {
-                    cursor.move_to_root();
+                    cursor.move_to_root().unwrap();
                     for key in keys.iter() {
                         tracing::trace!("seeking key: {}", key);
                         run_until_done(|| cursor.next(), pager.deref()).unwrap();
@@ -7102,7 +7103,7 @@ mod tests {
             if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
                 panic!("invalid btree");
             }
-            cursor.move_to_root();
+            cursor.move_to_root().unwrap();
             for key in keys.iter() {
                 tracing::trace!("seeking key: {}", key);
                 run_until_done(|| cursor.next(), pager.deref()).unwrap();
@@ -7181,7 +7182,7 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                cursor.move_to_root();
+                cursor.move_to_root().unwrap();
                 loop {
                     match pager.end_tx(false, false, &conn, false).unwrap() {
                         crate::PagerCacheflushStatus::Done(_) => break,
@@ -7194,7 +7195,7 @@ mod tests {
 
             // Check that all keys can be found by seeking
             pager.begin_read_tx().unwrap();
-            cursor.move_to_root();
+            cursor.move_to_root().unwrap();
             for (i, key) in keys.iter().enumerate() {
                 tracing::info!("seeking key {}/{}: {:?}", i + 1, keys.len(), key);
                 let exists = run_until_done(
@@ -7214,7 +7215,7 @@ mod tests {
                 assert!(exists, "key {:?} is not found", key);
             }
             // Check that key count is right
-            cursor.move_to_root();
+            cursor.move_to_root().unwrap();
             let mut count = 0;
             while run_until_done(|| cursor.next(), pager.deref()).unwrap() {
                 count += 1;
@@ -7227,7 +7228,7 @@ mod tests {
                 keys.len()
             );
             // Check that all keys can be found in-order, by iterating the btree
-            cursor.move_to_root();
+            cursor.move_to_root().unwrap();
             let mut prev = None;
             for (i, key) in keys.iter().enumerate() {
                 tracing::info!("iterating key {}/{}: {:?}", i + 1, keys.len(), key);
@@ -8429,7 +8430,7 @@ mod tests {
             );
         }
         let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
-        cursor.move_to_root();
+        cursor.move_to_root().unwrap();
         for i in 0..iterations {
             let has_next = run_until_done(|| cursor.next(), pager.deref()).unwrap();
             if !has_next {

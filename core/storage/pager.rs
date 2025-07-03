@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tracing::{trace, Level};
+use tracing::{instrument, trace, Level};
 
 use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
@@ -1195,7 +1195,9 @@ impl Pager {
         (page_size - reserved_space) as usize
     }
 
+    #[instrument(skip_all, level = Level::DEBUG)]
     pub fn rollback(&self, change_schema: bool, connection: &Connection) -> Result<(), LimboError> {
+        tracing::debug!(change_schema);
         self.dirty_pages.borrow_mut().clear();
         let mut cache = self.page_cache.write();
         cache.unset_dirty_all_pages();
