@@ -1548,13 +1548,14 @@ pub fn begin_write_wal_frame(
         (Arc::new(RefCell::new(buffer)), final_checksum)
     };
 
+    let clone_counter = write_counter.clone();
     *write_counter.borrow_mut() += 1;
     let write_complete = {
         let buf_copy = buffer.clone();
         Box::new(move |bytes_written: i32| {
             let buf_copy = buf_copy.clone();
             let buf_len = buf_copy.borrow().len();
-            *write_counter.borrow_mut() -= 1;
+            *clone_counter.borrow_mut() -= 1;
 
             page_finish.clear_dirty();
             if bytes_written < buf_len as i32 {
@@ -1564,7 +1565,12 @@ pub fn begin_write_wal_frame(
     };
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
-    io.pwrite(offset, buffer.clone(), c)?;
+    let res = io.pwrite(offset, buffer.clone(), c);
+    if res.is_err() {
+        // If we do not reduce the counter here on error, we incur an infinite loop when cacheflushing
+        *write_counter.borrow_mut() -= 1;
+        res?;
+    }
     tracing::trace!("Frame written and synced");
     Ok(checksums)
 }
