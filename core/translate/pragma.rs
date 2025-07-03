@@ -3,14 +3,15 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::PragmaName;
-use turso_sqlite3_parser::ast::{self, Expr};
+use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr};
+use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;
 use crate::storage::sqlite3_ondisk::MIN_PAGE_CACHE_SIZE;
 use crate::storage::wal::CheckpointMode;
-use crate::util::{normalize_ident, parse_signed_number};
+use crate::translate::schema::translate_create_table;
+use crate::util::{normalize_ident, parse_pragma_bool, parse_signed_number};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::{Cookie, Insn};
 use crate::{bail_parse_error, storage, LimboError, Value};
@@ -57,17 +58,15 @@ pub fn translate_pragma(
         Err(_) => bail_parse_error!("Not a valid pragma name"),
     };
 
-    match body {
-        None => {
-            query_pragma(pragma, schema, None, pager, connection, &mut program)?;
-        }
+    let mut program = match body {
+        None => query_pragma(pragma, schema, None, pager, connection, program)?,
         Some(ast::PragmaBody::Equals(value) | ast::PragmaBody::Call(value)) => match pragma {
             PragmaName::TableInfo => {
-                query_pragma(pragma, schema, Some(value), pager, connection, &mut program)?;
+                query_pragma(pragma, schema, Some(value), pager, connection, program)?
             }
             _ => {
                 write = true;
-                update_pragma(pragma, schema, value, pager, connection, &mut program)?;
+                update_pragma(pragma, schema, value, pager, connection, program)?
             }
         },
     };
@@ -85,8 +84,8 @@ fn update_pragma(
     value: ast::Expr,
     pager: Rc<Pager>,
     connection: Arc<crate::Connection>,
-    program: &mut ProgramBuilder,
-) -> crate::Result<()> {
+    mut program: ProgramBuilder,
+) -> crate::Result<ProgramBuilder> {
     match pragma {
         PragmaName::CacheSize => {
             let cache_size = match parse_signed_number(&value)? {
@@ -95,42 +94,33 @@ fn update_pragma(
                 _ => bail_parse_error!("Invalid value for cache size pragma"),
             };
             update_cache_size(cache_size, pager, connection)?;
-            Ok(())
+            Ok(program)
         }
-        PragmaName::JournalMode => {
-            query_pragma(
-                PragmaName::JournalMode,
-                schema,
-                None,
-                pager,
-                connection,
-                program,
-            )?;
-            Ok(())
-        }
-        PragmaName::LegacyFileFormat => Ok(()),
-        PragmaName::WalCheckpoint => {
-            query_pragma(
-                PragmaName::WalCheckpoint,
-                schema,
-                Some(value),
-                pager,
-                connection,
-                program,
-            )?;
-            Ok(())
-        }
-        PragmaName::PageCount => {
-            query_pragma(
-                PragmaName::PageCount,
-                schema,
-                None,
-                pager,
-                connection,
-                program,
-            )?;
-            Ok(())
-        }
+        PragmaName::JournalMode => query_pragma(
+            PragmaName::JournalMode,
+            schema,
+            None,
+            pager,
+            connection,
+            program,
+        ),
+        PragmaName::LegacyFileFormat => Ok(program),
+        PragmaName::WalCheckpoint => query_pragma(
+            PragmaName::WalCheckpoint,
+            schema,
+            Some(value),
+            pager,
+            connection,
+            program,
+        ),
+        PragmaName::PageCount => query_pragma(
+            PragmaName::PageCount,
+            schema,
+            None,
+            pager,
+            connection,
+            program,
+        ),
         PragmaName::UserVersion => {
             let data = parse_signed_number(&value)?;
             let version_value = match data {
@@ -145,7 +135,7 @@ fn update_pragma(
                 value: version_value,
                 p5: 1,
             });
-            Ok(())
+            Ok(program)
         }
         PragmaName::SchemaVersion => {
             // TODO: Implement updating schema_version
@@ -214,9 +204,32 @@ fn update_pragma(
                 value: auto_vacuum_mode - 1,
                 p5: 0,
             });
-            Ok(())
+            Ok(program)
         }
         PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
+        PragmaName::CaptureDataChanges => {
+            let value = parse_pragma_bool(&value)?;
+            // todo(sivukhin): ideally, we should consistently update capture_data_changes connection flag only after successfull execution of schema change statement
+            // but for now, let's keep it as is...
+            connection.set_capture_data_changes(value);
+            if value {
+                // make sure that we have turso_cdc table created
+                return translate_create_table(
+                    QualifiedName::single(ast::Name(TURSO_CDC_TABLE_NAME.into())),
+                    false,
+                    ast::CreateTableBody::columns_and_constraints_from_definition(
+                        turso_cdc_table_columns(),
+                        None,
+                        ast::TableOptions::NONE,
+                    )
+                    .unwrap(),
+                    true,
+                    schema,
+                    program,
+                );
+            }
+            Ok(program)
+        }
     }
 }
 
@@ -226,8 +239,8 @@ fn query_pragma(
     value: Option<ast::Expr>,
     pager: Rc<Pager>,
     connection: Arc<crate::Connection>,
-    program: &mut ProgramBuilder,
-) -> crate::Result<()> {
+    mut program: ProgramBuilder,
+) -> crate::Result<ProgramBuilder> {
     let register = program.alloc_register();
     match pragma {
         PragmaName::CacheSize => {
@@ -365,11 +378,16 @@ fn query_pragma(
             program.emit_result_row(register, 1);
         }
         PragmaName::IntegrityCheck => {
-            translate_integrity_check(schema, program)?;
+            translate_integrity_check(schema, &mut program)?;
+        }
+        PragmaName::CaptureDataChanges => {
+            program.emit_bool(connection.get_capture_data_changes(), register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
         }
     }
 
-    Ok(())
+    Ok(program)
 }
 
 fn update_auto_vacuum_mode(
@@ -409,4 +427,57 @@ fn update_cache_size(
         .expect("couldn't update page cache size");
 
     Ok(())
+}
+
+pub const TURSO_CDC_TABLE_NAME: &str = "turso_cdc";
+fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
+    vec![
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_id".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![ast::NamedColumnConstraint {
+                name: None,
+                constraint: ast::ColumnConstraint::PrimaryKey {
+                    order: None,
+                    conflict_clause: None,
+                    auto_increment: false,
+                },
+            }],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_time".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("operation_type".to_string()),
+            col_type: Some(ast::Type {
+                name: "INTEGER".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("table_name".to_string()),
+            col_type: Some(ast::Type {
+                name: "TEXT".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+        ast::ColumnDefinition {
+            col_name: ast::Name("row_key".to_string()),
+            col_type: Some(ast::Type {
+                name: "BLOB".to_string(),
+                size: None,
+            }),
+            constraints: vec![],
+        },
+    ]
 }

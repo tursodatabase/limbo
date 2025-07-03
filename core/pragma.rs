@@ -8,14 +8,14 @@ bitflags! {
     // Flag names match those used in SQLite:
     // https://github.com/sqlite/sqlite/blob/b3c1884b65400da85636458298bd77cbbfdfb401/tool/mkpragmatab.tcl#L22-L29
     struct PragmaFlags: u8 {
-        const NeedSchema = 0x01;
-        const NoColumns  = 0x02;
-        const NoColumns1 = 0x04;
-        const ReadOnly   = 0x08;
-        const Result0    = 0x10;
-        const Result1    = 0x20;
-        const SchemaOpt  = 0x40;
-        const SchemaReq  = 0x80;
+        const NeedSchema = 0x01; /* Force schema load before running */
+        const NoColumns  = 0x02; /* OP_ResultRow called with zero columns */
+        const NoColumns1 = 0x04; /* zero columns if RHS argument is present */
+        const ReadOnly   = 0x08; /* Read-only HEADER_VALUE */
+        const Result0    = 0x10; /* Acts as query when no argument */
+        const Result1    = 0x20; /* Acts as query when has one argument */
+        const SchemaOpt  = 0x40; /* Schema restricts name search if present */
+        const SchemaReq  = 0x80; /* Schema required - "main" is default */
     }
 }
 
@@ -76,6 +76,10 @@ fn pragma_for(pragma: PragmaName) -> Pragma {
         IntegrityCheck => Pragma::new(
             PragmaFlags::NeedSchema | PragmaFlags::ReadOnly | PragmaFlags::Result0,
             &["message"],
+        ),
+        CaptureDataChanges => Pragma::new(
+            PragmaFlags::NeedSchema | PragmaFlags::Result0 | PragmaFlags::SchemaReq,
+            &["capture_data_changes"],
         ),
     }
 }
