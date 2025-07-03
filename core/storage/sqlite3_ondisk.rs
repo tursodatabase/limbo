@@ -1569,8 +1569,8 @@ pub fn begin_write_wal_frame(
     if res.is_err() {
         // If we do not reduce the counter here on error, we incur an infinite loop when cacheflushing
         *write_counter.borrow_mut() -= 1;
-        res?;
     }
+    res?;
     tracing::trace!("Frame written and synced");
     Ok(checksums)
 }

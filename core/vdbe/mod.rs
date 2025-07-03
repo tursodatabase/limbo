@@ -382,8 +382,12 @@ impl Program {
             let _ = state.result_row.take();
             let (insn, insn_function) = &self.insns[state.pc as usize];
             trace_insn(self, state.pc as InsnReference, insn);
-            let res = insn_function(self, state, insn, &pager, mv_store.as_ref())?;
-            match res {
+            let res = insn_function(self, state, insn, &pager, mv_store.as_ref());
+            if res.is_err() {
+                // TODO: see change_schema correct value
+                pager.rollback(false, &self.connection)?
+            }
+            match res? {
                 InsnFunctionStepResult::Step => {}
                 InsnFunctionStepResult::Done => return Ok(StepResult::Done),
                 InsnFunctionStepResult::IO => return Ok(StepResult::IO),
