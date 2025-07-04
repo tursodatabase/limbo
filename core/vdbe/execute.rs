@@ -4369,7 +4369,7 @@ pub fn op_idx_delete(
         );
         match &state.op_idx_delete_state {
             Some(OpIdxDeleteState::Seeking(record)) => {
-                {
+                let found = {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     let found = return_if_io!(
@@ -4381,6 +4381,21 @@ pub fn op_idx_delete(
                         cursor.root_page(),
                         record
                     );
+                    found
+                };
+                
+                if !found {
+                    // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
+                    // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                    if *raise_error_if_no_matching_entry {
+                        return Err(LimboError::Corrupt(format!(
+                            "IdxDelete: no matching index entry found for record {:?}",
+                            record
+                        )));
+                    }
+                    state.pc += 1;
+                    state.op_idx_delete_state = None;
+                    return Ok(InsnFunctionStepResult::Step);
                 }
                 state.op_idx_delete_state = Some(OpIdxDeleteState::Verifying);
             }
@@ -4390,9 +4405,7 @@ pub fn op_idx_delete(
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.rowid())
                 };
-
-                // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
-                // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                
                 if rowid.is_none() && *raise_error_if_no_matching_entry {
                     return Err(LimboError::Corrupt(format!(
                         "IdxDelete: no matching index entry found for record {:?}",
