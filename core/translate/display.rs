@@ -567,7 +567,7 @@ impl ToTokens for UpdatePlan {
             s.comma(
                 order_by.iter().map(|(expr, order)| ast::SortedColumn {
                     expr: expr.clone(),
-                    order: Some(order.clone()),
+                    order: Some(*order),
                     nulls: None,
                 }),
                 context,
