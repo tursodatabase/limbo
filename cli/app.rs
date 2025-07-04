@@ -24,6 +24,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use turso_core::{Connection, Database, LimboError, OpenFlags, Statement, StepResult, Value};
@@ -881,7 +882,12 @@ impl Limbo {
                     .with_thread_ids(true)
                     .with_ansi(should_emit_ansi),
             )
-            .with(EnvFilter::from_default_env().add_directive("rustyline=off".parse().unwrap()))
+            .with(
+                EnvFilter::builder()
+                    .with_default_directive(LevelFilter::OFF.into())
+                    .from_env_lossy()
+                    .add_directive("rustyline=off".parse().unwrap()),
+            )
             .try_init()
         {
             println!("Unable to setup tracing appender: {:?}", e);
