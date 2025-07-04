@@ -480,7 +480,7 @@ impl Pager {
         };
         #[cfg(feature = "omit_autovacuum")]
         {
-            let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any);
+            let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any)?;
             let page_id = page.get().get().id;
             Ok(CursorResult::Ok(page_id as u32))
         }
@@ -491,7 +491,7 @@ impl Pager {
             let auto_vacuum_mode = self.auto_vacuum_mode.borrow();
             match *auto_vacuum_mode {
                 AutoVacuumMode::None => {
-                    let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any);
+                    let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any)?;
                     let page_id = page.get().get().id;
                     Ok(CursorResult::Ok(page_id as u32))
                 }
@@ -515,7 +515,7 @@ impl Pager {
                         page_type,
                         0,
                         BtreePageAllocMode::Exact(root_page_num),
-                    );
+                    )?;
                     let allocated_page_id = page.get().get().id as u32;
                     if allocated_page_id != root_page_num {
                         //  TODO(Zaid): Handle swapping the allocated page with the desired root page
@@ -559,8 +559,8 @@ impl Pager {
         page_type: PageType,
         offset: usize,
         _alloc_mode: BtreePageAllocMode,
-    ) -> BTreePage {
-        let page = self.allocate_page().unwrap();
+    ) -> Result<BTreePage> {
+        let page = self.allocate_page()?;
         let page = Arc::new(BTreePageInner {
             page: RefCell::new(page),
         });
@@ -570,7 +570,7 @@ impl Pager {
             page.get().get().id,
             page.get().get_contents().page_type()
         );
-        page
+        Ok(page)
     }
 
     /// The "usable size" of a database page is the page size specified by the 2-byte integer at offset 16

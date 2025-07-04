@@ -2314,7 +2314,7 @@ impl BTreeCursor {
                     }
 
                     if !self.stack.has_parent() {
-                        self.balance_root();
+                        self.balance_root()?;
                     }
 
                     let write_info = self.state.mut_write_info().unwrap();
@@ -2890,7 +2890,7 @@ impl BTreeCursor {
                         pages_to_balance_new[i].replace(page.clone());
                     } else {
                         // FIXME: handle page cache is full
-                        let page = self.allocate_page(page_type, 0);
+                        let page = self.allocate_page(page_type, 0)?;
                         pages_to_balance_new[i].replace(page);
                         // Since this page didn't exist before, we can set it to cells length as it
                         // marks them as empty since it is a prefix sum of cells.
@@ -3785,7 +3785,7 @@ impl BTreeCursor {
     /// Balance the root page.
     /// This is done when the root page overflows, and we need to create a new root page.
     /// See e.g. https://en.wikipedia.org/wiki/B-tree
-    fn balance_root(&mut self) {
+    fn balance_root(&mut self) -> Result<()> {
         /* todo: balance deeper, create child and copy contents of root there. Then split root */
         /* if we are in root page then we just need to create a new root and push key there */
 
@@ -3802,7 +3802,7 @@ impl BTreeCursor {
         // FIXME: handle page cache is full
         let child_btree =
             self.pager
-                .do_allocate_page(root_contents.page_type(), 0, BtreePageAllocMode::Any);
+                .do_allocate_page(root_contents.page_type(), 0, BtreePageAllocMode::Any)?;
 
         tracing::debug!(
             "balance_root(root={}, rightmost={}, page_type={:?})",
@@ -3860,6 +3860,7 @@ impl BTreeCursor {
         self.stack.push(root_btree.clone());
         self.stack.set_cell_index(0); // leave parent pointing at the rightmost pointer (in this case 0, as there are no cells), since we will be balancing the rightmost child page.
         self.stack.push(child_btree.clone());
+        Ok(())
     }
 
     fn usable_space(&self) -> usize {
@@ -5153,7 +5154,7 @@ impl BTreeCursor {
         btree_read_page(&self.pager, page_idx)
     }
 
-    pub fn allocate_page(&self, page_type: PageType, offset: usize) -> BTreePage {
+    pub fn allocate_page(&self, page_type: PageType, offset: usize) -> Result<BTreePage> {
         self.pager
             .do_allocate_page(page_type, offset, BtreePageAllocMode::Any)
     }
@@ -7587,11 +7588,11 @@ mod tests {
         let mut cursor = BTreeCursor::new_table(None, pager.clone(), 2);
 
         // Initialize page 2 as a root page (interior)
-        let root_page = cursor.allocate_page(PageType::TableInterior, 0);
+        let root_page = cursor.allocate_page(PageType::TableInterior, 0)?;
 
         // Allocate two leaf pages
-        let page3 = cursor.allocate_page(PageType::TableLeaf, 0);
-        let page4 = cursor.allocate_page(PageType::TableLeaf, 0);
+        let page3 = cursor.allocate_page(PageType::TableLeaf, 0)?;
+        let page4 = cursor.allocate_page(PageType::TableLeaf, 0)?;
 
         // Configure the root page to point to the two leaf pages
         {
