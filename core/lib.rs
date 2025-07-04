@@ -102,6 +102,17 @@ enum TransactionState {
     None,
 }
 
+impl TransactionState {
+    fn change_schema(&self) -> bool {
+        matches!(
+            self,
+            TransactionState::Write {
+                change_schema: true
+            }
+        )
+    }
+}
+
 pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;

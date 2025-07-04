@@ -384,8 +384,8 @@ impl Program {
             trace_insn(self, state.pc as InsnReference, insn);
             let res = insn_function(self, state, insn, &pager, mv_store.as_ref());
             if res.is_err() {
-                // TODO: see change_schema correct value
-                pager.rollback(false, &self.connection)?
+                let state = self.connection.transaction_state.get();
+                pager.rollback(state.change_schema(), &self.connection)?
             }
             match res? {
                 InsnFunctionStepResult::Step => {}
