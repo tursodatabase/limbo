@@ -705,7 +705,7 @@ impl Wal for WalFile {
         frame_id >= self.checkpoint_threshold
     }
 
-    #[instrument(err,skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::TRACE)]
     fn checkpoint(
         &mut self,
         pager: &Pager,
@@ -869,7 +869,7 @@ impl Wal for WalFile {
         }
     }
 
-    #[instrument(err,skip_all, level = Level::DEBUG)]
+    #[instrument(skip_all, level = Level::DEBUG)]
     fn sync(&mut self) -> Result<WalFsyncStatus> {
         match self.sync_state.get() {
             SyncState::NotSyncing => {

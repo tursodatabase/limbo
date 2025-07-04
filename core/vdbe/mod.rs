@@ -368,6 +368,7 @@ pub struct Program {
 }
 
 impl Program {
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn step(
         &self,
         state: &mut ProgramState,
@@ -398,7 +399,7 @@ impl Program {
         }
     }
 
-    #[instrument(err,skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn commit_txn(
         &self,
         pager: Rc<Pager>,
@@ -464,7 +465,7 @@ impl Program {
         }
     }
 
-    #[instrument(err,skip(self, pager, connection), level = Level::TRACE)]
+    #[instrument(skip(self, pager, connection), level = Level::TRACE)]
     fn step_end_write_txn(
         &self,
         pager: &Rc<Pager>,

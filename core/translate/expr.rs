@@ -131,7 +131,7 @@ macro_rules! expect_arguments_even {
     }};
 }
 
-#[instrument(err,skip(program, referenced_tables, expr, resolver), level = Level::TRACE)]
+#[instrument(skip(program, referenced_tables, expr, resolver), level = Level::TRACE)]
 pub fn translate_condition_expr(
     program: &mut ProgramBuilder,
     referenced_tables: &TableReferences,

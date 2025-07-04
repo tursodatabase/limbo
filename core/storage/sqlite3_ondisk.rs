@@ -727,6 +727,7 @@ impl PageContent {
     }
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn begin_read_page(
     db_file: Arc<dyn DatabaseStorage>,
     buffer_pool: Arc<BufferPool>,
@@ -773,6 +774,7 @@ pub fn finish_read_page(
     Ok(())
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn begin_write_btree_page(
     pager: &Pager,
     page: &PageRef,
@@ -791,13 +793,14 @@ pub fn begin_write_btree_page(
     };
 
     *write_counter.borrow_mut() += 1;
+    let clone_counter = write_counter.clone();
     let write_complete = {
         let buf_copy = buffer.clone();
         Box::new(move |bytes_written: i32| {
             tracing::trace!("finish_write_btree_page");
             let buf_copy = buf_copy.clone();
             let buf_len = buf_copy.borrow().len();
-            *write_counter.borrow_mut() -= 1;
+            *clone_counter.borrow_mut() -= 1;
 
             page_finish.clear_dirty();
             if bytes_written < buf_len as i32 {
@@ -806,10 +809,15 @@ pub fn begin_write_btree_page(
         })
     };
     let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
-    page_source.write_page(page_id, buffer.clone(), c)?;
-    Ok(())
+    let res = page_source.write_page(page_id, buffer.clone(), c);
+    if res.is_err() {
+        // Avoid infinite loop if write page fails
+        *write_counter.borrow_mut() -= 1;
+    }
+    res
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
