@@ -1404,6 +1404,13 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
                 let frame_h_checksum_2 =
                     u32::from_be_bytes(frame_header_slice[20..24].try_into().unwrap());
 
+                if frame_h_page_number == 0 {
+                    tracing::trace!(
+                        "WAL frame with page number 0. Ignoring frames starting from frame {}",
+                        frame_idx
+                    );
+                    break;
+                }
                 // It contains more frames with mismatched SALT values, which means they're leftovers from previous checkpoints
                 if frame_h_salt_1 != header_locked.salt_1 || frame_h_salt_2 != header_locked.salt_2
                 {
