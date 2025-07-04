@@ -112,6 +112,18 @@ fn execute_query_rusqlite(
             connection.execute(create_index.to_string().as_str(), ())?;
             Ok(vec![])
         }
+        Query::Begin(begin) => {
+            connection.execute(begin.to_string().as_str(), ())?;
+            Ok(vec![])
+        }
+        Query::Commit(commit) => {
+            connection.execute(commit.to_string().as_str(), ())?;
+            Ok(vec![])
+        }
+        Query::Rollback(rollback) => {
+            connection.execute(rollback.to_string().as_str(), ())?;
+            Ok(vec![])
+        }
     }
 }
 

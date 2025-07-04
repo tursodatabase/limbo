@@ -217,20 +217,26 @@ pub(crate) struct InteractionStats {
     pub(crate) create_count: usize,
     pub(crate) create_index_count: usize,
     pub(crate) drop_count: usize,
+    pub(crate) begin_count: usize,
+    pub(crate) commit_count: usize,
+    pub(crate) rollback_count: usize,
 }
 
 impl Display for InteractionStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Read: {}, Write: {}, Delete: {}, Update: {}, Create: {}, CreateIndex: {}, Drop: {}",
+            "Read: {}, Write: {}, Delete: {}, Update: {}, Create: {}, CreateIndex: {}, Drop: {}, Begin: {}, Commit: {}, Rollback: {}",
             self.read_count,
             self.write_count,
             self.delete_count,
             self.update_count,
             self.create_count,
             self.create_index_count,
-            self.drop_count
+            self.drop_count,
+            self.begin_count,
+            self.commit_count,
+            self.rollback_count,
         )
     }
 }
@@ -307,6 +313,9 @@ impl InteractionPlan {
         let mut drop = 0;
         let mut update = 0;
         let mut create_index = 0;
+        let mut begin = 0;
+        let mut commit = 0;
+        let mut rollback = 0;
 
         for interactions in &self.plan {
             match interactions {
@@ -321,6 +330,9 @@ impl InteractionPlan {
                                 Query::Drop(_) => drop += 1,
                                 Query::Update(_) => update += 1,
                                 Query::CreateIndex(_) => create_index += 1,
+                                Query::Begin(_) => begin += 1,
+                                Query::Commit(_) => commit += 1,
+                                Query::Rollback(_) => rollback += 1,
                             }
                         }
                     }
@@ -333,6 +345,9 @@ impl InteractionPlan {
                     Query::Drop(_) => drop += 1,
                     Query::Update(_) => update += 1,
                     Query::CreateIndex(_) => create_index += 1,
+                    Query::Begin(_) => begin += 1,
+                    Query::Commit(_) => commit += 1,
+                    Query::Rollback(_) => rollback += 1,
                 },
                 Interactions::Fault(_) => {}
             }
@@ -346,6 +361,9 @@ impl InteractionPlan {
             create_count: create,
             create_index_count: create_index,
             drop_count: drop,
+            begin_count: begin,
+            commit_count: commit,
+            rollback_count: rollback,
         }
     }
 }
