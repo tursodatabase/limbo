@@ -141,7 +141,13 @@ where
     D: serde::Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    s.parse().map_err(serde::de::Error::custom)
+    match crate::numeric::str_to_f64(s) {
+        Some(result) => Ok(match result {
+            crate::numeric::StrToF64::Fractional(non_nan) => non_nan.into(),
+            crate::numeric::StrToF64::Decimal(non_nan) => non_nan.into(),
+        }),
+        None => Err(serde::de::Error::custom("")),
+    }
 }
 
 #[derive(Debug, Clone)]
