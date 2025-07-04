@@ -2,7 +2,8 @@ use core::fmt;
 use std::fmt::{Display, Formatter};
 
 use turso_sqlite3_parser::{
-    ast::{SortOrder, TableInternalId},
+    ast::{self, fmt::{ToTokens, TokenStream}, SortOrder, TableInternalId},
+    dialect::TokenType,
     to_sql_string::{ToSqlContext, ToSqlString},
 };
 
@@ -499,6 +500,86 @@ impl ToSqlString for DeletePlan {
             ret.push(format!("OFFSET {}", offset));
         }
         ret.join(" ")
+    }
+}
+
+impl ToTokens for UpdatePlan {
+    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+        &self,
+        s: &mut S,
+        _: &C,
+    ) -> Result<(), S::Error> {
+        let table = self
+            .table_references
+            .joined_tables()
+            .first()
+            .expect("UPDATE Plan should have only one table reference");
+        let context = [&self.table_references];
+        let context = &PlanContext(&context);
+
+        s.append(TokenType::TK_UPDATE, None)?;
+        s.append(TokenType::TK_ID, Some(table.table.get_name()))?;
+        s.append(TokenType::TK_SET, None)?;
+
+        s.comma(
+            self.set_clauses.iter().map(|(col_idx, set_expr)| {
+                let col_name = table
+                    .table
+                    .get_column_at(*col_idx)
+                    .as_ref()
+                    .unwrap()
+                    .name
+                    .as_ref()
+                    .unwrap();
+
+                ast::Set {
+                    col_names: ast::DistinctNames::single(ast::Name(col_name.clone())),
+                    expr: set_expr.clone(),
+                }
+            }),
+            context,
+        )?;
+
+        if !self.where_clause.is_empty() {
+            s.append(TokenType::TK_WHERE, None)?;
+
+            let mut iter = self
+                .where_clause
+                .iter()
+                .map(|where_clause| where_clause.expr.clone());
+            iter.next()
+                .expect("should not be empty")
+                .to_tokens_with_context(s, context)?;
+            for expr in iter {
+                s.append(TokenType::TK_AND, None)?;
+                expr.to_tokens_with_context(s, context)?;
+            }
+        }
+
+        if let Some(order_by) = &self.order_by {
+            s.append(TokenType::TK_ORDER, None)?;
+            s.append(TokenType::TK_BY, None)?;
+
+            s.comma(
+                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                    expr: expr.clone(),
+                    order: Some(order.clone()),
+                    nulls: None,
+                }),
+                context,
+            )?;
+        }
+
+        if let Some(limit) = &self.limit {
+            s.append(TokenType::TK_LIMIT, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&limit.to_string()))?;
+        }
+        if let Some(offset) = &self.offset {
+            s.append(TokenType::TK_OFFSET, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&offset.to_string()))?;
+        }
+
+        Ok(())
     }
 }
 
