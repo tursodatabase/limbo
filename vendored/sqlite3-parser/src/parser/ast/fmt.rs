@@ -104,7 +104,7 @@ pub trait TokenStream {
     type Error;
     /// Push token to this stream
     fn append(&mut self, ty: TokenType, value: Option<&str>) -> Result<(), Self::Error>;
-
+    /// Interspace iterator with commas
     fn comma<I, C: ToSqlContext>(&mut self, items: I, context: &C) -> Result<(), Self::Error>
     where
         I: IntoIterator,
@@ -2360,7 +2360,7 @@ impl ToTokens for FrameExclude {
     }
 }
 
-pub fn comma<I, S: TokenStream + ?Sized, C: ToSqlContext>(
+fn comma<I, S: TokenStream + ?Sized, C: ToSqlContext>(
     items: I,
     s: &mut S,
     context: &C,
@@ -2369,14 +2369,7 @@ where
     I: IntoIterator,
     I::Item: ToTokens,
 {
-    let iter = items.into_iter();
-    for (i, item) in iter.enumerate() {
-        if i != 0 {
-            s.append(TK_COMMA, None)?;
-        }
-        item.to_tokens_with_context(s, context)?;
-    }
-    Ok(())
+    s.comma(items, context)
 }
 
 // TK_ID: [...] / `...` / "..." / some keywords / non keywords
