@@ -754,8 +754,8 @@ fn run_query_core(
     query: &str,
     mut on_row: Option<impl FnMut(&Row)>,
 ) -> anyhow::Result<()> {
-    match conn.query(query)? {
-        Some(ref mut rows) => loop {
+    if let Some(ref mut rows) = conn.query(query)? {
+        loop {
             match rows.step()? {
                 StepResult::IO => {
                     tmp_db.io.run_once()?;
@@ -769,8 +769,7 @@ fn run_query_core(
                 }
                 _ => unreachable!(),
             }
-        },
-        None => {}
+        }
     };
     Ok(())
 }
