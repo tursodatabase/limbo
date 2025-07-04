@@ -68,7 +68,14 @@ pub mod offset {
     /// The number of cells in the page (u16).
     pub const BTREE_CELL_COUNT: usize = 3;
 
-    /// A pointer to first byte of cell allocated content from top (u16).
+    /// A pointer to the first byte of cell allocated content from top (u16).
+    ///
+    /// A zero value for this integer is interpreted as 65,536.
+    /// If a page contains no cells (which is only possible for a root page of a table that
+    /// contains no rows) then the offset to the cell content area will equal the page size minus
+    /// the bytes of reserved space. If the database uses a 65536-byte page size and the
+    /// reserved space is zero (the usual value for reserved space) then the cell content offset of
+    /// an empty page wants to be 6,5536
     ///
     /// SQLite strives to place cells as far toward the end of the b-tree page as it can, in
     /// order to leave space for future growth of the cell pointer array. This means that the
@@ -2214,10 +2221,10 @@ impl BTreeCursor {
                             cell_idx,
                             self.usable_space() as u16,
                         )?;
-                        contents.overflow_cells.len()
+                        !contents.overflow_cells.is_empty()
                     };
                     self.stack.set_cell_index(cell_idx as i32);
-                    if overflow > 0 {
+                    if overflow {
                         // A balance will happen so save the key we were inserting
                         tracing::debug!(page = page.get().get().id, cell_idx, "balance triggered:");
                         self.save_context(match bkey {
@@ -3870,15 +3877,12 @@ impl BTreeCursor {
         while self.find_cell_state.get_cell_idx() < cell_count as isize {
             assert!(self.find_cell_state.get_cell_idx() >= 0);
             let cell_idx = self.find_cell_state.get_cell_idx() as usize;
-            match page
-                .cell_get(
-                    cell_idx,
-                    payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
-                    payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
-                    self.usable_space(),
-                )
-                .unwrap()
-            {
+            match page.cell_get(
+                cell_idx,
+                payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
+                payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
+                self.usable_space(),
+            )? {
                 BTreeCell::TableLeafCell(cell) => {
                     if key.to_rowid() <= cell._rowid {
                         break;
@@ -4259,13 +4263,10 @@ impl BTreeCursor {
                         page.get().get_contents().page_type(),
                         PageType::TableLeaf | PageType::TableInterior
                     ) {
-                        let _target_rowid = match return_if_io!(self.rowid()) {
-                            Some(rowid) => rowid,
-                            _ => {
-                                self.state = CursorState::None;
-                                return Ok(CursorResult::Ok(()));
-                            }
-                        };
+                        if return_if_io!(self.rowid()).is_none() {
+                            self.state = CursorState::None;
+                            return Ok(CursorResult::Ok(()));
+                        }
                     } else if self.reusable_immutable_record.borrow().is_none() {
                         self.state = CursorState::None;
                         return Ok(CursorResult::Ok(()));
@@ -4374,8 +4375,6 @@ impl BTreeCursor {
                     let page = page.get();
                     let contents = page.get_contents();
 
-                    let is_last_cell = cell_idx == contents.cell_count().saturating_sub(1);
-
                     let delete_info = self.state.mut_delete_info().unwrap();
                     if !contents.is_leaf() {
                         delete_info.state = DeleteState::InteriorNodeReplacement {
@@ -4384,7 +4383,7 @@ impl BTreeCursor {
                             post_balancing_seek_key,
                         };
                     } else {
-                        let contents = page.get().contents.as_mut().unwrap();
+                        let is_last_cell = cell_idx == contents.cell_count().saturating_sub(1);
                         drop_cell(contents, cell_idx, self.usable_space() as u16)?;
 
                         let delete_info = self.state.mut_delete_info().unwrap();
@@ -6068,8 +6067,8 @@ fn free_cell_range(
         pc
     };
 
-    if offset <= page.cell_content_area() {
-        if offset < page.cell_content_area() {
+    if (offset as u32) <= page.cell_content_area() {
+        if (offset as u32) < page.cell_content_area() {
             return_corrupt!("Free block before content area");
         }
         if pointer_to_pc != page.offset as u16 + offset::BTREE_FIRST_FREEBLOCK as u16 {
@@ -6244,8 +6243,13 @@ fn insert_into_cell(
     Ok(())
 }
 
-/// Free blocks can be zero, meaning the "real free space" that can be used to allocate is expected to be between first cell byte
-/// and end of cell pointer area.
+/// The amount of free space is the sum of:
+///  #1. The size of the unallocated region
+///  #2. Fragments (isolated 1-3 byte chunks of free space within the cell content area)
+///  #3. freeblocks (linked list of blocks of at least 4 bytes within the cell content area that
+///      are not in use due to e.g. deletions)
+/// Free blocks can be zero, meaning the "real free space" that can be used to allocate is expected
+/// to be between first cell byte and end of cell pointer area.
 #[allow(unused_assignments)]
 fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
     // TODO(pere): maybe free space is not calculated correctly with offset
@@ -6254,38 +6258,14 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
     // space that is not reserved for extensions by sqlite. Usually reserved_space is 0.
     let usable_space = usable_space as usize;
 
-    let mut cell_content_area_start = page.cell_content_area();
-    // A zero value for the cell content area pointer is interpreted as 65536.
-    // See https://www.sqlite.org/fileformat.html
-    // The max page size for a sqlite database is 64kiB i.e. 65536 bytes.
-    // 65536 is u16::MAX + 1, and since cell content grows from right to left, this means
-    // the cell content area pointer is at the end of the page,
-    // i.e.
-    // 1. the page size is 64kiB
-    // 2. there are no cells on the page
-    // 3. there is no reserved space at the end of the page
-    if cell_content_area_start == 0 {
-        cell_content_area_start = u16::MAX;
-    }
-
-    // The amount of free space is the sum of:
-    // #1. the size of the unallocated region
-    // #2. fragments (isolated 1-3 byte chunks of free space within the cell content area)
-    // #3. freeblocks (linked list of blocks of at least 4 bytes within the cell content area that are not in use due to e.g. deletions)
-
-    let pointer_size = if matches!(page.page_type(), PageType::TableLeaf | PageType::IndexLeaf) {
-        0
-    } else {
-        4
-    };
-    let first_cell = page.offset + 8 + pointer_size + (2 * page.cell_count());
-    let mut free_space_bytes =
-        cell_content_area_start as usize + page.num_frag_free_bytes() as usize;
+    let first_cell = page.offset + page.header_size() + (2 * page.cell_count());
+    let cell_content_area_start = page.cell_content_area() as usize;
+    let mut free_space_bytes = cell_content_area_start + page.num_frag_free_bytes() as usize;
 
     // #3 is computed by iterating over the freeblocks linked list
     let mut cur_freeblock_ptr = page.first_freeblock() as usize;
     if cur_freeblock_ptr > 0 {
-        if cur_freeblock_ptr < cell_content_area_start as usize {
+        if cur_freeblock_ptr < cell_content_area_start {
             // Freeblocks exist in the cell content area e.g. after deletions
             // They should never exist in the unused area of the page.
             todo!("corrupted page");
@@ -6299,7 +6279,7 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
             size = page.read_u16_no_offset(cur_freeblock_ptr + 2) as usize; // next 2 bytes in freeblock = size of current freeblock
             free_space_bytes += size;
             // Freeblocks are in order from left to right on the page,
-            // so next pointer should > current pointer + its size, or 0 if no next block exists.
+            // so the next pointer should > current pointer + its size, or 0 if no next block exists.
             if next <= cur_freeblock_ptr + size + 3 {
                 break;
             }
@@ -6307,8 +6287,8 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
         }
 
         // Next should always be 0 (NULL) at this point since we have reached the end of the freeblocks linked list
-        assert!(
-            next == 0,
+        assert_eq!(
+            next, 0,
             "corrupted page: freeblocks list not in ascending order"
         );
 
@@ -6322,10 +6302,6 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
         free_space_bytes <= usable_space,
         "corrupted page: free space is greater than usable space"
     );
-
-    // if( nFree>usableSize || nFree<iCellFirst ){
-    //   return SQLITE_CORRUPT_PAGE(pPage);
-    // }
 
     free_space_bytes as u16 - first_cell as u16
 }
@@ -6417,7 +6393,6 @@ fn fill_cell_payload(
     cell_payload.resize(prev_size + space_left + 4, 0);
     let mut pointer = unsafe { cell_payload.as_mut_ptr().add(prev_size) };
     let mut pointer_to_next = unsafe { cell_payload.as_mut_ptr().add(prev_size + space_left) };
-    let mut overflow_pages = Vec::new();
 
     loop {
         let to_copy = space_left.min(to_copy_buffer.len());
@@ -6431,7 +6406,6 @@ fn fill_cell_payload(
         // we still have bytes to add, we will need to allocate new overflow page
         // FIXME: handle page cache is full
         let overflow_page = pager.allocate_overflow_page();
-        overflow_pages.push(overflow_page.clone());
         {
             let id = overflow_page.get().id as u32;
             let contents = overflow_page.get().contents.as_mut().unwrap();
