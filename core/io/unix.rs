@@ -18,7 +18,7 @@ use std::{
     io::{ErrorKind, Read, Seek, Write},
     sync::Arc,
 };
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace, Level};
 
 struct OwnedCallbacks(UnsafeCell<Callbacks>);
 // We assume we locking on IO level is done by user.
@@ -219,6 +219,7 @@ impl IO for UnixIO {
         Ok(unix_file)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn run_once(&self) -> Result<()> {
         if self.callbacks.is_empty() {
             return Ok(());
@@ -333,6 +334,7 @@ impl File for UnixFile<'_> {
         Ok(())
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn pread(&self, pos: usize, c: Completion) -> Result<Arc<Completion>> {
         let file = self.file.borrow();
         let result = {
@@ -366,6 +368,7 @@ impl File for UnixFile<'_> {
         }
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn pwrite(
         &self,
         pos: usize,
@@ -401,6 +404,7 @@ impl File for UnixFile<'_> {
         }
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Completion) -> Result<Arc<Completion>> {
         let file = self.file.borrow();
         let result = fs::fsync(file.as_fd());
