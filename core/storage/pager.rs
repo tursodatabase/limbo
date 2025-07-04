@@ -957,7 +957,7 @@ impl Pager {
                 CheckpointMode::Passive,
             ) {
                 Ok(CheckpointStatus::IO) => {
-                    let _ = self.io.run_once();
+                    self.io.run_once()?;
                 }
                 Ok(CheckpointStatus::Done(res)) => {
                     checkpoint_result = res;
