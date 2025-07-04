@@ -260,7 +260,7 @@ impl Display for Interaction {
     }
 }
 
-type AssertionFunc = dyn Fn(&Vec<ResultSet>, &SimulatorEnv) -> Result<bool>;
+type AssertionFunc = dyn Fn(&Vec<ResultSet>, &mut SimulatorEnv) -> Result<bool>;
 
 enum AssertionAST {
     Pick(),
@@ -441,7 +441,7 @@ impl Interaction {
     pub(crate) fn execute_assertion(
         &self,
         stack: &Vec<ResultSet>,
-        env: &SimulatorEnv,
+        env: &mut SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Assertion(assertion) => {
@@ -466,7 +466,7 @@ impl Interaction {
     pub(crate) fn execute_assumption(
         &self,
         stack: &Vec<ResultSet>,
-        env: &SimulatorEnv,
+        env: &mut SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Assumption(assumption) => {
