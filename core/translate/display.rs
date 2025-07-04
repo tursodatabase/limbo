@@ -2,7 +2,11 @@ use core::fmt;
 use std::fmt::{Display, Formatter};
 
 use turso_sqlite3_parser::{
-    ast::{self, fmt::{ToTokens, TokenStream}, SortOrder, TableInternalId},
+    ast::{
+        self,
+        fmt::{ToTokens, TokenStream},
+        SortOrder, TableInternalId,
+    },
     dialect::TokenType,
     to_sql_string::{ToSqlContext, ToSqlString},
 };
