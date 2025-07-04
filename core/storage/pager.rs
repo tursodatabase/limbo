@@ -2110,7 +2110,7 @@ mod ptrmap_tests {
         //  In reality, dirty pages should become part of the subjournal so they can be rolled back
         //  See - https://github.com/sqlite/sqlite/blob/master/src/pager.c#L7141-L7270
         loop {
-            match pager.cacheflush().unwrap() {
+            match pager.cacheflush(true).unwrap() {
                 PagerCacheflushStatus::Done(_) => break,
                 PagerCacheflushStatus::IO => pager.io.run_once().unwrap(),
             }
@@ -2339,7 +2339,7 @@ mod ptrmap_tests {
 
         // Flush all dirty pages so they are clean prior to relocation
         loop {
-            match pager.cacheflush().unwrap() {
+            match pager.cacheflush(true).unwrap() {
                 PagerCacheflushStatus::Done(_) => break,
                 PagerCacheflushStatus::IO => pager.io.run_once().unwrap(),
             }
