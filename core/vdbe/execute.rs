@@ -4383,7 +4383,7 @@ pub fn op_idx_delete(
                     );
                     found
                 };
-                
+
                 if !found {
                     // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
                     // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
@@ -4405,7 +4405,7 @@ pub fn op_idx_delete(
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.rowid())
                 };
-                
+
                 if rowid.is_none() && *raise_error_if_no_matching_entry {
                     return Err(LimboError::Corrupt(format!(
                         "IdxDelete: no matching index entry found for record {:?}",
