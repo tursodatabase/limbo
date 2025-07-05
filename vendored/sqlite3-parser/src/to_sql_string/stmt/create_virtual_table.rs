@@ -1,23 +1,3 @@
-use crate::{ast, to_sql_string::ToSqlString};
-
-impl ToSqlString for ast::CreateVirtualTable {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
-        format!(
-            "CREATE VIRTUAL TABLE {}{} USING {}{};",
-            if self.if_not_exists {
-                "IF NOT EXISTS "
-            } else {
-                ""
-            },
-            self.tbl_name.to_sql_string(context),
-            self.module_name.0,
-            self.args
-                .as_ref()
-                .map_or("".to_string(), |args| format!("({})", args.join(", ")))
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::to_sql_string_test;
