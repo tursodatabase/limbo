@@ -4,9 +4,7 @@ use memchr::memchr;
 
 pub use crate::dialect::TokenType;
 use crate::dialect::TokenType::*;
-use crate::dialect::{
-    is_identifier_continue, is_identifier_start, keyword_token, sentinel, MAX_KEYWORD_LEN,
-};
+use crate::dialect::{is_identifier_continue, is_identifier_start, keyword_token, sentinel};
 use crate::parser::ast::Cmd;
 use crate::parser::parse::{yyParser, YYCODETYPE};
 use crate::parser::Context;
@@ -719,12 +717,7 @@ impl Tokenizer {
             _ => data.len(),
         };
         let word = &data[..i];
-        let tt = if word.len() >= 2 && word.len() <= MAX_KEYWORD_LEN && word.is_ascii() {
-            keyword_token(word).unwrap_or(TK_ID)
-        } else {
-            TK_ID
-        };
-        (Some((word, tt)), i)
+        (Some((word, keyword_token(word).unwrap_or(TK_ID))), i)
     }
 }
 
