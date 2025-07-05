@@ -140,6 +140,11 @@ pub trait ToTokens {
     }
     /// Format AST node to string
     fn format(&self) -> Result<String, fmt::Error> {
+        self.format_with_context(&BlankContext)
+    }
+
+    /// Format AST node to string with context
+    fn format_with_context<C: ToSqlContext>(&self, context: &C) -> Result<String, fmt::Error> {
         let mut s = String::new();
 
         let mut w = WriteTokenStream {
@@ -147,7 +152,7 @@ pub trait ToTokens {
             spaced: true,
         };
 
-        self.to_tokens(&mut w)?;
+        self.to_tokens_with_context(&mut w, context)?;
 
         Ok(s)
     }
@@ -1374,6 +1379,7 @@ impl ToTokens for AlterTableBody {
             }
             Self::RenameColumn { old, new } => {
                 s.append(TK_RENAME, None)?;
+                s.append(TK_COLUMNKW, None)?;
                 old.to_tokens_with_context(s, context)?;
                 s.append(TK_TO, None)?;
                 new.to_tokens_with_context(s, context)
