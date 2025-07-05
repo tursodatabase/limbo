@@ -1120,13 +1120,14 @@ pub fn insn_to_str(
                 cursor_id,
                 start_reg,
                 num_regs,
+                raise_error_if_no_matching_entry,
             } => (
                 "IdxDelete",
                 *cursor_id as i32,
                 *start_reg as i32,
                 *num_regs as i32,
                 Value::build_text(""),
-                0,
+                *raise_error_if_no_matching_entry as u16,
                 "".to_string(),
             ),
             Insn::NewRowid {

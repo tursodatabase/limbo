@@ -124,15 +124,6 @@ pub fn prepare_select_plan(
 
             let mut left = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
-                // TODO: add support for EXCEPT
-                if operator != ast::CompoundOperator::UnionAll
-                    && operator != ast::CompoundOperator::Union
-                    && operator != ast::CompoundOperator::Intersect
-                {
-                    crate::bail_parse_error!(
-                        "only UNION ALL, UNION and INTERSECT are supported for compound SELECTs"
-                    );
-                }
                 left.push((last, operator));
                 last = prepare_one_select_plan(
                     schema,
