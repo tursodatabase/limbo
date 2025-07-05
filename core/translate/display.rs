@@ -14,7 +14,8 @@ use turso_sqlite3_parser::{
 use crate::{schema::Table, translate::plan::TableReferences};
 
 use super::plan::{
-    Aggregate, DeletePlan, JoinedTable, Operation, Plan, Search, SelectPlan, UpdatePlan,
+    Aggregate, DeletePlan, JoinedTable, Operation, Plan, ResultSetColumn, Search, SelectPlan,
+    UpdatePlan,
 };
 
 impl Display for Aggregate {
@@ -267,6 +268,69 @@ impl ToSqlContext for PlanContext<'_> {
     }
 }
 
+impl ToTokens for Plan {
+    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+        &self,
+        s: &mut S,
+        context: &C,
+    ) -> Result<(), S::Error> {
+        match self {
+            Self::Select(select) => {
+                select.to_tokens_with_context(s, &PlanContext(&[&select.table_references]))?;
+            }
+            Self::CompoundSelect {
+                left,
+                right_most,
+                limit,
+                offset,
+                order_by,
+            } => {
+                let all_refs = left
+                    .iter()
+                    .flat_map(|(plan, _)| std::iter::once(&plan.table_references))
+                    .chain(std::iter::once(&right_most.table_references))
+                    .collect::<Vec<_>>();
+                let context = &PlanContext(all_refs.as_slice());
+
+                for (plan, operator) in left {
+                    plan.to_tokens_with_context(s, context)?;
+                    operator.to_tokens_with_context(s, context)?;
+                }
+
+                right_most.to_tokens_with_context(s, context)?;
+
+                if let Some(order_by) = order_by {
+                    s.append(TokenType::TK_ORDER, None)?;
+                    s.append(TokenType::TK_BY, None)?;
+
+                    s.comma(
+                        order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                            expr: expr.clone(),
+                            order: Some(*order),
+                            nulls: None,
+                        }),
+                        context,
+                    )?;
+                }
+
+                if let Some(limit) = &limit {
+                    s.append(TokenType::TK_LIMIT, None)?;
+                    s.append(TokenType::TK_FLOAT, Some(&limit.to_string()))?;
+                }
+
+                if let Some(offset) = &offset {
+                    s.append(TokenType::TK_OFFSET, None)?;
+                    s.append(TokenType::TK_FLOAT, Some(&offset.to_string()))?;
+                }
+            }
+            Self::Delete(delete) => delete.to_tokens_with_context(s, context)?,
+            Self::Update(update) => update.to_tokens_with_context(s, context)?,
+        }
+
+        Ok(())
+    }
+}
+
 impl ToSqlString for Plan {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         // Make the Plans pass their own context
@@ -319,6 +383,39 @@ impl ToSqlString for Plan {
     }
 }
 
+impl ToTokens for JoinedTable {
+    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+        &self,
+        s: &mut S,
+        _context: &C,
+    ) -> Result<(), S::Error> {
+        match &self.table {
+            Table::BTree(..) | Table::Virtual(..) => {
+                let name = self.table.get_name();
+                s.append(TokenType::TK_ID, Some(name))?;
+                if self.identifier != name {
+                    s.append(TokenType::TK_AS, None)?;
+                    s.append(TokenType::TK_ID, Some(&self.identifier))?;
+                }
+            }
+            Table::FromClauseSubquery(from_clause_subquery) => {
+                s.append(TokenType::TK_LP, None)?;
+                // Could possibly merge the contexts together here
+                from_clause_subquery.plan.to_tokens_with_context(
+                    s,
+                    &PlanContext(&[&from_clause_subquery.plan.table_references]),
+                )?;
+                s.append(TokenType::TK_RP, None)?;
+
+                s.append(TokenType::TK_AS, None)?;
+                s.append(TokenType::TK_ID, Some(&self.identifier))?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
 impl ToSqlString for JoinedTable {
     fn to_sql_string<C: turso_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
@@ -347,6 +444,109 @@ impl ToSqlString for JoinedTable {
                 "".to_string()
             }
         )
+    }
+}
+
+impl ToTokens for SelectPlan {
+    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+        &self,
+        s: &mut S,
+        context: &C,
+    ) -> Result<(), S::Error> {
+        if !self.values.is_empty() {
+            ast::OneSelect::Values(self.values.clone()).to_tokens_with_context(s, context)?;
+        } else {
+            s.append(TokenType::TK_SELECT, None)?;
+            if self.distinctness.is_distinct() {
+                s.append(TokenType::TK_DISTINCT, None)?;
+            }
+
+            for (i, ResultSetColumn { expr, alias, .. }) in self.result_columns.iter().enumerate() {
+                if i != 0 {
+                    s.append(TokenType::TK_COMMA, None)?;
+                }
+
+                expr.to_tokens_with_context(s, context)?;
+                if let Some(alias) = alias {
+                    s.append(TokenType::TK_AS, None)?;
+                    s.append(TokenType::TK_ID, Some(&alias))?;
+                }
+            }
+            s.append(TokenType::TK_FROM, None)?;
+
+            for (i, order) in self.join_order.iter().enumerate() {
+                if i != 0 {
+                    if order.is_outer {
+                        s.append(TokenType::TK_ORDER, None)?;
+                    }
+                    s.append(TokenType::TK_JOIN, None)?;
+                }
+
+                let table_ref = self.joined_tables().get(order.original_idx).unwrap();
+                table_ref.to_tokens_with_context(s, context)?;
+            }
+
+            if !self.where_clause.is_empty() {
+                s.append(TokenType::TK_WHERE, None)?;
+
+                for (i, expr) in self
+                    .where_clause
+                    .iter()
+                    .map(|where_clause| where_clause.expr.clone())
+                    .enumerate()
+                {
+                    if i != 0 {
+                        s.append(TokenType::TK_AND, None)?;
+                    }
+                    expr.to_tokens_with_context(s, context)?;
+                }
+            }
+
+            if let Some(group_by) = &self.group_by {
+                s.append(TokenType::TK_GROUP, None)?;
+                s.append(TokenType::TK_BY, None)?;
+
+                s.comma(group_by.exprs.iter(), context)?;
+
+                // TODO: not sure where I need to place the group_by.sort_order
+                if let Some(having) = &group_by.having {
+                    s.append(TokenType::TK_HAVING, None)?;
+
+                    for (i, expr) in having.iter().enumerate() {
+                        if i != 0 {
+                            s.append(TokenType::TK_AND, None)?;
+                        }
+                        expr.to_tokens_with_context(s, context)?;
+                    }
+                }
+            }
+        }
+
+        if let Some(order_by) = &self.order_by {
+            s.append(TokenType::TK_ORDER, None)?;
+            s.append(TokenType::TK_BY, None)?;
+
+            s.comma(
+                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                    expr: expr.clone(),
+                    order: Some(*order),
+                    nulls: None,
+                }),
+                context,
+            )?;
+        }
+
+        if let Some(limit) = &self.limit {
+            s.append(TokenType::TK_LIMIT, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&limit.to_string()))?;
+        }
+
+        if let Some(offset) = &self.offset {
+            s.append(TokenType::TK_OFFSET, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&offset.to_string()))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -461,6 +661,68 @@ impl ToSqlString for SelectPlan {
             ret.push(format!("OFFSET {}", offset));
         }
         ret.join(" ")
+    }
+}
+
+impl ToTokens for DeletePlan {
+    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+        &self,
+        s: &mut S,
+        _: &C,
+    ) -> Result<(), S::Error> {
+        let table = self
+            .table_references
+            .joined_tables()
+            .first()
+            .expect("Delete Plan should have only one table reference");
+        let context = &[&self.table_references];
+        let context = &PlanContext(context);
+
+        s.append(TokenType::TK_DELETE, None)?;
+        s.append(TokenType::TK_FROM, None)?;
+        s.append(TokenType::TK_ID, Some(table.table.get_name()))?;
+
+        if !self.where_clause.is_empty() {
+            s.append(TokenType::TK_WHERE, None)?;
+
+            for (i, expr) in self
+                .where_clause
+                .iter()
+                .map(|where_clause| where_clause.expr.clone())
+                .enumerate()
+            {
+                if i != 0 {
+                    s.append(TokenType::TK_AND, None)?;
+                }
+                expr.to_tokens_with_context(s, context)?;
+            }
+        }
+
+        if let Some(order_by) = &self.order_by {
+            s.append(TokenType::TK_ORDER, None)?;
+            s.append(TokenType::TK_BY, None)?;
+
+            s.comma(
+                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                    expr: expr.clone(),
+                    order: Some(*order),
+                    nulls: None,
+                }),
+                context,
+            )?;
+        }
+
+        if let Some(limit) = &self.limit {
+            s.append(TokenType::TK_LIMIT, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&limit.to_string()))?;
+        }
+
+        if let Some(offset) = &self.offset {
+            s.append(TokenType::TK_OFFSET, None)?;
+            s.append(TokenType::TK_FLOAT, Some(&offset.to_string()))?;
+        }
+
+        Ok(())
     }
 }
 
