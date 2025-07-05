@@ -17,7 +17,7 @@ mod tests {
         ($test_name:ident, $input:expr) => {
             #[test]
             fn $test_name() {
-                use crate::parser::ast::fmt::ToTokens;
+                use $crate::parser::ast::fmt::ToTokens;
                 let context = $crate::to_sql_string::stmt::tests::TestContext;
                 let input = $input.split_whitespace().collect::<Vec<&str>>().join(" ");
                 let mut parser = $crate::lexer::sql::Parser::new(input.as_bytes());
@@ -34,7 +34,7 @@ mod tests {
             #[test]
             $(#[$attribute])*
             fn $test_name() {
-                use crate::parser::ast::fmt::ToTokens;
+                use $crate::parser::ast::fmt::ToTokens;
                 let context = $crate::to_sql_string::stmt::tests::TestContext;
                 let input = $input.split_whitespace().collect::<Vec<&str>>().join(" ");
                 let mut parser = $crate::lexer::sql::Parser::new(input.as_bytes());

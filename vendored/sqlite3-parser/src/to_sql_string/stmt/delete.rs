@@ -6,10 +6,7 @@ mod tests {
     to_sql_string_test!(test_delete_all, "DELETE FROM employees");
 
     // DELETE with a simple WHERE clause
-    to_sql_string_test!(
-        test_delete_with_where,
-        "DELETE FROM employees WHERE id = 1"
-    );
+    to_sql_string_test!(test_delete_with_where, "DELETE FROM employees WHERE id = 1");
 
     // DELETE with multiple WHERE conditions
     to_sql_string_test!(

@@ -21,17 +21,11 @@ mod tests {
         "SELECT a FROM t WHERE b = 1 AND c > 2"
     );
 
-    to_sql_string_test!(
-        test_select_with_order_by,
-        "SELECT a FROM t ORDER BY a DESC"
-    );
+    to_sql_string_test!(test_select_with_order_by, "SELECT a FROM t ORDER BY a DESC");
 
     to_sql_string_test!(test_select_with_limit, "SELECT a FROM t LIMIT 10");
 
-    to_sql_string_test!(
-        test_select_with_offset,
-        "SELECT a FROM t LIMIT 10 OFFSET 5"
-    );
+    to_sql_string_test!(test_select_with_offset, "SELECT a FROM t LIMIT 10 OFFSET 5");
 
     to_sql_string_test!(
         test_select_with_join,

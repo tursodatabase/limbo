@@ -387,7 +387,7 @@ impl ToTokens for SelectPlan {
                 expr.to_tokens_with_context(s, context)?;
                 if let Some(alias) = alias {
                     s.append(TokenType::TK_AS, None)?;
-                    s.append(TokenType::TK_ID, Some(&alias))?;
+                    s.append(TokenType::TK_ID, Some(alias))?;
                 }
             }
             s.append(TokenType::TK_FROM, None)?;
